@@ -14,4 +14,4 @@ add_executable(mirror_probe
   mirror_client.cpp
 )
 target_include_directories(mirror_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(mirror_probe PRIVATE user32 gdi32)
+target_link_libraries(mirror_probe PRIVATE user32 gdi32 dwmapi)

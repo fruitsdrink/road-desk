@@ -57,7 +57,8 @@ add_executable(replace_host
   "${MIRROR_USER_DIR}/mirror_client.cpp"
 )
 target_include_directories(replace_host PRIVATE src "${MIRROR_USER_DIR}")
-target_link_libraries(replace_host PRIVATE replace_tls_session replace_miniz user32 gdi32)
+target_link_libraries(replace_host PRIVATE replace_tls_session replace_miniz user32 gdi32
+                      dwmapi)
 
 add_executable(replace_viewer
   src/replace_viewer.cpp

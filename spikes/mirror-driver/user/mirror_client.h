@@ -14,6 +14,10 @@ bool rdm_attach_mirror(char* device_name, size_t device_name_len);
 bool rdm_detach_mirror(const char* device_name);
 // Clear sticky Attach.ToDesktop=1 + CDS detach (safe if already detached).
 bool rdm_force_detach();
+// Zero Attach.ToDesktop for peer mirrors (VNC/Radmin…). Skips rdmmini / Road Desk.
+void rdm_scrub_foreign_attach_registry();
+// Also clears Road Desk service keys (use when detached / session end).
+void rdm_scrub_all_attach_registry();
 void rdm_dump_display_devices();
 
 // CreateDC on the mirror device; caller DeleteDC.

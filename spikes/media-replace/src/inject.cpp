@@ -155,9 +155,17 @@ void release_modifiers() {
     force_key_up(vk, is_extended_vk(vk) || vk == VK_RSHIFT || vk == VK_RCONTROL || vk == VK_RMENU ||
                          vk == VK_RWIN);
   }
-  send_mouse(MOUSEEVENTF_LEFTUP, 0, 0);
-  send_mouse(MOUSEEVENTF_RIGHTUP, 0, 0);
-  send_mouse(MOUSEEVENTF_MIDDLEUP, 0, 0);
+  // Only UP buttons we injected. Blind RIGHTUP opens the Win7 console Edit menu
+  // (seen at Host boot and on Ctrl+C).
+  if (g_last_buttons & 1) {
+    send_mouse(MOUSEEVENTF_LEFTUP, 0, 0);
+  }
+  if (g_last_buttons & 4) {
+    send_mouse(MOUSEEVENTF_RIGHTUP, 0, 0);
+  }
+  if (g_last_buttons & 2) {
+    send_mouse(MOUSEEVENTF_MIDDLEUP, 0, 0);
+  }
   g_last_buttons = 0;
 }
 

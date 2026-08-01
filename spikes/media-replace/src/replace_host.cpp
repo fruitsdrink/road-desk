@@ -597,13 +597,27 @@ void serve_one(road_desk::media::tls::TlsSession* tls, const std::string& psk,
   DWORD last_send_ms = 0;
   DWORD last_stat_ms = GetTickCount();
   DWORD last_cursor_ms = 0;
+  DWORD last_attach_scrub_ms = GetTickCount();
   constexpr DWORD kStatIntervalMs = 1000;
+  // Only scrub *peer* mirrors while attached (never rdmmini DeviceKey).
+  constexpr DWORD kAttachScrubMs = 2000;
 
   for (;;) {
     if (!drain_incoming(tls)) {
       logf("client gone (recv) sent_rects=%u drop_ticks=%u input_ptr=%u input_key=%u copy=%u",
            sent_rects, dropped_ticks, g_input_pointer, g_input_key, g_copyrects_sent);
       break;
+    }
+
+    // Like VNC: keep Mirror capture while Device Manager is open. Falling back to
+    // GDI caused the lag users saw; CDS detach also flipped Win7 to Basic.
+    // Input freeze is mitigated by Attach.ToDesktop=0 + peer scrub (not GDI).
+    const DWORD loop_now = GetTickCount();
+    if (cap.using_mirror()) {
+      if (loop_now - last_attach_scrub_ms >= kAttachScrubMs) {
+        last_attach_scrub_ms = loop_now;
+        rdm_scrub_foreign_attach_registry();
+      }
     }
 
     const SOCKET sock = road_desk::media::tls::tls_get_socket(tls);
@@ -836,9 +850,26 @@ int main(int argc, char** argv) {
   SetConsoleCtrlHandler(on_console_ctrl, TRUE);
   road_desk::replace::log_open("replace_host.log");
   logf("boot build=cursor-m2");
-  // Clear sticky Ctrl/Alt left by a previous crash / killed host.
+  // Clear sticky Ctrl/Alt left by a previous crash / killed host (no blind mouse RIGHTUP).
   road_desk::replace::release_modifiers();
-  logf("boot: cleared sticky modifiers");
+  BOOL elevated = FALSE;
+  {
+    HANDLE tok = nullptr;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &tok)) {
+      TOKEN_ELEVATION elev{};
+      DWORD got = 0;
+      if (GetTokenInformation(tok, TokenElevation, &elev, sizeof(elev), &got)) {
+        elevated = elev.TokenIsElevated ? TRUE : FALSE;
+      }
+      CloseHandle(tok);
+    }
+    if (!elevated) {
+      logf("WARN: not elevated — cannot scrub HKLM Attach.ToDesktop; "
+           "opening Device Manager will freeze mouse/keyboard (need Administrator for mirror)");
+    } else {
+      logf("boot: elevated (Administrator)");
+    }
+  }
 
   if (!wsa_init()) {
     logf("WSAStartup failed");
@@ -879,11 +910,15 @@ int main(int argc, char** argv) {
        : capture_mode == CaptureMode::Mirror ? "mirror"
                                             : "auto");
 
-  // Clear sticky Attach.ToDesktop=1 from older hosts so Device Manager PnP
-  // cannot re-attach Road Desk Mirror while idle (mouse/focus freeze with VNC Mirror).
+  // Clear sticky Attach.ToDesktop=1 so Device Manager PnP cannot re-attach mirrors.
+  // Requires Administrator (HKLM); non-elevated scrub is a no-op and DM will freeze input.
   if (capture_mode != CaptureMode::Gdi) {
     if (rdm_force_detach()) {
-      logf("mirror force-detach ok (Attach.ToDesktop cleared)");
+      if (elevated) {
+        logf("mirror force-detach ok (Attach.ToDesktop cleared)");
+      } else {
+        logf("mirror force-detach attempted (not elevated — HKLM scrub may have failed)");
+      }
     }
   }
 

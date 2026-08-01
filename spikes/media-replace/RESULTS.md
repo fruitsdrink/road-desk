@@ -59,7 +59,7 @@ G5 通过前：换芯代码不得覆盖 `src/media/libvnc_*`。
 | G4 | 拖窗档 B（vs LibVNC GDI） | pending | |
 | GM1/GM2 | 自研 Mirror 加载/脏区（见 [mirror-driver RESULTS](../mirror-driver/RESULTS.md)） | **GM1/GM2 通过**（Win7 VM：`gm2` 得脏区） | 2026-08-01 |
 | M2 | Mirror 脏区接入 `replace_host` | **通过**（Win7：`capture=mirror`；拖窗明显改善；软光标不闪） | 2026-08-01 |
-| G4c | 拖窗档 C′（vs VNC/Radmin+Mirror） | pending | |
+| G4c | 拖窗档 C′（vs VNC/Radmin+Mirror） | **VNC 段通过**（并排录像；Radmin 未测） | 2026-08-01 |
 | G5 | RESULTS 收口 | pending | |
 
 ## 拖窗对照（阶段 5 / G4）
@@ -67,6 +67,21 @@ G5 通过前：换芯代码不得覆盖 `src/media/libvnc_*`。
 | 场景 | LibVNC 卡顿 1–5 | 换芯卡顿 1–5 | 是否可感知改善 | 备注 |
 |------|-----------------|--------------|----------------|------|
 | | | | | |
+
+## G4c 拖窗对照（档 C′）
+
+清单：[docs/g4c-checklist.md](docs/g4c-checklist.md)
+
+| 项 | 记录 |
+|----|------|
+| Host / 分辨率 | Win7 VM；1504×957；管理员 + `capture=mirror`；测时关闭设备管理器 |
+| 录像路径 | `c:\Users\haight\Videos\20260801_202934.mp4`（约 50s；左 Road Desk Viewer / 右 VNC Viewer 并排） |
+| replace mirror 分 1–5 | **~4**（维护者：与 VNC 差不多） |
+| 同机 VNC 分 1–5 | **~4** |
+| 同机 Radmin 分 1–5 | N/A（未测） |
+| 是否被明显 pass | **否** |
+| 结论 | **相对 VNC：档 C′ 达成**；全量 G4c（含 Radmin）仍可选补测 |
+| 条件备注 | 对照时管理员 + `capture=mirror`。开 DM 键鼠失效属 `Attach.ToDesktop`/PnP 坑，与 Mirror 采帧无关（见 `mirror-driver/docs/coexistence.md`）；勿再为 DM 切 GDI |
 
 ## 进度日志
 
@@ -85,6 +100,10 @@ G5 通过前：换芯代码不得覆盖 `src/media/libvnc_*`。
 | 2026-08-01 | GM1 | **通过** | Win7 VM：`mirror_probe` → `GM1_LOADED`；见 mirror-driver RESULTS | — | 开 GM2（脏区/XPDM） |
 | 2026-08-01 | GM2 | **通过** | Win7 VM：`DISPLAYV4` + dirty；见 mirror-driver RESULTS | — | M2 接入 replace_host |
 | 2026-08-01 | M2 | **通过** | Win7：`capture=mirror device=\\.\DISPLAYV4`；拖窗手感明显好于 GDI；去 `CAPTUREBLT` + Viewer 离屏合成后光标静止/移动均不闪 | — | G4c 对照 |
+| 2026-08-01 | G4c 开测 | 进行中 | 清单 `docs/g4c-checklist.md`；同机 mirror vs VNC/Radmin 拖窗打分 | | 待录像+分数 |
+| 2026-08-01 | G4c vs VNC | **通过** | 并排 `20260801_202934.mp4`；维护者感觉与 VNC 差不多；条件=管理员+关 DM+mirror | ~4/~4 | Radmin 可选；可进管线收尾/G5 准备 |
+| 2026-08-01 | DM+键鼠坑结案 | **记录** | 根因=`Attach.ToDesktop=1`/PnP，非 Mirror 采帧；误切 GDI 会卡+改 Basic；现开 DM 保持 Mirror（同 VNC）已核实可用 | — | 见 coexistence.md |
+| 2026-08-01 | DM×权限对照 | **确认** | 同构建不切 GDI：管理员开 DM=正常；非管理员开 DM=键鼠失效 → **必须管理员跑 mirror Host** | — | coexistence.md |
 
 ## 合规
 

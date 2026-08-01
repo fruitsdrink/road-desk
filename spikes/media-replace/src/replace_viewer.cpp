@@ -50,8 +50,11 @@ struct App {
   // Latest-pointer-wins + small key queue (UI -> net thread).
   bool ptr_pending = false;
   uint8_t ptr_buttons = 0;
+  // Buttons tracked only from DOWN/UP — never trust WM_MOUSEMOVE wparam (spurious RMENU).
+  uint8_t tracked_buttons = 0;
   uint16_t ptr_x = 0;
   uint16_t ptr_y = 0;
+  DWORD ignore_buttons_until_ms = 0;
   KeyEvent keys[kKeyQueueCap]{};
   int key_head = 0;
   int key_tail = 0;
@@ -432,6 +435,7 @@ void release_all_keys_for_focus_loss() {
     g_app.key_tail = next;
   }
   // Release mouse buttons; keep last pointer position (do not jump to 0,0).
+  g_app.tracked_buttons = 0;
   g_app.ptr_pending = true;
   g_app.ptr_buttons = 0;
   LeaveCriticalSection(&g_app.input_lock);
@@ -568,21 +572,68 @@ void request_paint(HWND hwnd) {
   }
 }
 
-void on_mouse(HWND hwnd, WPARAM wparam, LPARAM lparam) {
-  int mask = 0;
-  if (wparam & MK_LBUTTON) {
-    mask |= 1;
+void on_mouse_move(HWND hwnd, LPARAM lparam) {
+  int x = 0;
+  int y = 0;
+  map_mouse(hwnd, lparam, &x, &y);
+  // Position only — keep last DOWN/UP button mask (MOVE wparam is unreliable).
+  queue_pointer(g_app.tracked_buttons, x, y);
+
+  const int cx = GET_X_LPARAM(lparam);
+  const int cy = GET_Y_LPARAM(lparam);
+  EnterCriticalSection(&g_app.cursor_lock);
+  const int old_x = g_app.local_mx;
+  const int old_y = g_app.local_my;
+  g_app.local_mx = cx;
+  g_app.local_my = cy;
+  LeaveCriticalSection(&g_app.cursor_lock);
+  invalidate_local_cursor(hwnd, old_x, old_y, cx, cy);
+}
+
+void on_mouse_button(HWND hwnd, UINT msg, LPARAM lparam) {
+  uint8_t bit = 0;
+  bool down = false;
+  switch (msg) {
+    case WM_LBUTTONDOWN:
+      bit = 1;
+      down = true;
+      break;
+    case WM_LBUTTONUP:
+      bit = 1;
+      down = false;
+      break;
+    case WM_MBUTTONDOWN:
+      bit = 2;
+      down = true;
+      break;
+    case WM_MBUTTONUP:
+      bit = 2;
+      down = false;
+      break;
+    case WM_RBUTTONDOWN:
+      bit = 4;
+      down = true;
+      break;
+    case WM_RBUTTONUP:
+      bit = 4;
+      down = false;
+      break;
+    default:
+      return;
   }
-  if (wparam & MK_MBUTTON) {
-    mask |= 2;
+  if (down && GetTickCount() < g_app.ignore_buttons_until_ms) {
+    // Drop phantom clicks right after Viewer focus (seen as desktop/cmd context menus).
+    return;
   }
-  if (wparam & MK_RBUTTON) {
-    mask |= 4;
+  if (down) {
+    g_app.tracked_buttons = static_cast<uint8_t>(g_app.tracked_buttons | bit);
+  } else {
+    g_app.tracked_buttons = static_cast<uint8_t>(g_app.tracked_buttons & ~bit);
   }
   int x = 0;
   int y = 0;
   map_mouse(hwnd, lparam, &x, &y);
-  queue_pointer(mask, x, y);
+  queue_pointer(g_app.tracked_buttons, x, y);
 
   const int cx = GET_X_LPARAM(lparam);
   const int cy = GET_Y_LPARAM(lparam);
@@ -619,21 +670,42 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_PAINT:
       paint(hwnd);
       return 0;
+    case WM_MOUSEACTIVATE:
+      g_app.ignore_buttons_until_ms = GetTickCount() + 400;
+      g_app.tracked_buttons = 0;
+      return MA_ACTIVATE;
+    case WM_SETFOCUS:
+      g_app.ignore_buttons_until_ms = GetTickCount() + 400;
+      g_app.tracked_buttons = 0;
+      queue_pointer(0, g_app.ptr_x, g_app.ptr_y);
+      return 0;
     case WM_LBUTTONDOWN:
       SetFocus(hwnd);
       SetCapture(hwnd);
-      on_mouse(hwnd, wp, lp);
+      on_mouse_button(hwnd, msg, lp);
       return 0;
     case WM_LBUTTONUP:
-      on_mouse(hwnd, wp, lp);
+      on_mouse_button(hwnd, msg, lp);
       ReleaseCapture();
       return 0;
     case WM_RBUTTONDOWN:
+      SetCapture(hwnd);
+      on_mouse_button(hwnd, msg, lp);
+      return 0;
     case WM_RBUTTONUP:
+      on_mouse_button(hwnd, msg, lp);
+      ReleaseCapture();
+      return 0;
     case WM_MBUTTONDOWN:
+      SetCapture(hwnd);
+      on_mouse_button(hwnd, msg, lp);
+      return 0;
     case WM_MBUTTONUP:
+      on_mouse_button(hwnd, msg, lp);
+      ReleaseCapture();
+      return 0;
     case WM_MOUSEMOVE:
-      on_mouse(hwnd, wp, lp);
+      on_mouse_move(hwnd, lp);
       return 0;
     case WM_KEYDOWN:
     case WM_KEYUP:

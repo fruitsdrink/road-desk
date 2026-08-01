@@ -35,4 +35,4 @@ replace_viewer.exe 127.0.0.1:5902 road-desk <fingerprint>
 |------|--------------|------|
 | replace_host gdi | ~偏低 | 此前 GDI 上限 |
 | replace_host mirror | **明显更好** | 2026-08-01；光标已不闪 |
-| 同机 VNC/Radmin | | G4c |
+| 同机 VNC/Radmin | | 见 [g4c-checklist.md](g4c-checklist.md) |

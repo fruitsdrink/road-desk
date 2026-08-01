@@ -1,5 +1,7 @@
 #include "mirror_client.h"
 
+#include <dwmapi.h>
+
 #include <cstring>
 #include <cstdio>
 
@@ -115,19 +117,154 @@ void clear_attach_registry(const char* device_key) {
   write_attach_registry(device_key, 0);
 }
 
+// If Attach.ToDesktop exists and is non-zero, force it to 0 (do not create new values).
+void zero_attach_if_set(HKEY h) {
+  DWORD cur = 0;
+  DWORD cb = sizeof(cur);
+  DWORD type = 0;
+  if (RegQueryValueExA(h, "Attach.ToDesktop", nullptr, &type, reinterpret_cast<LPBYTE>(&cur),
+                       &cb) != ERROR_SUCCESS ||
+      type != REG_DWORD || cur == 0) {
+    return;
+  }
+  cur = 0;
+  RegSetValueExA(h, "Attach.ToDesktop", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&cur),
+                 sizeof(cur));
+}
+
+void scrub_attach_under_key(HKEY root, bool skip_rdmmini) {
+  char name[256];
+  for (DWORD i = 0; RegEnumKeyA(root, i, name, sizeof(name)) == ERROR_SUCCESS; ++i) {
+    if (skip_rdmmini && _stricmp(name, kMiniportService) == 0) {
+      continue;
+    }
+    HKEY svc = nullptr;
+    if (RegOpenKeyExA(root, name, 0, KEY_READ | KEY_ENUMERATE_SUB_KEYS, &svc) != ERROR_SUCCESS) {
+      continue;
+    }
+    static const char* kDevs[] = {"DEVICE0", "Device0", "DEVICE1", "Device1", "DEVICE2",
+                                  "Device2"};
+    for (const char* d : kDevs) {
+      HKEY dev = nullptr;
+      if (RegOpenKeyExA(svc, d, 0, KEY_QUERY_VALUE | KEY_SET_VALUE, &dev) == ERROR_SUCCESS) {
+        zero_attach_if_set(dev);
+        RegCloseKey(dev);
+      }
+    }
+    {
+      HKEY write = nullptr;
+      if (RegOpenKeyExA(root, name, 0, KEY_QUERY_VALUE | KEY_SET_VALUE, &write) == ERROR_SUCCESS) {
+        zero_attach_if_set(write);
+        RegCloseKey(write);
+      }
+    }
+    RegCloseKey(svc);
+  }
+}
+
+void scrub_mirror_device_keys(bool skip_ours) {
+  DISPLAY_DEVICEA dd{};
+  dd.cb = sizeof(dd);
+  for (DWORD i = 0; EnumDisplayDevicesA(nullptr, i, &dd, 0); ++i) {
+    if (!(dd.StateFlags & DISPLAY_DEVICE_MIRRORING_DRIVER)) {
+      continue;
+    }
+    if (skip_ours && device_string_is_ours(dd.DeviceString)) {
+      continue;
+    }
+    if (!dd.DeviceKey[0]) {
+      continue;
+    }
+    const char* p = dd.DeviceKey;
+    if (_strnicmp(p, "\\Registry\\Machine\\", 18) == 0) {
+      p += 18;
+    } else if (_strnicmp(p, "\\REGISTRY\\MACHINE\\", 18) == 0) {
+      p += 18;
+    }
+    HKEY h = nullptr;
+    if (p[0] &&
+        RegOpenKeyExA(HKEY_LOCAL_MACHINE, p, 0, KEY_QUERY_VALUE | KEY_SET_VALUE, &h) ==
+            ERROR_SUCCESS) {
+      zero_attach_if_set(h);
+      RegCloseKey(h);
+    }
+  }
+}
+
+void scrub_service_trees(bool skip_rdmmini) {
+  static const char* kRoots[] = {
+      "SYSTEM\\CurrentControlSet\\Hardware Profiles\\Current\\System\\CurrentControlSet\\Services",
+      "SYSTEM\\CurrentControlSet\\Services",
+  };
+  for (const char* root_path : kRoots) {
+    HKEY root = nullptr;
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, root_path, 0, KEY_READ | KEY_ENUMERATE_SUB_KEYS,
+                      &root) == ERROR_SUCCESS) {
+      scrub_attach_under_key(root, skip_rdmmini);
+      RegCloseKey(root);
+    }
+  }
+}
+
+void scrub_foreign_attach_registry() {
+  // Do NOT touch rdmmini / our DeviceKey while attached — writing those during
+  // Device Manager PnP refresh wedges mouse/keyboard on Win7.
+  scrub_mirror_device_keys(/*skip_ours=*/true);
+  scrub_service_trees(/*skip_rdmmini=*/true);
+}
+
+void scrub_all_attach_registry() {
+  clear_attach_registry(nullptr);
+  scrub_mirror_device_keys(/*skip_ours=*/false);
+  scrub_service_trees(/*skip_rdmmini=*/false);
+}
+
+// CDS attach/detach can flip Win7 color scheme (Basic balloon). Preserve composition.
+struct CompositionSnapshot {
+  BOOL enabled = FALSE;
+  bool have = false;
+};
+
+CompositionSnapshot snapshot_composition() {
+  CompositionSnapshot s;
+  if (SUCCEEDED(DwmIsCompositionEnabled(&s.enabled))) {
+    s.have = true;
+  }
+  return s;
+}
+
+void try_restore_dwm_composition(const CompositionSnapshot* prefer = nullptr) {
+  // If we knew composition was on (or unknown), nudge it back — do not force off
+  // (forcing off is itself a theme change).
+  const bool want_on = !prefer || !prefer->have || prefer->enabled;
+  if (!want_on) {
+    return;
+  }
+#pragma warning(push)
+#pragma warning(disable : 4995)
+  DwmEnableComposition(1);
+#pragma warning(pop)
+}
+
 bool cds_detach_device(const char* device_name) {
+  const CompositionSnapshot before = snapshot_composition();
   DEVMODEA dm{};
   dm.dmSize = sizeof(dm);
   dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_POSITION | DM_BITSPERPEL;
   dm.dmPelsWidth = 0;
   dm.dmPelsHeight = 0;
   dm.dmBitsPerPel = 32;
-  LONG code = ChangeDisplaySettingsExA(device_name, &dm, nullptr,
-                                       CDS_UPDATEREGISTRY | CDS_NORESET, nullptr);
+  // Prefer no UPDATEREGISTRY so detach does not re-stick Attach.ToDesktop=1 elsewhere.
+  LONG code = ChangeDisplaySettingsExA(device_name, &dm, nullptr, CDS_NORESET, nullptr);
+  if (code != DISP_CHANGE_SUCCESSFUL) {
+    code = ChangeDisplaySettingsExA(device_name, &dm, nullptr,
+                                    CDS_UPDATEREGISTRY | CDS_NORESET, nullptr);
+  }
   if (code != DISP_CHANGE_SUCCESSFUL) {
     return false;
   }
   code = ChangeDisplaySettingsExA(nullptr, nullptr, nullptr, 0, nullptr);
+  try_restore_dwm_composition(&before);
   return code == DISP_CHANGE_SUCCESSFUL || code == DISP_CHANGE_RESTART;
 }
 
@@ -154,13 +291,21 @@ bool rdm_find_mirror_device(char* out_name, size_t out_len) {
   return find_mirror_device_ex(out_name, out_len, nullptr, 0, nullptr);
 }
 
+void rdm_scrub_foreign_attach_registry() {
+  scrub_foreign_attach_registry();
+}
+
+void rdm_scrub_all_attach_registry() {
+  scrub_all_attach_registry();
+}
+
 bool rdm_force_detach() {
   char name[128] = {};
   char key[512] = {};
   DWORD flags = 0;
+  // Always scrub peers (VNC/Radmin) — Device Manager re-attaches anyone with Attach=1.
+  scrub_all_attach_registry();
   if (!find_mirror_device_ex(name, sizeof(name), key, sizeof(key), &flags)) {
-    // Still try to clear known registry keys from sticky Attach.ToDesktop=1 installs.
-    clear_attach_registry(nullptr);
     return true;
   }
   clear_attach_registry(key);
@@ -169,6 +314,7 @@ bool rdm_force_detach() {
     std::printf("[mirror_client] CDS detach code failed device=%s flags=0x%lx (registry cleared)\n",
                 name, flags);
   }
+  scrub_all_attach_registry();
   return true;
 }
 
@@ -192,8 +338,13 @@ bool rdm_attach_mirror(char* device_name, size_t device_name_len) {
     device_name[device_name_len - 1] = '\0';
   }
 
+  // Peers with Attach.ToDesktop=1 (VNC/Radmin) + Device Manager PnP = mouse freeze.
+  scrub_foreign_attach_registry();
+
+  const CompositionSnapshot before = snapshot_composition();
+
   // UltraVNC order: Attach.ToDesktop=1 in registry, then ChangeDisplaySettingsEx.
-  // (Clearing to 0 then attaching — as we did briefly — fails on Win7.)
+  // Prefer CDS_NORESET without UPDATEREGISTRY so attach is not persisted for PnP.
   write_attach_registry(key, 1);
 
   DEVMODEA dm{};
@@ -205,12 +356,17 @@ bool rdm_attach_mirror(char* device_name, size_t device_name_len) {
   dm.dmPosition.x = 0;
   dm.dmPosition.y = 0;
 
-  LONG code = ChangeDisplaySettingsExA(name, &dm, nullptr,
-                                       CDS_UPDATEREGISTRY | CDS_NORESET, nullptr);
+  LONG code = ChangeDisplaySettingsExA(name, &dm, nullptr, CDS_NORESET, nullptr);
+  if (code != DISP_CHANGE_SUCCESSFUL) {
+    // Fallback: some Win7 stacks only attach with UPDATEREGISTRY.
+    code = ChangeDisplaySettingsExA(name, &dm, nullptr, CDS_UPDATEREGISTRY | CDS_NORESET,
+                                    nullptr);
+  }
   if (code != DISP_CHANGE_SUCCESSFUL) {
     std::printf("[mirror_client] CDS attach failed code=%ld device=%s %ux%u\n", code, name, cx,
                 cy);
     clear_attach_registry(key);
+    scrub_foreign_attach_registry();
     return false;
   }
   code = ChangeDisplaySettingsExA(nullptr, nullptr, nullptr, 0, nullptr);
@@ -218,11 +374,14 @@ bool rdm_attach_mirror(char* device_name, size_t device_name_len) {
     std::printf("[mirror_client] CDS apply failed code=%ld\n", code);
     clear_attach_registry(key);
     cds_detach_device(name);
+    scrub_foreign_attach_registry();
     return false;
   }
-  // Session stays attached; scrub registry to 0 so Device Manager PnP does not
-  // persist/re-attach Road Desk Mirror (dual-mirror mouse freeze with VNC).
+  // Live-attached; registry must stay 0 for us, and peers scrubbed. Do not keep
+  // pounding our DeviceKey every tick — that + Device Manager PnP freezes input.
   clear_attach_registry(key);
+  scrub_foreign_attach_registry();
+  try_restore_dwm_composition(&before);
   if (code == DISP_CHANGE_RESTART) {
     std::printf("[mirror_client] CDS asks for reboot - reboot then retry gm2\n");
   }
@@ -233,12 +392,15 @@ bool rdm_detach_mirror(const char* device_name) {
   char name[128] = {};
   char key[512] = {};
   const bool found = find_mirror_device_ex(name, sizeof(name), key, sizeof(key), nullptr);
-  clear_attach_registry(found ? key : nullptr);
+  scrub_all_attach_registry();
   const char* cds_name = (device_name && device_name[0]) ? device_name : (found ? name : nullptr);
   if (!cds_name) {
     return true;
   }
-  return cds_detach_device(cds_name);
+  const bool ok = cds_detach_device(cds_name);
+  scrub_all_attach_registry();
+  (void)key;
+  return ok;
 }
 
 HDC rdm_create_mirror_dc(const char* device_name) {

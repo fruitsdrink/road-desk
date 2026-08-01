@@ -12,26 +12,54 @@
 | **隔离排障** | 双 Mirror 导致必现蓝屏/花屏时，**临时**在设备管理器禁用其一做复现；测完恢复。隔离 ≠ 上道政策。 |
 | **G4c 对照（可选）** | 需要「单 Mirror 公平对打」时可临时禁用第三方；测完恢复。不写进装站硬条件。 |
 
-## 设备管理器打开后鼠标失效（根因与修复）
+## 坑：开设备管理器后键鼠失效（与「Mirror 采帧」无关）
 
-**根因：** 挂接时用了 `CDS_UPDATEREGISTRY`，把 `Attach.ToDesktop=1` 写进注册表。设备管理器一刷新 PnP，系统按注册表把 **Road Desk + VNC** 等 Mirror 再挂一遍，Win7 上易导致鼠标/焦点失效。  
-「测远控别开设备管理器」只是绕开，不是方案。
+**结论（2026-08-01 真环核实）：** 开 DM 时键鼠失效 **不是**「会话中开着 Mirror 采帧」导致的。VNC / 管理员 Road Desk 开着 Mirror 开 DM 都正常。
 
-**修复（代码 + INF，对齐 VNC 系「用完卸干净」）：**
+**复测对照（同构建、不开 DM→GDI）：**
+
+| Host 权限 | 开 DM | 结果 |
+|-----------|-------|------|
+| **管理员** | 保持 Mirror | **正常**（键鼠可用） |
+| **非管理员** | 保持 Mirror | **键鼠失效** |
+
+→ 可确认：**管理员权限决定了开 DM 后键鼠是否失效**（非管理员写不了 HKLM，清不掉 `Attach.ToDesktop` / peer scrub 失效）。
+
+**机制根因：** `Attach.ToDesktop=1` 粘在注册表（挂接曾用 `CDS_UPDATEREGISTRY`，或 peer VNC/Radmin 未清）。DM 一刷 PnP，系统按注册表把 Mirror **再挂一遍** → Win7 键鼠/焦点失效。会话中反复写自身 `DeviceKey` 也会加重。非管理员无法完成启动时 `force_detach` 与会话中 peer scrub，故一开 DM 必现。
+
+**错误绕开（已废弃，勿再加回）：**
+
+| 错误做法 | 后果 |
+|----------|------|
+| 开 DM → CDS 卸 Mirror → 临时 GDI | 拖窗明显卡（`cap_ms` 百毫秒级）；CDS 还会触发「配色方案已更改为 Windows 7 Basic」 |
+| 开 DM → 软切 GDI（不 CDS） | 不改主题，但仍慢；且没有必要 |
+| 「测远控别开设备管理器」 | 只是绕开，不是方案 |
+
+**正确策略（对齐 VNC）：**
 
 1. INF 默认 `Attach.ToDesktop=0`
-2. 挂接前 / Host 启动：`rdm_force_detach` 清注册表 + CDS 卸挂
-3. `rdm_attach_mirror`：先写注册表 `=1` 再 CDS 挂接（UltraVNC 顺序）；挂上后**立刻把注册表写回 0**（会话仍附着，避免 PnP/设备管理器按注册表再挂死鼠标）
-4. 会话结束 / Host 启动：`force_detach` CDS 卸挂 + 注册表 0  
-5. 仍建议：远控会话中途尽量别开设备管理器（VNC Mirror 自己的 `Attach.ToDesktop=1` 我们改不了）
+2. 挂接：注册表写 `1` → `CDS`（优先 **无** `UPDATEREGISTRY`）→ 立刻清回 `0`；失败才回退带 `UPDATEREGISTRY` 的 CDS，事后仍清 `0`
+3. **`replace_host … mirror` 必须管理员**（硬条件）：启动 `rdm_force_detach` + 清 peer/`rdmmini`；非管理员清 HKLM 失败 → 开 DM 键鼠失效
+4. 会话中：**只 scrub 第三方** Mirror（约 2s）；**禁止**反复写正在附着的 Road Desk `DeviceKey`
+5. **开着设备管理器/计算机管理：继续 Mirror 采帧**，不要为 DM 切 GDI、不要为 DM 做 CDS 卸挂
+6. CDS attach/detach 后按挂接前快照恢复 DWM（避免无谓改主题）；DM 路径本身不应触发 CDS
+7. 会话结束：`force_detach` + 全量 scrub
 
-请更新 VM 上的 `replace_host.exe` + `mirror_probe.exe`。一次清理：
+**已冻住时（旧二进制 / Attach=1 残留）：**
 
 ```bat
 c:\rd\mirror_probe.exe detach
 ```
 
-验证：detach 后开设备管理器，鼠标应正常；再跑 `replace_host … mirror` 远控，停 Host 后再开设备管理器仍应正常。
+或重启 Host（管理员）。
+
+## 坑：连上远控后客户机变成 Windows 7 Basic
+
+**现象：** 起 Viewer / VNC 连上后，客户机弹出「配色方案已更改为 Windows 7 Basic」。
+
+**原因：** Win7 规定 **XPDM Mirror 与 Aero（DWM）不兼容**。会话挂接 Mirror（Road Desk 或 VNC）时，系统关掉桌面合成并切到 Basic。**不是 Viewer 改主题**；VNC 用 Mirror 时同样会变 Basic（已对照）。
+
+**预期：** 远控会话期间多为 Basic；断开并卸 Mirror 后多数会回到 Aero。若要会话中保持 Aero，只能走 GDI（更卡）或 Win10+ DXGI，不能靠 Win7 Mirror。
 
 ## 临时禁用（仅隔离 / 对照）
 

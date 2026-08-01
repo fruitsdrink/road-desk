@@ -36,7 +36,7 @@ dir %SystemRoot%\system32\rdmdisp.dll
 
 - [ ] 显示适配器出现 **Road Desk Mirror Driver**
 - [ ] 无必现蓝屏/花屏
-- [ ] INF 为 `Attach.ToDesktop=0`（开机不挂接；避免与 VNC Mirror 并存时开设备管理器鼠标死）
+- [ ] INF 为 `Attach.ToDesktop=0`（开机不挂接；避免 Attach=1 + DM PnP 死键鼠，见 coexistence.md）
 - [ ] **重启**（刚装完 INF 时，设备管理器已有节点，但 `EnumDisplayDevices` 往往还没有；attach 会 FAIL）
 
 重启后自检：
