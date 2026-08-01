@@ -18,7 +18,7 @@ Related: [CONTEXT.md](../CONTEXT.md), [ADR-0001](./adr/0001-media-plane-vnc-adap
 | **Viewer** | **C/C++ 薄 UI（原生 Win32）** | 无额外运行时；Win7 可跑；本地壳仅为连接栏 + 远端画面。不用 Electron（与 Win7 冲突）；不用 C#/.NET（避免现场装运行时） |
 | **Host Sidecar** | **Go，工具链钉死 1.20.x** | 单文件 HTTP 工具。`GOOS=windows GOARCH=amd64`；**禁止用 Go 1.21+ 打 Win7 用 Sidecar**（1.20 为官方最后支持 Win7/2008/2012 的系列，建议锁定最后补丁如 1.20.14）。开发机可另装更新 Go 编别的东西，Sidecar 构建必须走 1.20.x |
 | **C++ 工具链** | **MSVC 2022 + CMake，x64** | Agent/Viewer 主线。静态链 CRT 或附带 VC++ 可再发行组件；真 Win7 验证。若某 VNC 适配器强迫特定生成方式再开例外 |
-| **媒体面 VNC 库** | **LibVNC（Server + Client）作适配器** | **MVP 内部**适配器；不整包 Fork UltraVNC。体验对照用经典 WinVNC 安装版。许可见 ADR-0002。**正式交付前**按 [ADR-0004](./adr/0004-compliant-media-self-developed.md) 换成自研非 RFB 实现（计划：[spike-media-replace.md](./spike-media-replace.md)）；换芯期间选型表不假装已替换 |
+| **媒体面 VNC 库** | **LibVNC（Server + Client）作适配器** | **MVP 内部**适配器。许可见 ADR-0002。**正式交付前**按 [ADR-0004](./adr/0004-compliant-media-self-developed.md)：自研非 RFB + TLS mux，并 **自研 Mirror 采屏**（计划：[spike-media-replace.md](./spike-media-replace.md)）；换芯期间选型表不假装已替换；不采购商业 Mirror SDK |
 | **传输加密** | **Schannel TLS 包裹 + 预共享口令（PSK）** | 保密与鉴权分离；不依赖 VNC/VeNCrypt/OpenSSL。MVP 在 `src/media/tls_schannel.*` 用系统 Schannel 包裹 RFB TCP（Win7 友好，免随包 OpenSSL DLL）。默认无明文；本机调试可设 `ROAD_DESK_ALLOW_PLAINTEXT=1`。Host 自签证书，Viewer 默认校验 SHA-256 指纹（`ROAD_DESK_TLS_FINGERPRINT`）；调试可 `ROAD_DESK_TLS_INSECURE=1` |
 | **仓库布局** | **单仓** | 产品 C++ 与 `tools/host-sidecar`（Go）同仓；见下方目录约定 |
 

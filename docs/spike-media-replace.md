@@ -1,6 +1,6 @@
 # 媒体面换芯探针：实施计划与进度表
 
-Status: **planned**（分支 `cursor/media-replace-spike`；代码未开）  
+Status: **planned**（分支 `cursor/media-replace-spike`；代码未开；**2026-08-01：自研 Mirror 提前并行**）  
 Related: [ADR-0004](./adr/0004-compliant-media-self-developed.md), [ADR-0001](./adr/0001-media-plane-vnc-adapter.md), [ADR-0002](./adr/0002-mvp-gpl-then-compliant-media-base.md), [tech-stack.md](./tech-stack.md), [避坑清单](./spike-media-replace-pitfalls.md), [前序探针结论](../spikes/media-plane/RESULTS.md), [本探针结论壳](../spikes/media-replace/RESULTS.md)
 
 **避坑**：实施与每周检查对照 [spike-media-replace-pitfalls.md](./spike-media-replace-pitfalls.md)（含网络：Nagle、mux 饿死、半开连接、长度帧等）。
@@ -12,8 +12,9 @@ Related: [ADR-0004](./adr/0004-compliant-media-self-developed.md), [ADR-0001](./
 用有时限、默认可扔的探针，回答：
 
 1. 在保住 `media_plane.h` / Schannel / PSK / 互斥 / `win_input` 的前提下，自研非 RFB 媒体面能否在 Win7 Host 上跑通看屏+键鼠？
-2. **拖窗手感**能否相对现 LibVNC MVP 路径达到 **档 B**（同机可感知更跟手）？
-3. 若达不到档 B：是 GDI+管线上限，还是实现缺陷？产品可接受哪一档？**不自动**开 Mirror 采购或自研驱动立项。
+2. **拖窗手感**能否相对现 LibVNC（GDI）达到 **档 B**？
+3. 自研 Mirror + mux 后，同机相对 VNC/Radmin（Mirror）能否达到 **档 C′**（不被明显 pass）？
+4. 自研 Mirror 失败时：书面结案后再议采购（不默认买）。
 
 本探针**不替代**仍在进行的 MVP 控制面真机验收；**不重做**历史上已失败的「全量自研 + 视频区优先」。
 
@@ -24,9 +25,9 @@ Related: [ADR-0004](./adr/0004-compliant-media-self-developed.md), [ADR-0001](./
 | 第三方 VNC Viewer | **不兼容** |
 | 语言 | **继续 C/C++（MSVC）**；不用 Go/Rust 做媒体面 |
 | 传输 | 单 TLS + 逻辑 mux；P0 不上多 TCP |
-| 采集 | **仅 GDI**；不买商业 Mirror；自研 Mirror 靠后 |
+| 采集 | **自研 Mirror 提前**（交付手感依赖）；GDI 仅 mux 联调/回退；**不买**商业 Mirror SDK |
 | 编码 P0 | zlib 和/或 raw 脏矩形；**禁止**一上来整屏 JPEG |
-| 手感 | 冲档 B；不承诺档 C（ToDesk/向日葵） |
+| 手感 | 档 B（优于 LibVNC GDI）为中间门禁；档 **C′**（同机不被 VNC/Radmin+Mirror 明显 pass）为上道目标，绑 Mirror |
 | 文件 / 剪贴板 / 登录前 | 探针 P0 **不做**（mux 可留 channel id） |
 | 主线 LibVNC | 对照基线保留到切换门禁通过；**G5 未通过前禁止覆盖/删除** `src/media/libvnc_*` 与 LibVNC 链接 |
 | LibVNC 备份 | 已验证点：`backup/libvnc-mvp-verified` + tag `libvnc-mvp-verified-2026-08-01`（= `cursor/control-plane-psk-tls` @ `6f650d5`）。换芯只在 `spikes/media-replace/` 与本分支文档演进 |
@@ -37,12 +38,13 @@ Related: [ADR-0004](./adr/0004-compliant-media-self-developed.md), [ADR-0001](./
 | 档 | 含义 | 承诺 |
 |----|------|------|
 | A | 合规可交付：无 GPL；控制面 API 仍在 | 必须 |
-| B | 同机相对现 LibVNC 拖窗可感知更跟手 | 探针必须冲 |
-| C | 接近消费级远控 | 近中期不做 |
+| B | 同机相对现 LibVNC（GDI）拖窗可感知更跟手 | mux 管线中间门禁 |
+| C′ | 同机相对现场 VNC/Radmin（用 Mirror）拖窗不被明显 pass | **上道目标；绑自研 Mirror** |
+| C | 公网 ToDesk/向日葵全特性 | 仍不做 |
 
 ### 现状归因（优化对准点）
 
-GDI 整桌采帧 → 脏块 → LibVNC → TLS → Viewer 整帧绘制。拖窗时大脏区 + 发送积压 + 整帧 blit 叠加。换掉 LibVNC **不会自动**达到 ToDesk；近中期用 **mux 优先级 + 最新帧优先 + 脏区合并 + Viewer 局部更新** 冲档 B。
+GDI 整桌采帧 → 脏块 → LibVNC → TLS → Viewer 整帧绘制。现场竞品走 **Mirror 脏区**，故「只换协议不上 Mirror」会被手感 pass。双轨：**Track P** 私有协议+管线；**Track M** 自研 Mirror 采屏。
 
 ## 3. 架构要点（实现时遵守）
 
@@ -107,9 +109,11 @@ flowchart TB
 2. **先通后快**：先 mux+裸帧/raw 跑通 GUI，再上脏区合并与局部 blit；禁止并行开三条编码实验。
 3. **门禁串行**：下表 Gate 未过，不进入下一阶段；允许阶段内小步提交，不允许跳 Gate 并主线。
 4. **双路径对照**：探针 exe 与现 `host-agent`/`viewer`（LibVNC）同机同场景对比；不引入 TightVNC 第三方当换芯对照（第三方兼容已放弃）。
-5. **Win7 真环为准**：Win11 快环只冒烟；拖窗档 B 结论必须来自 Win7 Host（或与车道同等机电机）。
-6. **失败写结论，不硬开驱动**：档 B 未达 → RESULTS 写明上限与产品建议；**不**自动采购 Mirror / 自研驱动。
-7. **人周预期**：对齐前序 P5「保持 API 替换实现 3–8 人周」；本表按 **单人 vibe coding + 维护者验收** 折成约 **6～8 个自然周**（含基线周与缓冲）。无交付赶工时宁慢勿跳门禁。
+5. **生产环境默认有第三方 Mirror**：无干净「无 Mirror」生产机。档 B 对照 = 同机 Road Desk LibVNC（GDI）；档 C′ 对照 = 同机 VNC/Radmin（其 Mirror）。**Road Desk 交付用手感走自研 Mirror，不调用现场已装的第三方驱动。**
+6. **Win7 真环为准**：驱动加载、拖窗 C′ 必须来自 Win7 Host（或同等机电机）。
+7. **双轨并行、接口收敛**：Track M（驱动）与 Track P（mux）并行；用户态采屏接口先定「脏矩形回调」，GDI/Mirror 可切换，避免驱动未成就卡死协议。
+8. **仍不采购**商业 Mirror SDK；自研失败才书面再议采购，不默认回头买。
+9. **人周预期（修订）**：协议换芯约 3–8 人周 + **Mirror 驱动粗估 +4–10 人周**（含签名/共存/蓝屏风险缓冲）；日历约 **10–14 周** 双轨（单人主实现时拉长）。宁慢勿跳驱动门禁。
 
 ## 5. 阶段划分与交付物
 
@@ -125,9 +129,19 @@ flowchart TB
 
 | 项 | 内容 |
 |----|------|
-| 做什么 | Win7：PSK / 互斥 / TLS / 指纹正式路径验收；≥30 分钟浸泡；**专门记录拖窗卡顿场景**（分辨率、是否开「拖动显示内容」、车道 UI 有否视频区、主观卡顿等级 1–5） |
-| 记哪里 | [`spikes/media-plane/RESULTS.md`](../spikes/media-plane/RESULTS.md) 补浸泡；拖窗基线可同步抄一节到本探针 RESULTS「对照基线」 |
-| 出门 Gate **G0** | 正式路径可连；浸泡无黑屏/闪屏/异常掉线；拖窗基线笔记可复现 |
+| 做什么 | Win7：PSK / 互斥 / TLS / 指纹正式路径验收；≥30 分钟浸泡；**轻量拖窗快照**（见下，不搞完整矩阵） |
+| 记哪里 | [`spikes/media-plane/RESULTS.md`](../spikes/media-plane/RESULTS.md) 补浸泡；拖窗快照写入本探针 RESULTS「对照基线」 |
+| 出门 Gate **G0** | 正式路径可连；浸泡无黑屏/闪屏/异常掉线；拖窗快照已填（轻量即可） |
+
+**G0 拖窗快照（减负，约 5～10 分钟）**
+
+不要求 ≥3 场景精填、不强制 Radmin/VNC 并排打分。最低只要：
+
+1. **一条**代表性拖窗操作（例如拖资源管理器或业务窗移动数秒）。  
+2. 主观一句 + 一档分（1–5，5 最好）：「现 LibVNC / Road Desk」拖窗手感。  
+3. **可选**：同机开过 Radmin/VNC 的，用一句话对比即可（例如「明显不如 Radmin」），不必再开一轮并排测。  
+
+详细多场景对照表留到 **G4 / G4c**（那时探针与竞品对比才值得花力气）。
 
 ### 阶段 2 — 探针骨架（mux + TLS + Control）
 
@@ -153,126 +167,133 @@ flowchart TB
 | 做什么 | Viewer 指针/键盘 → Input 通道 → Host `SendInput`；Video 大包发送时 Input 仍可注入；失焦/断连松修饰键（对齐现行为） |
 | 出门 Gate **G3** | 同阶段 1 业务 GUI 操作可完成；人为制造 Video 积压时键鼠不明显饿死；**Viewer 125%/150% 缩放点击四角/中心准确**（见避坑 §L） |
 
-### 阶段 5 — 拖窗冲档 B（管线优化）
+### 阶段 5 — 拖窗冲档 B（管线优化，仍可 GDI）
 
 | 项 | 内容 |
 |----|------|
-| 做什么 | 最新帧优先、脏区合并、Viewer 局部 blit（+必要双缓冲）、编码调参；**禁止**引入 Mirror |
-| 对照 | 同机同场景 vs LibVNC MVP；填 RESULTS 拖窗表（场景、卡顿等级、是否改善） |
-| 出门 Gate **G4** | 维护者主观：**可感知优于**基线（档 B）；或书面判定「未达 B，接受 GDI 上限」 |
+| 做什么 | 最新帧优先、脏区合并、Viewer 局部 blit（+必要双缓冲）、编码调参 |
+| 对照 | 同机 vs LibVNC MVP（GDI） |
+| 出门 Gate **G4** | 可感知优于 LibVNC GDI（档 B） |
 
-### 阶段 6 — 收口与切入主线评估
+### 阶段 M — 自研 Mirror（与阶段 2～5 **并行提前**）
 
 | 项 | 内容 |
 |----|------|
-| 做什么 | 写满 RESULTS 总判；估切入 `src/media/` 人天；列出主线切换步骤（CMake 去 LibVNC、双路径开关是否保留一期） |
-| 出门 Gate **G5** | 总判三选一见 §7；若「切入主线」则另开实现任务（可同分支续做或新 PR） |
+| 目录 | spikes/mirror-driver/（WDK 样例为起点；**不**把 GPL/商业 VNC Mirror 打进正式包） |
+| M0 | WDK、测试签名、Win7 x64 能装能卸 |
+| M1 | 用户态拿到脏矩形（或等价）+ 像素；与现场第三方 Mirror **共存策略**写明 |
+| M2 | 接到 Track P 采屏接口；冲档 C′ |
+| 出门 **GM1** | 测试签名下稳定加载，无必现蓝屏 |
+| 出门 **GM2** | 脏区进用户态（小工具可看） |
+| 出门 **G4c** | 同机拖窗相对 VNC/Radmin **不被明显 pass** |
 
-**阶段 6 之后（非本探针时间盒内，但进度表列出以免遗忘）**
+### 阶段 6 — 收口与切入主线
+
+| 项 | 内容 |
+|----|------|
+| 做什么 | RESULTS 总判；切入 src/media/；去 LibVNC；Mirror 部署/签名说明 |
+| 出门 **G5** | 档 A + 目标 G4c；Mirror 未达标不得宣称上道手感 |
 
 | 后续 | 触发 |
 |------|------|
-| 主线切换：探针实现迁入 `src/media/`，正式构建去 GPL | G4 达档 B 或产品书面接受当前档 |
-| File 通道 | 产品排期；走自有 channel，不绑 RFB |
-| 登录前 | 单列里程碑 |
-| 自研 Mirror / 档 C | **仅当**产品明确要求且 G4 结论为 GDI 上限不可接受 |
+| File / 登录前 | 产品排期（仍单列） |
+| 采购商业 Mirror | **仅**自研书面失败后 |
 
-## 6. 进度表（推荐日历）
+## 6. 进度表（双轨）
 
-锚定：**2026-08-01** 起；单人主实现 + 维护者做 Win7 门禁。日期为 **建议窗口**，以 Gate 为准可整体平移，**不要压缩 Gate**。
+锚定 **2026-08-01**；单人时 P/M **错周**并行。
 
-| 周次 | 日期（建议） | 阶段 | 主要工作 | 出门 Gate |
-|------|--------------|------|----------|-----------|
-| W0 | 08-01 ～ 08-03 | 0 | 文档落仓、分支就绪、对照清单打勾 | 文档可执行 |
-| W1 | 08-04 ～ 08-10 | 1 | Win7 正式路径验收；≥30min 浸泡；拖窗基线笔记（至少 3 个场景） | **G0** |
-| W2 | 08-11 ～ 08-17 | 2 | `spikes/media-replace` 骨架；TLS+Control；构建脚本 | **G1** |
-| W3 | 08-18 ～ 08-24 | 3 | GDI → Video 显示闭环（raw/zlib）；Win11 冒烟 + Win7 看屏 | **G2** |
-| W4 | 08-25 ～ 08-31 | 4 | Input 通道 + 优先级；修饰键；业务 GUI 走通 | **G3** |
-| W5 | 09-01 ～ 09-07 | 5 | 最新帧/脏区合并/局部 blit；同机对照填表 | **G4**（目标） |
-| W6 | 09-08 ～ 09-14 | 5 缓冲 | G4 未稳则只做管线，不开新特性；补 Win7 回归 | **G4** |
-| W7 | 09-15 ～ 09-21 | 6 | RESULTS 总判；切入主线估时；开切换任务或结案 | **G5** |
+| 周次 | 日期 | Track P | Track M | 出门 |
+|------|------|---------|---------|------|
+| W0 | 08-01～03 | 文档修订 | 驱动范围 | 文档 |
+| W1 | 08-04～10 | **G0** 浸泡+基线（含 vs Radmin/VNC 参考分） | WDK/测试签 | **G0** |
+| W2 | 08-11～17 | **G1** mux | Mirror 加载骨架 | **G1** |
+| W3 | 08-18～24 | **G2** GDI Video | 加载稳定 | **G2** |
+| W4 | 08-25～31 | **G3** Input+DPI | **GM1** | G3/GM1 |
+| W5 | 09-01～07 | **G4** 档 B | **GM2** | G4/GM2 |
+| W6–W7 | 09-08～21 | Mirror 接入采屏 | 同左 | 接入 |
+| W8–W9 | 09-22～10-05 | **G4c** 档 C′ | 稳定/共存 | **G4c** |
+| W10 | 10-06～12 | **G5** 收口 | 部署说明 | **G5** |
 
-```mermaid
+`mermaid
 gantt
-  title MediaReplaceSpikeSchedule
+  title DualTrackMuxAndMirror
   dateFormat YYYY-MM-DD
   axisFormat %m-%d
-  section Gates
-  W0_Docs           :w0, 2026-08-01, 3d
-  W1_Baseline_G0    :w1, 2026-08-04, 7d
-  W2_MuxSkeleton_G1 :w2, 2026-08-11, 7d
-  W3_Video_G2       :w3, 2026-08-18, 7d
-  W4_Input_G3       :w4, 2026-08-25, 7d
-  W5_DragFeel_G4    :w5, 2026-09-01, 7d
-  W6_Buffer_G4      :w6, 2026-09-08, 7d
-  W7_Closeout_G5    :w7, 2026-09-15, 7d
-```
+  section TrackP
+  G0_Baseline     :2026-08-04, 7d
+  G1_Mux          :2026-08-11, 7d
+  G2_VideoGDI     :2026-08-18, 7d
+  G3_Input        :2026-08-25, 7d
+  G4_TierB        :2026-09-01, 7d
+  IntegrateMirror :2026-09-08, 14d
+  G4c_TierCprime  :2026-09-22, 14d
+  G5_Closeout     :2026-10-06, 7d
+  section TrackM
+  M_Setup         :2026-08-04, 7d
+  M_Load          :2026-08-11, 14d
+  GM1_Stable      :2026-08-25, 7d
+  GM2_DirtyRects  :2026-09-01, 7d
+  M_Integrate     :2026-09-08, 28d
+`
 
-### 进度检查点（每周五或 Gate 日）
+### 进度检查点
 
-每次只回答四句，写入 RESULTS「进度日志」：
+1. Track P / M 各自 Gate？ 2. Win7 复现？ 3. 拖窗分 vs LibVNC 与 vs Radmin/VNC？ 4. 驱动蓝屏则停 M、P 可续。
+避坑 §J + Mirror 签名/共存。
 
-1. 本周目标 Gate 是否达成？
-2. Win7 上最新可复现步骤是什么？
-3. 相对基线拖窗主观分（1–5，5 最好）？
-4. 下周是否允许进入下一阶段？（是/否 + 阻塞原因）
-
-并过一遍 [避坑清单 §J](./spike-media-replace-pitfalls.md) 出门抽查（尤其 E1 `TCP_NODELAY`、C2 最新帧、C3/E2 Input 优先）。
-
-### 若延期怎么砍（只砍这些）
+### 若延期怎么砍
 
 | 优先保留 | 可延后 |
 |----------|--------|
-| G0 基线、G1 TLS+Control、G3 键鼠可用 | zlib（可先 raw）、双缓冲精调、好看的 Viewer UI |
-| G4 对照结论（哪怕结论是未达 B） | File/Clipboard、多显示器、登录前 |
-| 合规路径清晰（无 GPL 进探针包） | 多 TCP、硬件编码、Mirror |
+| G0、G1、G3、GM1/GM2、G4c 结论 | 好看 UI、多 TCP、硬编、File |
+| 自研 Mirror 主路径 | 登录前完整验收 |
+| 不默认采购 SDK | Per-Monitor V2 |
 
-**不砍**：Win7 真环结论、最新帧优先、Input 不被 Video 堵死、门禁记录。
+**不砍**：Win7 真环、Input 优先、驱动可卸、G5 前不覆盖 libvnc_*。
 
 ## 7. 验收与总判
 
-### 必过（探针成功切入主线的前提）
+### 必过
 
-- [ ] **合规**：探针产物不链接 LibVNC/GPL 媒体库
-- [ ] **功能**：看屏 + 键鼠完成一次业务 GUI 操作（对齐 MVP 验收语义）
-- [ ] **TLS**：默认加密；指纹信任路径可用（调试 flag 仅本地）
-- [ ] **互斥/鉴权语义**：与控制面一致或明确委托（拒绝第二会话）
-- [ ] **档 B**：拖窗相对 LibVNC 基线可感知改善；对照表写入 RESULTS
+- [ ] 合规（无 GPL 媒体库进交付意图产物）
+- [ ] 看屏+键鼠业务 GUI；TLS；互斥/鉴权
+- [ ] **档 B**（vs LibVNC GDI）
+- [ ] **档 C′**（vs 现场 VNC/Radmin+Mirror；上道手感）— 绑自研 Mirror
+- [ ] Mirror：可装可卸、测试签路径清晰、共存策略已写
 
 ### 不构成失败
 
-- 未达 ToDesk/向日葵（档 C）
-- 桌面内视频区卡顿、粉紫拖影（GDI/overlay 已知）
-- 未做文件/剪贴板/登录前
+- 未达公网 ToDesk 全特性（档 C）
+- 视频区卡顿；未做 File/剪贴板/登录前完整验收
 
-### 总判（到期三选一）
+### 总判
 
-- **切入主线**：档 B 达成（或产品书面接受当前手感）+ 必过项齐全 → 迁 `src/media/`，交付构建去 LibVNC
-- **管线再迭代**：架构可用但档 B 未稳 → 延长阶段 5，不改采集战略
-- **GDI 上限结案**：确认非实现缺陷 → 产品选择接受档位或 **另立项** 自研 Mirror（仍不默认采购）
+- **切入主线**：A + B + C′（或产品书面降级接受无 C′）→ 迁 src/media/，去 LibVNC，带自研 Mirror 部署
+- **管线/驱动再迭代**：架构在，B 或 C′ 未稳 → 延 W8–W9，不采购
+- **自研 Mirror 失败结案**：书面记录后 **才** 议采购商业 Mirror（非默认）
 
 ## 8. 明确不做（本探针）
 
-- 采购或集成商业 Mirror / 第三方 VNC SDK  
-- 自研 Mirror Driver / 登录前远控  
-- 兼容 Tight/Ultra/第三方 Viewer  
-- 媒体面改 Go/Rust  
-- 整屏 JPEG 默认编码、以视频区 FPS 为优化目标  
-- 中心目录、审计、中继、浏览器端  
-- 把探针构建当正式装站包  
-- 跳过 G0 直接写换芯代码  
+- 采购/集成商业 Mirror SDK（失败前）
+- 调用现场已装的 VNC/Radmin Mirror 当正式依赖
+- 兼容第三方 VNC Viewer；媒体面改 Go/Rust
+- 整屏 JPEG 默认；中心/审计/中继/浏览器端
+- 探针包当正式装站包；跳过 G0；G5 前覆盖 libvnc_*
 
 ## 9. 语言选型摘要
 
 | 选项 | 结论 |
 |------|------|
-| C/C++ | **采用**（与 ADR-0003 / 现 `src/media` 一致） |
-| Go 1.20 | 仅 Sidecar；不做媒体面 |
-| Rust | 不用 |
+| C/C++ 用户态 | **采用** |
+| Mirror 驱动 | WDK/C（随样例），与 Agent 分树构建 |
+| Go / Rust | 不做媒体面 |
 
-## 10. 开源 / 商业 Mirror 摘要
+## 10. Mirror 摘要
 
-近中期 **不用**。WDK 样例 ≈ 自研起点；VNC 附带 Mirror 多 GPL/商用；MIT 虚拟显示驱动是 Win10+ 假屏，不是 Win7 镜像采集。详见 ADR-0004。
+- **自研提前**；WDK mirror 样例作起点。
+- 商业 SDK / GPL Mirror：**不**进正式包。
+- 现场已装第三方 Mirror：环境事实；正式依赖自有驱动。详见 ADR-0004。
 
 ## 11. 与主线关系
 
@@ -283,4 +304,4 @@ gantt
 | 内部可用 GPL | 探针路径验证无 GPL 交付形态 |
 | 控制面已接线 | 换芯不重写 PSK/互斥；复用 TLS 能力 |
 
-冲突时：**以 Win7 真环稳定性与拖窗对照表为准**，更新本文件与 ADR-0004 Consequences，而不是放宽「不黑屏/不闪屏」或假装达到档 C。
+冲突时：**以 Win7 真环稳定性与拖窗对照表为准**，更新本文件与 ADR-0004 Consequences，而不是放宽「不黑屏/不闪屏」或假装达到档 C′。

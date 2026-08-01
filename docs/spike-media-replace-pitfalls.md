@@ -18,7 +18,9 @@ Related: [spike-media-replace.md](./spike-media-replace.md), [ADR-0004](./adr/00
 | A2 | 默认**整屏 JPEG** / 固定小块（如 64×64）瞎切 | 历史 | 第二版：黑屏/闪屏反复 | P0 只用 raw/zlib 脏矩形；禁止整屏 JPEG 默认；小块策略要有合并 |
 | A3 | 一上来对标 ToDesk/向日葵 | 行业 | 隐含 Mirror/硬编/私有栈，拖垮节奏 | 只冲档 B（相对现 LibVNC）；档 C 明确不做 |
 | A4 | 把探针当正式装站包 | 行业 | GPL/半成品/缺签名进现场 | 产物仅内部；合规交付另走 ADR-0004 切入主线 |
-| A5 | 未达手感就开 Mirror 采购/自研驱动 | 已知 | 成本与签名链爆炸，掩盖管线问题 | G4 失败先写 GDI 上限结论；不自动开驱动 |
+| A5 | 未达手感就**采购**商业 Mirror | 已知 | 授权/签名链绑死第三方 | 自研 Mirror 已提前；**仅**自研书面失败后再议采购 |
+| A5b | 把「OS 已装 Mirror」当成「Road Desk 已用 Mirror」 | 环境 | 现场常见 VNC/Radmin Mirror ≠ 本进程可用 | 正式依赖自研驱动；不调用第三方 Mirror |
+| A5c | 只做 mux、拖到上道才发现手感被 pass | 产品 | 现场对标带 Mirror 的远控 | 档 C′ 为上道门禁；Track M 与 P 并行 |
 | A6 | 兼容第三方 VNC Viewer | 已拍板放弃 | 被 RFB 语义绑架，换芯意义打折 | 私有协议；对照只用自有 LibVNC MVP 路径 |
 
 ---

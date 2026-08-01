@@ -14,7 +14,7 @@ Related: [spike-media-plane.md](../../docs/spike-media-plane.md), ADR-0001, ADR-
 
 依据：Win7 车道真环上，探针与经典 TightVNC 并排对照，看屏与键鼠达到「GUI 可操作、手感同级」；未发现必须换 VNC 候选或重回全量自研的 P1 失败项。
 
-**未跑项**：连续 ≥30 分钟稳定性尚未实测。收口不阻塞总判；MVP 联调/浸泡中补跑，若出现黑屏、闪屏、异常掉线再重开媒体面选型。
+**已补跑**：连续 ≥30 分钟稳定性 — **通过**（2026-08-01）。若后续出现黑屏、闪屏、异常掉线再重开媒体面选型。
 
 ## P1 — 真实桌面采集与注入
 
@@ -23,7 +23,7 @@ Related: [spike-media-plane.md](../../docs/spike-media-plane.md), ADR-0001, ADR-
 | 环境 | Viewer：Win11 开发机；Host：Win7 x64 车道机（约 `10.213.8.23`），常与经典 VNC 并排（探针多占 `:5901`） |
 | GUI 可操作 | **通过** — 开窗、点选、拖动、文本/资源管理器交互可用 |
 | 对照 WinVNC 手感 | **可接受** — 产品接线后拖窗曾因 `raw` 优先/局部 blit 变差或花屏；现回退为探针策略（`hextile` 优先、整帧绘制、发送反压），拖窗手感可接受 |
-| ≥30 分钟稳定 | **未测** — 见总判残留风险 |
+| ≥30 分钟稳定 | **通过**（2026-08-01；维护者确认：主线 LibVNC 正式路径，无黑屏/闪屏/异常掉线） |
 | 结论 | **通过（附条件）** — 足以支撑 MVP 看屏+键鼠；30 分钟浸泡跟主线补 |
 
 ### 实现与已知限制（摘要）
@@ -81,7 +81,8 @@ Related: [spike-media-plane.md](../../docs/spike-media-plane.md), ADR-0001, ADR-
 ## 主线后续
 
 1. ~~控制面接入时把 LibVNC 关在 `src/media/` 适配器后~~ — **已接线**（`host-agent` / `viewer` + `scripts/build.ps1`；默认口令 `road-desk`）
-2. 补跑 ≥30 分钟浸泡；失败则重开选型，不放宽「不黑屏/不闪屏」
+2. ~~补跑 ≥30 分钟浸泡~~ — **通过**（2026-08-01）；失败则重开选型，不放宽「不黑屏/不闪屏」
 3. ~~控制面：PSK 会话、加密、单会话互斥接到真连~~ — **已接线**（`authenticate_psk` fail-closed；`SessionMutex` on accept/gone；Schannel TLS 包裹 RFB，默认无明文；指纹信任 / `ROAD_DESK_TLS_INSECURE`）
+3b. ~~Win7 正式路径验收（PSK/互斥/TLS/指纹）~~ — **通过**（2026-08-01；维护者确认；见 [media-replace RESULTS](../media-replace/RESULTS.md) G0）
 4. 文件通道按自有会话设计；登录前单列
 5. 交付前执行 P5 替换 — 路径已钉死：[ADR-0004](../../docs/adr/0004-compliant-media-self-developed.md)、[spike-media-replace.md](../../docs/spike-media-replace.md)（分支 `cursor/media-replace-spike`）
