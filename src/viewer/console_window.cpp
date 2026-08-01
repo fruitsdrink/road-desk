@@ -1,12 +1,14 @@
 #include "console_window.h"
 
 #include "demo_book.h"
+#include "product_version.h"
 #include "session_host.h"
 
 #include <commctrl.h>
 #include <windowsx.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <vector>
@@ -195,10 +197,38 @@ int measure_tab_height(HFONT font) {
   return h < kTabHDefault ? kTabHDefault : h;
 }
 
-void set_status(ConsoleState* st, const wchar_t* text) {
-  if (st && st->status) {
-    SendMessageW(st->status, SB_SETTEXTW, 0, reinterpret_cast<LPARAM>(text));
+void layout_status_parts(ConsoleState* st, int client_w) {
+  if (!st || !st->status) {
+    return;
   }
+  // message | viewer version (right, no label)
+  constexpr int kVerPartW = 72;
+  int parts[2];
+  if (client_w > kVerPartW + 40) {
+    parts[0] = client_w - kVerPartW;
+  } else {
+    parts[0] = 120;
+  }
+  parts[1] = -1;
+  SendMessageW(st->status, SB_SETPARTS, 2, reinterpret_cast<LPARAM>(parts));
+}
+
+void refresh_status_fixed(ConsoleState* st) {
+  if (!st || !st->status) {
+    return;
+  }
+  wchar_t buf[64];
+  _snwprintf_s(buf, _TRUNCATE, L"%hs", ROAD_DESK_VERSION_STRING);
+  SendMessageW(st->status, SB_SETTEXTW, 1, reinterpret_cast<LPARAM>(buf));
+}
+
+void set_status(ConsoleState* st, const wchar_t* text) {
+  if (!st || !st->status) {
+    return;
+  }
+  refresh_status_fixed(st);
+  SendMessageW(st->status, SB_SETTEXTW, 0,
+               reinterpret_cast<LPARAM>(text ? text : L""));
 }
 
 void layout(ConsoleState* st) {
@@ -274,6 +304,8 @@ void layout(ConsoleState* st) {
   }
   if (st->status) {
     MoveWindow(st->status, 0, ch - kStatusH, cw, kStatusH, TRUE);
+    layout_status_parts(st, cw);
+    refresh_status_fixed(st);
   }
 }
 
@@ -282,6 +314,10 @@ void fill_list(ConsoleState* st) {
     return;
   }
   ListView_DeleteAllItems(st->list);
+  const std::wstring ip = connect_host_display(st->connect);
+  // MVP: demo agents share one host-agent build; version not yet negotiated on wire.
+  wchar_t ver[32];
+  _snwprintf_s(ver, _TRUNCATE, L"%hs", ROAD_DESK_VERSION_STRING);
   auto devices = demo_book_devices_under(st->selected_group_id);
   int row = 0;
   for (const DemoNode* d : devices) {
@@ -291,28 +327,35 @@ void fill_list(ConsoleState* st) {
     item.pszText = const_cast<wchar_t*>(d->name.c_str());
     item.lParam = d->id;
     ListView_InsertItem(st->list, &item);
-    ListView_SetItemText(st->list, row, 1, const_cast<LPWSTR>(d->role.c_str()));
-    ListView_SetItemText(st->list, row, 2, const_cast<LPWSTR>(d->remark.c_str()));
+    ListView_SetItemText(st->list, row, 1, const_cast<LPWSTR>(ip.c_str()));
+    ListView_SetItemText(st->list, row, 2, ver);
+    ListView_SetItemText(st->list, row, 3, const_cast<LPWSTR>(d->role.c_str()));
+    ListView_SetItemText(st->list, row, 4, const_cast<LPWSTR>(d->remark.c_str()));
     ++row;
   }
 }
 
-HTREEITEM insert_tree_recursive(HWND tree, HTREEITEM parent, int node_id) {
+HTREEITEM insert_tree_recursive(ConsoleState* st, HWND tree, HTREEITEM parent, int node_id) {
   const DemoNode* n = demo_book_find(node_id);
   if (!n) {
     return nullptr;
+  }
+  std::wstring label = n->name;
+  if (n->kind == DemoNodeKind::kDevice) {
+    label += L"  ";
+    label += connect_host_display(st->connect);
   }
   TVINSERTSTRUCTW ins{};
   ins.hParent = parent;
   ins.hInsertAfter = TVI_LAST;
   ins.item.mask = TVIF_TEXT | TVIF_PARAM | TVIF_CHILDREN;
-  ins.item.pszText = const_cast<wchar_t*>(n->name.c_str());
+  ins.item.pszText = const_cast<wchar_t*>(label.c_str());
   ins.item.lParam = n->id;
   ins.item.cChildren = (n->kind == DemoNodeKind::kGroup) ? 1 : 0;
   HTREEITEM h = TreeView_InsertItem(tree, &ins);
   if (n->kind == DemoNodeKind::kGroup) {
     for (const DemoNode* c : demo_book_children(n->id)) {
-      insert_tree_recursive(tree, h, c->id);
+      insert_tree_recursive(st, tree, h, c->id);
     }
   }
   return h;
@@ -321,7 +364,7 @@ HTREEITEM insert_tree_recursive(HWND tree, HTREEITEM parent, int node_id) {
 void fill_tree(ConsoleState* st) {
   TreeView_DeleteAllItems(st->tree);
   for (const DemoNode* n : demo_book_children(-1)) {
-    HTREEITEM root = insert_tree_recursive(st->tree, TVI_ROOT, n->id);
+    HTREEITEM root = insert_tree_recursive(st, st->tree, TVI_ROOT, n->id);
     TreeView_Expand(st->tree, root, TVE_EXPAND);
   }
   st->selected_group_id = 0;
@@ -742,29 +785,36 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
       LVCOLUMNW col{};
       col.mask = LVCF_TEXT | LVCF_WIDTH;
       col.pszText = const_cast<wchar_t*>(L"名称");
-      col.cx = 180;
-      ListView_InsertColumn(st->list, 0, &col);
-      col.pszText = const_cast<wchar_t*>(L"角色");
-      col.cx = 80;
-      ListView_InsertColumn(st->list, 1, &col);
-      col.pszText = const_cast<wchar_t*>(L"备注");
       col.cx = 160;
+      ListView_InsertColumn(st->list, 0, &col);
+      col.pszText = const_cast<wchar_t*>(L"IP地址");
+      col.cx = 130;
+      ListView_InsertColumn(st->list, 1, &col);
+      col.pszText = const_cast<wchar_t*>(L"版本");
+      col.cx = 70;
       ListView_InsertColumn(st->list, 2, &col);
+      col.pszText = const_cast<wchar_t*>(L"角色");
+      col.cx = 70;
+      ListView_InsertColumn(st->list, 3, &col);
+      col.pszText = const_cast<wchar_t*>(L"备注");
+      col.cx = 140;
+      ListView_InsertColumn(st->list, 4, &col);
 
       st->session_area =
           CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN, 0, 0,
                           100, 100, hwnd, reinterpret_cast<HMENU>(IDC_SESSION_HOST),
                           st->instance, nullptr);
 
-      st->status = CreateWindowExW(0, STATUSCLASSNAMEW, nullptr, WS_CHILD | WS_VISIBLE, 0, 0, 0,
-                                   0, hwnd, reinterpret_cast<HMENU>(IDC_STATUS), st->instance,
-                                   nullptr);
+      st->status = CreateWindowExW(0, STATUSCLASSNAMEW, nullptr,
+                                   WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP, 0, 0, 0, 0, hwnd,
+                                   reinterpret_cast<HMENU>(IDC_STATUS), st->instance, nullptr);
 
       apply_ui_font(st, st->toolbar);
       apply_ui_font(st, st->tree);
       apply_ui_font(st, st->list);
       apply_ui_font(st, st->tab_strip);
       apply_ui_font(st, st->status);
+      layout_status_parts(st, 1100);
       set_status(st, L"演示模式 — Ready");
 
       fill_tree(st);

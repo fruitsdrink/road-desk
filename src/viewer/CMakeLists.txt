@@ -7,7 +7,10 @@ add_executable(viewer WIN32
   viewer.manifest
 )
 
-target_include_directories(viewer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(viewer PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_SOURCE_DIR}/src
+)
 target_compile_definitions(viewer PRIVATE UNICODE _UNICODE)
 target_link_libraries(viewer PRIVATE road_desk_media_client road_desk_session comctl32)
 

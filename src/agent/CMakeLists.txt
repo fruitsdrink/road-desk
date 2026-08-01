@@ -3,6 +3,7 @@ add_executable(host-agent
   log.cpp
 )
 
+target_include_directories(host-agent PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(host-agent PRIVATE road_desk_media_host road_desk_session)
 
 set_target_properties(host-agent PROPERTIES OUTPUT_NAME "host-agent")

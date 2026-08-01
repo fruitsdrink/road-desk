@@ -21,6 +21,11 @@ ConnectDefaults load_connect_defaults();
 void apply_connect_defaults_to(road_desk::media::MediaClientConfig* cfg,
                                const ConnectDefaults& d);
 
+// Host part of host_port for directory display (no port).
+std::wstring connect_host_display(const ConnectDefaults& d);
+// Port from host_port; default 38471 if missing/invalid.
+int connect_port(const ConnectDefaults& d);
+
 // Parse "host:port [password] [fingerprint]" from narrow command line.
 bool parse_direct_args(const char* narrow_cmd, ConnectDefaults* out);
 

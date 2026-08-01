@@ -1,5 +1,8 @@
 #include "connect_config.h"
 
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
 #include <cstdlib>
 #include <cstring>
 
@@ -70,6 +73,30 @@ void apply_connect_defaults_to(road_desk::media::MediaClientConfig* cfg,
   cfg->require_tls = d.require_tls;
   cfg->tls_insecure = d.tls_insecure;
   cfg->tls_fingerprint_sha256 = d.tls_fingerprint;
+}
+
+std::wstring connect_host_display(const ConnectDefaults& d) {
+  std::string host = d.host_port;
+  const size_t colon = host.rfind(':');
+  // Avoid chopping IPv6; demo uses IPv4 host:port.
+  if (colon != std::string::npos && host.find(':') == colon) {
+    host = host.substr(0, colon);
+  }
+  if (host.empty()) {
+    host = "192.168.26.131";
+  }
+  wchar_t wide[256] = {};
+  MultiByteToWideChar(CP_ACP, 0, host.c_str(), -1, wide, 256);
+  return wide;
+}
+
+int connect_port(const ConnectDefaults& d) {
+  const size_t colon = d.host_port.rfind(':');
+  if (colon == std::string::npos || d.host_port.find(':') != colon) {
+    return 38471;
+  }
+  const int p = std::atoi(d.host_port.c_str() + colon + 1);
+  return p > 0 ? p : 38471;
 }
 
 bool parse_direct_args(const char* narrow_cmd, ConnectDefaults* out) {

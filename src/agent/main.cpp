@@ -3,6 +3,7 @@
 #include "auth.h"
 #include "media_log.h"
 #include "media_plane.h"
+#include "product_version.h"
 #include "session_mutex.h"
 
 #include <cstdio>
@@ -49,7 +50,12 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "failed to open host-agent.log\n");
     return 1;
   }
-  road_desk::agent::log_line("host-agent starting (mux media plane)");
+  {
+    char line[128];
+    std::snprintf(line, sizeof(line), "host-agent starting (mux) version=%s",
+                  ROAD_DESK_VERSION_STRING);
+    road_desk::agent::log_line(line);
+  }
 
   {
     // Manifest requests requireAdministrator; still fail-closed if somehow not elevated

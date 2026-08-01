@@ -14,7 +14,9 @@ constexpr wchar_t kSessionClass[] = L"RoadDeskSessionHost";
 SessionHost* g_kb_target = nullptr;
 HHOOK g_kb_hook = nullptr;
 
-bool fit_rect(int cw, int ch, int fb_w, int fb_h, RECT* out) {
+// Upscale: integer zoom only (fractional upscale turns ClearType text to mush).
+// Downscale: fractional nearest-neighbor to fit the client (embedded or floating).
+bool fit_rect(int cw, int ch, int fb_w, int fb_h, RECT* out, bool /*fit_workspace*/) {
   if (cw <= 0 || ch <= 0 || fb_w <= 0 || fb_h <= 0 || !out) {
     return false;
   }
@@ -24,7 +26,11 @@ bool fit_rect(int cw, int ch, int fb_w, int fb_h, RECT* out) {
   int dw = 0;
   int dh = 0;
   if (s >= 1.0) {
-    const int si = static_cast<int>(s);
+    // Largest integer scale that still fits — sharp pixels, may letterbox.
+    int si = static_cast<int>(s);
+    if (si < 1) {
+      si = 1;
+    }
     dw = fb_w * si;
     dh = fb_h * si;
   } else {
@@ -93,11 +99,12 @@ void scale_nearest_bgra(const uint8_t* src, int sw, int sh, uint8_t* dst, int dw
   }
 }
 
-bool client_point_in_letterbox(HWND hwnd, LPARAM lparam, int fb_w, int fb_h) {
+bool client_point_in_letterbox(HWND hwnd, LPARAM lparam, int fb_w, int fb_h,
+                               bool fit_workspace) {
   RECT rc{};
   GetClientRect(hwnd, &rc);
   RECT dest{};
-  if (!fit_rect(rc.right - rc.left, rc.bottom - rc.top, fb_w, fb_h, &dest)) {
+  if (!fit_rect(rc.right - rc.left, rc.bottom - rc.top, fb_w, fb_h, &dest, fit_workspace)) {
     return false;
   }
   const int cx = GET_X_LPARAM(lparam);
@@ -105,11 +112,11 @@ bool client_point_in_letterbox(HWND hwnd, LPARAM lparam, int fb_w, int fb_h) {
   return cx >= dest.left && cx < dest.right && cy >= dest.top && cy < dest.bottom;
 }
 
-int map_mouse_x(HWND hwnd, LPARAM lparam, int fb_w, int fb_h) {
+int map_mouse_x(HWND hwnd, LPARAM lparam, int fb_w, int fb_h, bool fit_workspace) {
   RECT rc{};
   GetClientRect(hwnd, &rc);
   RECT dest{};
-  if (!fit_rect(rc.right - rc.left, rc.bottom - rc.top, fb_w, fb_h, &dest)) {
+  if (!fit_rect(rc.right - rc.left, rc.bottom - rc.top, fb_w, fb_h, &dest, fit_workspace)) {
     return 0;
   }
   const int dw = dest.right - dest.left;
@@ -126,11 +133,11 @@ int map_mouse_x(HWND hwnd, LPARAM lparam, int fb_w, int fb_h) {
   return x;
 }
 
-int map_mouse_y(HWND hwnd, LPARAM lparam, int fb_w, int fb_h) {
+int map_mouse_y(HWND hwnd, LPARAM lparam, int fb_w, int fb_h, bool fit_workspace) {
   RECT rc{};
   GetClientRect(hwnd, &rc);
   RECT dest{};
-  if (!fit_rect(rc.right - rc.left, rc.bottom - rc.top, fb_w, fb_h, &dest)) {
+  if (!fit_rect(rc.right - rc.left, rc.bottom - rc.top, fb_w, fb_h, &dest, fit_workspace)) {
     return 0;
   }
   const int dh = dest.bottom - dest.top;
@@ -249,13 +256,14 @@ LRESULT CALLBACK SessionWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
       int fb_h = 0;
       self->client_.copy_frame_bgra(unused, fb_w, fb_h);
       if (fb_w > 0 && fb_h > 0) {
-        if (!client_point_in_letterbox(hwnd, lparam, fb_w, fb_h)) {
+        const bool fit_ws = !self->floating_;
+        if (!client_point_in_letterbox(hwnd, lparam, fb_w, fb_h, fit_ws)) {
           self->client_.set_software_cursor_enabled(false);
           return 0;
         }
         self->client_.set_software_cursor_enabled(true);
-        self->client_.send_pointer(mask, map_mouse_x(hwnd, lparam, fb_w, fb_h),
-                                   map_mouse_y(hwnd, lparam, fb_w, fb_h));
+        self->client_.send_pointer(mask, map_mouse_x(hwnd, lparam, fb_w, fb_h, fit_ws),
+                                   map_mouse_y(hwnd, lparam, fb_w, fb_h, fit_ws));
       }
       return 0;
     }
@@ -498,7 +506,7 @@ void SessionHost::paint() {
   FillRect(back_dc_, &rc, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
 
   RECT dest{};
-  if (w > 0 && h > 0 && fit_rect(cw, ch, w, h, &dest) &&
+  if (w > 0 && h > 0 && fit_rect(cw, ch, w, h, &dest, !floating_) &&
       bgra.size() >= static_cast<size_t>(w) * h * 4) {
     const int dw = dest.right - dest.left;
     const int dh = dest.bottom - dest.top;
