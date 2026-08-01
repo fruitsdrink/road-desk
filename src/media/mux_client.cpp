@@ -4,6 +4,8 @@
 #include "media_plane.h"
 #include "media_log.h"
 #include "mux.h"
+#include "mux_clipboard.h"
+#include "mux_file_xfer.h"
 #include "mux_protocol.h"
 #include "tls_schannel.h"
 
@@ -31,6 +33,9 @@ namespace {
 constexpr int kKeyQueueCap = 128;
 constexpr char kLogTag[] = "media-client";
 
+struct ClientState;
+bool flush_input_queue(ClientState* st);
+
 struct KeyEvent {
   uint16_t vk = 0;
   uint8_t flags = 0;  // kInputKeyFlagDown | kInputKeyFlagExtended
@@ -57,6 +62,13 @@ uint32_t read_u32_le(const uint8_t* p) {
 void write_u16_le(uint8_t* p, uint16_t v) {
   p[0] = static_cast<uint8_t>(v & 0xff);
   p[1] = static_cast<uint8_t>((v >> 8) & 0xff);
+}
+
+void write_u32_le(uint8_t* p, uint32_t v) {
+  p[0] = static_cast<uint8_t>(v & 0xff);
+  p[1] = static_cast<uint8_t>((v >> 8) & 0xff);
+  p[2] = static_cast<uint8_t>((v >> 16) & 0xff);
+  p[3] = static_cast<uint8_t>((v >> 24) & 0xff);
 }
 
 // Same extended-VK set as mux_inject (MediaClient API has no extended flag).
@@ -195,6 +207,14 @@ struct ClientState {
   uint32_t input_flush_ok = 0;
   uint32_t input_coalesced = 0;
   uint32_t input_key_drop = 0;
+
+  CRITICAL_SECTION clip_lock{};
+  bool clip_dirty = false;
+  road_desk::replace::ClipboardEchoGuard clip_echo;
+  DWORD clip_last_seq = 0;
+  uint32_t next_xfer_id = 1;
+  bool sending_files = false;
+  road_desk::replace::FileRecvState file_recv;
 };
 
 void init_locks(ClientState* st) {
@@ -202,6 +222,7 @@ void init_locks(ClientState* st) {
     InitializeCriticalSection(&st->frame_lock);
     InitializeCriticalSection(&st->input_lock);
     InitializeCriticalSection(&st->cursor_lock);
+    InitializeCriticalSection(&st->clip_lock);
     st->locks_ready = true;
   }
 }
@@ -211,8 +232,205 @@ void destroy_locks(ClientState* st) {
     DeleteCriticalSection(&st->frame_lock);
     DeleteCriticalSection(&st->input_lock);
     DeleteCriticalSection(&st->cursor_lock);
+    DeleteCriticalSection(&st->clip_lock);
     st->locks_ready = false;
   }
+}
+
+bool send_file_abort_client(tls::TlsSession* tls, uint32_t xfer_id) {
+  using namespace road_desk::replace;
+  uint8_t body[5];
+  body[0] = kFileAbort;
+  write_u32_le(body + 1, xfer_id);
+  return mux_write(tls, kChannelFile, body, 5);
+}
+
+bool flush_clipboard_out(ClientState* st) {
+  using namespace road_desk::replace;
+  if (!st->tls || st->sending_files) {
+    return true;
+  }
+
+  bool dirty = false;
+  EnterCriticalSection(&st->clip_lock);
+  dirty = st->clip_dirty;
+  st->clip_dirty = false;
+  LeaveCriticalSection(&st->clip_lock);
+  if (!dirty) {
+    return true;
+  }
+
+  const DWORD seq = GetClipboardSequenceNumber();
+  if (seq == 0 || seq == st->clip_last_seq) {
+    return true;
+  }
+  if (st->clip_echo.should_skip_seq(seq)) {
+    st->clip_last_seq = seq;
+    return true;
+  }
+
+  if (clipboard_has_hdrop()) {
+    FileOffer offer;
+    std::string err;
+    const uint32_t xid = st->next_xfer_id++;
+    if (!clipboard_build_file_offer(xid, &offer, &err)) {
+      logf("clipboard hdrop build failed: %s", err.c_str());
+      st->clip_last_seq = seq;
+      return true;
+    }
+    std::vector<uint8_t> payload;
+    if (!build_clip_files_offer_payload(offer, &payload)) {
+      logf("clipboard offer encode failed");
+      st->clip_last_seq = seq;
+      return true;
+    }
+    if (!mux_write(st->tls, kChannelClipboard, payload.data(),
+                   static_cast<uint32_t>(payload.size()))) {
+      return false;
+    }
+    st->clip_last_seq = seq;
+    st->sending_files = true;
+    logf("clipboard files out id=%u entries=%u", offer.transfer_id,
+         static_cast<unsigned>(offer.entries.size()));
+    const bool ok = file_xfer_send_all(
+        st->tls, offer,
+        [st]() {
+          if (InterlockedCompareExchange(&st->stop, 0, 0) != 0) {
+            return false;
+          }
+          return flush_input_queue(st);
+        },
+        &err);
+    st->sending_files = false;
+    if (!ok) {
+      logf("clipboard files send failed: %s", err.c_str());
+      send_file_abort_client(st->tls, offer.transfer_id);
+      return err == "pump abort" ? false : true;
+    }
+    logf("clipboard files send done id=%u", offer.transfer_id);
+    return true;
+  }
+
+  if (clipboard_has_dib()) {
+    std::vector<uint8_t> dib;
+    if (!clipboard_read_dib(&dib)) {
+      logf("clipboard dib read failed");
+      st->clip_last_seq = seq;
+      return true;
+    }
+    std::vector<uint8_t> payload;
+    if (!build_clip_bitmap_payload(dib, &payload)) {
+      logf("clipboard bitmap encode failed / too large (%zu) - drop", dib.size());
+      st->clip_last_seq = seq;
+      return true;
+    }
+    if (!flush_input_queue(st)) {
+      return false;
+    }
+    if (!mux_write(st->tls, kChannelClipboard, payload.data(),
+                   static_cast<uint32_t>(payload.size()))) {
+      return false;
+    }
+    st->clip_last_seq = seq;
+    logf("clipboard bitmap out raw=%zu wire=%zu", dib.size(), payload.size());
+    return true;
+  }
+
+  if (clipboard_has_text()) {
+    std::vector<uint8_t> utf16;
+    if (!clipboard_read_text_utf16(&utf16)) {
+      st->clip_last_seq = seq;
+      return true;
+    }
+    std::vector<uint8_t> payload;
+    if (!build_clip_text_payload(utf16, &payload)) {
+      logf("clipboard text too large (%zu) - drop", utf16.size());
+      st->clip_last_seq = seq;
+      return true;
+    }
+    if (!mux_write(st->tls, kChannelClipboard, payload.data(),
+                   static_cast<uint32_t>(payload.size()))) {
+      return false;
+    }
+    st->clip_last_seq = seq;
+    logf("clipboard text out %zu bytes", utf16.size());
+    return true;
+  }
+
+  st->clip_last_seq = seq;
+  return true;
+}
+
+bool handle_clipboard_payload(ClientState* st, const std::vector<uint8_t>& payload) {
+  using namespace road_desk::replace;
+  if (payload.empty()) {
+    return true;
+  }
+  if (payload[0] == kClipText) {
+    std::vector<uint8_t> utf16;
+    if (!parse_clip_text_payload(payload.data(), payload.size(), &utf16)) {
+      logf("clipboard text parse failed");
+      return true;
+    }
+    if (clipboard_write_text_utf16(utf16.data(), utf16.size(), &st->clip_echo)) {
+      st->clip_last_seq = st->clip_echo.ignore_seq;
+      logf("clipboard text in %zu bytes", utf16.size());
+    }
+    return true;
+  }
+  if (payload[0] == kClipBitmap) {
+    std::vector<uint8_t> dib;
+    if (!parse_clip_bitmap_payload(payload.data(), payload.size(), &dib)) {
+      logf("clipboard bitmap parse failed");
+      return true;
+    }
+    if (clipboard_write_dib(dib.data(), dib.size(), &st->clip_echo)) {
+      st->clip_last_seq = st->clip_echo.ignore_seq;
+      logf("clipboard bitmap in %zu bytes", dib.size());
+    }
+    return true;
+  }
+  if (payload[0] == kClipFilesOffer) {
+    FileOffer offer;
+    if (!parse_clip_files_offer_payload(payload.data(), payload.size(), &offer)) {
+      logf("clipboard files offer parse failed");
+      return true;
+    }
+    if (st->file_recv.active) {
+      send_file_abort_client(st->tls, st->file_recv.offer.transfer_id);
+      file_recv_abort(&st->file_recv);
+    }
+    std::string err;
+    if (!file_recv_begin(&st->file_recv, offer, &err)) {
+      logf("clipboard files recv begin failed: %s", err.c_str());
+      send_file_abort_client(st->tls, offer.transfer_id);
+    } else {
+      logf("clipboard files offer id=%u entries=%u", offer.transfer_id,
+           static_cast<unsigned>(offer.entries.size()));
+    }
+    return true;
+  }
+  return true;
+}
+
+bool handle_file_payload(ClientState* st, const std::vector<uint8_t>& payload) {
+  using namespace road_desk::replace;
+  DWORD echo_seq = 0;
+  std::string err;
+  if (!file_recv_on_payload(&st->file_recv, payload.data(), payload.size(), &echo_seq, &err)) {
+    logf("file recv failed: %s", err.empty() ? "error" : err.c_str());
+    if (st->file_recv.offer.transfer_id) {
+      send_file_abort_client(st->tls, st->file_recv.offer.transfer_id);
+    }
+    file_recv_abort(&st->file_recv);
+    return true;
+  }
+  if (echo_seq != 0) {
+    st->clip_echo.ignore_seq = echo_seq;
+    st->clip_last_seq = echo_seq;
+    logf("clipboard files published id=%u", st->file_recv.offer.transfer_id);
+  }
+  return true;
 }
 
 void apply_cursor_payload(ClientState* st, const std::vector<uint8_t>& payload) {
@@ -452,16 +670,24 @@ bool idle_flush_input(void* ctx) {
   if (InterlockedCompareExchange(&st->stop, 0, 0) != 0) {
     return false;
   }
-  return flush_input_queue(st);
+  if (!flush_input_queue(st)) {
+    return false;
+  }
+  return flush_clipboard_out(st);
 }
 
 DWORD WINAPI net_thread(LPVOID param) {
   using namespace road_desk::replace;
   auto* st = static_cast<ClientState*>(param);
+  st->clip_last_seq = GetClipboardSequenceNumber();
   std::vector<uint8_t> payload;
   while (InterlockedCompareExchange(&st->stop, 0, 0) == 0) {
     if (!flush_input_queue(st)) {
       logf("input flush failed - disconnect");
+      break;
+    }
+    if (!flush_clipboard_out(st)) {
+      logf("clipboard flush failed - disconnect");
       break;
     }
     const SOCKET sock = tls::tls_get_socket(st->tls);
@@ -487,8 +713,17 @@ DWORD WINAPI net_thread(LPVOID param) {
       }
     } else if (ch == kChannelCursor) {
       apply_cursor_payload(st, payload);
+    } else if (ch == kChannelClipboard) {
+      if (!handle_clipboard_payload(st, payload)) {
+        break;
+      }
+    } else if (ch == kChannelFile) {
+      if (!handle_file_payload(st, payload)) {
+        break;
+      }
     }
   }
+  road_desk::replace::file_recv_abort(&st->file_recv);
   InterlockedExchange(&st->stop, 1);
   st->connected = false;
   if (st->cfg.notify_hwnd) {
@@ -838,6 +1073,15 @@ void MediaClient::set_software_cursor_enabled(bool enabled) {
   if (st->cfg.notify_hwnd) {
     InvalidateRect(st->cfg.notify_hwnd, nullptr, FALSE);
   }
+}
+
+void MediaClient::notify_clipboard_changed() {
+  if (!impl_ || !impl_->state.connected.load()) {
+    return;
+  }
+  EnterCriticalSection(&impl_->state.clip_lock);
+  impl_->state.clip_dirty = true;
+  LeaveCriticalSection(&impl_->state.clip_lock);
 }
 
 }  // namespace road_desk::media

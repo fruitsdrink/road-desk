@@ -85,6 +85,8 @@ class MediaClient {
   void release_modifiers();
   // When false, copy_frame_bgra omits software cursor (mouse left the view / letterbox).
   void set_software_cursor_enabled(bool enabled);
+  // Call from UI thread on WM_CLIPBOARDUPDATE (after AddClipboardFormatListener).
+  void notify_clipboard_changed();
 
  private:
   struct Impl;

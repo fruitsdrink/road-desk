@@ -337,7 +337,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         g_client->set_software_cursor_enabled(false);
       }
       return 0;
+    case WM_CLIPBOARDUPDATE:
+      if (g_client) {
+        g_client->notify_clipboard_changed();
+      }
+      return 0;
     case WM_DESTROY:
+      RemoveClipboardFormatListener(hwnd);
       release_backbuffer();
       PostQuitMessage(0);
       return 0;
@@ -487,6 +493,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_cmd)
                            nullptr);
   if (!g_hwnd) {
     viewer_boot("create_fail");
+    return 1;
+  }
+  if (!AddClipboardFormatListener(g_hwnd)) {
+    viewer_boot("clip_listener_fail");
+    std::fprintf(stderr, "AddClipboardFormatListener failed (%lu)\n", GetLastError());
     return 1;
   }
   ShowWindow(g_hwnd, show_cmd);

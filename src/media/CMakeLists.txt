@@ -24,6 +24,8 @@ if(ROAD_DESK_WITH_MEDIA)
   add_library(road_desk_media_host STATIC
     mux_host.cpp
     mux.cpp
+    mux_clipboard.cpp
+    mux_file_xfer.cpp
     capture.cpp
     mirror_capture.cpp
     cursor_capture.cpp
@@ -42,12 +44,14 @@ if(ROAD_DESK_WITH_MEDIA)
   target_link_libraries(road_desk_media_host PUBLIC
     road_desk_session
     road_desk_miniz
-    ws2_32 gdi32 user32 secur32 crypt32 ncrypt dwmapi
+    ws2_32 gdi32 user32 shell32 secur32 crypt32 ncrypt dwmapi
   )
 
   add_library(road_desk_media_client STATIC
     mux_client.cpp
     mux.cpp
+    mux_clipboard.cpp
+    mux_file_xfer.cpp
     media_log.cpp
     tls_schannel.cpp
     tls_mvp_cert_data.cpp
@@ -58,7 +62,7 @@ if(ROAD_DESK_WITH_MEDIA)
   target_link_libraries(road_desk_media_client PUBLIC
     road_desk_session
     road_desk_miniz
-    ws2_32 gdi32 user32 secur32 crypt32 ncrypt
+    ws2_32 gdi32 user32 shell32 secur32 crypt32 ncrypt
   )
 
   add_library(road_desk_media INTERFACE)

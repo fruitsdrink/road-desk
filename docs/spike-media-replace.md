@@ -64,8 +64,8 @@ GDI 整桌采帧 → 脏块 → LibVNC → TLS → Viewer 整帧绘制。现场�
 | Control | 鉴权结果、桌面尺寸、拒绝原因、心跳 | 高 | 短消息，不可被 Video 堵死 |
 | Input | 指针、键盘 | 高 | 不被 Video 发送堵住 |
 | Video | 脏矩形帧（最新优先） | 低～中 | 可丢旧帧 |
-| File | （后期） | 低 | 独立流控 |
-| Clipboard | （后期） | 中 | 限长 |
+| File | 剪贴板文件分块（`kChannelFile`） | 低 | 独立流控；块间 drain Input |
+| Clipboard | 文本 + 位图 + 文件 Offer（`kChannelClipboard`） | 中 | 文本 1 MiB；位图解压 16 MiB；Offer 限长 |
 
 帧形（P0 约定，可在 RESULTS 修订小字段）：
 

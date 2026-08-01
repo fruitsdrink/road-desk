@@ -12,6 +12,8 @@ enum Channel : uint8_t {
   kChannelInput = 2,
   kChannelVideo = 3,
   kChannelCursor = 4,
+  kChannelClipboard = 5,
+  kChannelFile = 6,
 };
 
 enum ControlType : uint8_t {
@@ -52,8 +54,46 @@ constexpr size_t kCopyRectPayloadSize = kVideoHeaderSize + 2 + 2;
 constexpr size_t kInputPointerSize = 1 + 1 + 2 + 2;
 constexpr size_t kInputKeySize = 1 + 1 + 2;
 
+enum ClipboardMsg : uint8_t {
+  // u32 le byte_len + UTF-16LE (no BOM, may omit trailing NUL)
+  kClipText = 1,
+  // u32 transfer_id | u32 entry_count | entries...
+  // entry: u8 flags | u64 le size | u16 le path_bytes | UTF-16LE rel path
+  kClipFilesOffer = 2,
+  kClipClear = 3,
+  // u8 codec | u32 le raw_len | DIB bytes (BITMAPINFOHEADER + optional palette + bits)
+  kClipBitmap = 4,
+};
+
+enum ClipboardBitmapCodec : uint8_t {
+  kClipBitmapRaw = 1,
+  kClipBitmapZlib = 2,
+};
+
+constexpr uint8_t kClipEntryFlagDir = 1;
+
+enum FileMsg : uint8_t {
+  // u32 xfer_id | u32 file_index | u64 le size | u16 path_bytes | UTF-16LE path
+  kFileBegin = 1,
+  // u32 xfer_id | u32 file_index | u64 le offset | u32 le len | data
+  kFileChunk = 2,
+  // u32 xfer_id | u32 file_index
+  kFileEnd = 3,
+  // u32 xfer_id
+  kFileAbort = 4,
+  // u32 xfer_id — all files done; peer may publish CF_HDROP
+  kFileXferDone = 5,
+};
+
 // Hard cap — malformed len must disconnect (pitfall E5).
 constexpr uint32_t kMaxPayloadLen = 16u * 1024u * 1024u;
 constexpr uint32_t kMaxControlPayload = 64u * 1024u;
+constexpr uint32_t kMaxClipboardTextBytes = 1u * 1024u * 1024u;
+// Uncompressed CF_DIB size cap (covers common full-screen screenshots).
+constexpr uint32_t kMaxClipboardBitmapBytes = 16u * 1024u * 1024u;
+constexpr uint32_t kMaxFileChunkBytes = 64u * 1024u;
+constexpr uint64_t kMaxFileXferTotalBytes = 512ull * 1024ull * 1024ull;
+constexpr uint32_t kMaxFileXferEntries = 10000u;
+constexpr uint32_t kMaxClipboardOfferBytes = 512u * 1024u;
 
 }  // namespace road_desk::replace
