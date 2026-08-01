@@ -69,12 +69,52 @@ static VOID RdmDirtyAddUnlocked(RECTL* prcl) {
     return;
   }
   if (g_Count >= RDM_DIRTY_MAX) {
-    g_Full = TRUE;
-    g_Count = 1;
-    g_Rects[0].left = 0;
-    g_Rects[0].top = 0;
-    g_Rects[0].right = (LONG)g_Cx;
-    g_Rects[0].bottom = (LONG)g_Cy;
+    /* Collapse to bounding box instead of whole desktop (whole-desktop kills drag FPS). */
+    RECTL u;
+    ULONG i;
+    LONG uw, uh;
+
+    u = g_Rects[0];
+    for (i = 1; i < g_Count; ++i) {
+      if (g_Rects[i].left < u.left) {
+        u.left = g_Rects[i].left;
+      }
+      if (g_Rects[i].top < u.top) {
+        u.top = g_Rects[i].top;
+      }
+      if (g_Rects[i].right > u.right) {
+        u.right = g_Rects[i].right;
+      }
+      if (g_Rects[i].bottom > u.bottom) {
+        u.bottom = g_Rects[i].bottom;
+      }
+    }
+    if (r.left < u.left) {
+      u.left = r.left;
+    }
+    if (r.top < u.top) {
+      u.top = r.top;
+    }
+    if (r.right > u.right) {
+      u.right = r.right;
+    }
+    if (r.bottom > u.bottom) {
+      u.bottom = r.bottom;
+    }
+    uw = u.right - u.left;
+    uh = u.bottom - u.top;
+    if (uw <= 0 || uh <= 0 ||
+        (uw * 2 >= (LONG)g_Cx && uh * 2 >= (LONG)g_Cy)) {
+      g_Full = TRUE;
+      g_Count = 1;
+      g_Rects[0].left = 0;
+      g_Rects[0].top = 0;
+      g_Rects[0].right = (LONG)g_Cx;
+      g_Rects[0].bottom = (LONG)g_Cy;
+    } else {
+      g_Count = 1;
+      g_Rects[0] = u;
+    }
     return;
   }
   g_Rects[g_Count++] = r;

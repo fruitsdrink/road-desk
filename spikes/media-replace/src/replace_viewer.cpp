@@ -25,11 +25,11 @@
 namespace {
 
 constexpr UINT kMsgFrame = WM_APP + 40;
-constexpr int kKeyQueueCap = 64;
+constexpr int kKeyQueueCap = 128;
 
 struct KeyEvent {
   uint16_t vk = 0;
-  uint8_t down = 0;
+  uint8_t flags = 0;  // kInputKeyFlagDown | kInputKeyFlagExtended
 };
 
 struct App {
@@ -55,8 +55,11 @@ struct App {
   KeyEvent keys[kKeyQueueCap]{};
   int key_head = 0;
   int key_tail = 0;
+  // Track keys we reported down so focus-loss can synthesize KEYUPs (sticky Alt).
+  bool key_is_down[256]{};
   uint32_t input_flush_ok = 0;
   uint32_t input_coalesced = 0;
+  uint32_t input_key_drop = 0;
 
   std::vector<uint8_t> decode_buf;
   uint32_t rects_applied = 0;
@@ -380,14 +383,57 @@ void queue_pointer(int buttons, int x, int y) {
   LeaveCriticalSection(&g_app.input_lock);
 }
 
-void queue_key(unsigned vk, bool down) {
+void queue_key_flags(unsigned vk, uint8_t flags) {
+  using namespace road_desk::replace;
+  if (vk == 0 || vk > 0xFE) {
+    return;
+  }
   EnterCriticalSection(&g_app.input_lock);
   const int next = (g_app.key_tail + 1) % kKeyQueueCap;
   if (next != g_app.key_head) {
     g_app.keys[g_app.key_tail].vk = static_cast<uint16_t>(vk);
-    g_app.keys[g_app.key_tail].down = down ? 1 : 0;
+    g_app.keys[g_app.key_tail].flags = flags;
+    g_app.key_tail = next;
+    if (flags & kInputKeyFlagDown) {
+      g_app.key_is_down[vk] = true;
+    } else {
+      g_app.key_is_down[vk] = false;
+    }
+  } else {
+    ++g_app.input_key_drop;
+  }
+  LeaveCriticalSection(&g_app.input_lock);
+}
+
+void queue_key(unsigned vk, bool down, bool extended) {
+  using namespace road_desk::replace;
+  uint8_t flags = down ? kInputKeyFlagDown : 0;
+  if (extended) {
+    flags |= kInputKeyFlagExtended;
+  }
+  queue_key_flags(vk, flags);
+}
+
+void release_all_keys_for_focus_loss() {
+  // Synthesize KEYUP for every key we still think is down (esp. Alt/Ctrl).
+  EnterCriticalSection(&g_app.input_lock);
+  for (unsigned vk = 1; vk < 256; ++vk) {
+    if (!g_app.key_is_down[vk]) {
+      continue;
+    }
+    g_app.key_is_down[vk] = false;
+    const int next = (g_app.key_tail + 1) % kKeyQueueCap;
+    if (next == g_app.key_head) {
+      ++g_app.input_key_drop;
+      continue;
+    }
+    g_app.keys[g_app.key_tail].vk = static_cast<uint16_t>(vk);
+    g_app.keys[g_app.key_tail].flags = 0;  // up
     g_app.key_tail = next;
   }
+  // Release mouse buttons; keep last pointer position (do not jump to 0,0).
+  g_app.ptr_pending = true;
+  g_app.ptr_buttons = 0;
   LeaveCriticalSection(&g_app.input_lock);
 }
 
@@ -433,7 +479,7 @@ bool flush_input_queue() {
   for (int i = 0; i < nkeys; ++i) {
     uint8_t body[kInputKeySize];
     body[0] = kInputKey;
-    body[1] = local_keys[i].down;
+    body[1] = local_keys[i].flags;
     write_u16_le(body + 2, local_keys[i].vk);
     if (!mux_write(g_app.tls, kChannelInput, body, kInputKeySize)) {
       return false;
@@ -574,6 +620,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       paint(hwnd);
       return 0;
     case WM_LBUTTONDOWN:
+      SetFocus(hwnd);
       SetCapture(hwnd);
       on_mouse(hwnd, wp, lp);
       return 0;
@@ -591,13 +638,28 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_KEYDOWN:
     case WM_KEYUP:
     case WM_SYSKEYDOWN:
-    case WM_SYSKEYUP:
-      queue_key(static_cast<unsigned>(wp), msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN);
+    case WM_SYSKEYUP: {
+      // Ignore auto-repeat KEYDOWNs (bit 30) — Host SendInput repeats poorly / sticks.
+      if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && (lp & (1 << 30))) {
+        return 0;
+      }
+      const bool down = (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN);
+      const bool extended = (lp & (1 << 24)) != 0;
+      queue_key(static_cast<unsigned>(wp), down, extended);
       return 0;
+    }
     case WM_KILLFOCUS:
-      queue_pointer(0, 0, 0);
+      release_all_keys_for_focus_loss();
       return 0;
+    case WM_ACTIVATE:
+      if (LOWORD(wp) == WA_INACTIVE) {
+        release_all_keys_for_focus_loss();
+      }
+      return DefWindowProcW(hwnd, msg, wp, lp);
     case WM_DESTROY:
+      // Queue KEYUPs before stopping net thread so Host can clear sticky Ctrl/Alt.
+      release_all_keys_for_focus_loss();
+      Sleep(80);
       InterlockedExchange(&g_app.stop, 1);
       PostQuitMessage(0);
       return 0;

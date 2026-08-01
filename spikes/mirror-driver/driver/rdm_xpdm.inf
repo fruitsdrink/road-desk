@@ -62,7 +62,9 @@ AddReg = Rdm_SoftwareDeviceSettings
 HKR,, MirrorDriver,                %REG_DWORD%,    1
 HKR,, InstalledDisplayDrivers,     %REG_MULTI_SZ%, rdmdisp
 HKR,, VgaCompatible,               %REG_DWORD%,    0
-HKR,, Attach.ToDesktop,            %REG_DWORD%,    1
+; 0 = detach at boot; userspace (replace_host / mirror_probe) attaches for session only.
+; Attach.ToDesktop=1 + VNC Mirror 并存时，打开设备管理器易导致鼠标/焦点失效。
+HKR,, Attach.ToDesktop,            %REG_DWORD%,    0
 
 [rdm.GeneralConfigData]
 MaximumNumberOfDevices = 1

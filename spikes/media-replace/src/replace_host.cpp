@@ -8,6 +8,8 @@
 #include "mux.h"
 #include "protocol.h"
 
+#include "mirror_client.h"
+
 #include "auth.h"
 #include "session_mutex.h"
 #include "tls_schannel.h"
@@ -301,7 +303,8 @@ void try_extract_copyrects(const uint8_t* cur, const uint8_t* prev, int desk_w, 
   if (!cur || !prev || !dirties || dirties->empty()) {
     return;
   }
-  if (mdx == 0 && mdy == 0) {
+  // Ignore click micro-moves (title-bar activate); only real drags.
+  if (mdx > -4 && mdx < 4 && mdy > -4 && mdy < 4) {
     return;
   }
   if (mdx > 600 || mdx < -600 || mdy > 600 || mdy < -600) {
@@ -344,11 +347,14 @@ bool send_copy_rect(road_desk::media::tls::TlsSession* tls, uint32_t frame_id,
 uint32_t g_input_pointer = 0;
 uint32_t g_input_key = 0;
 int g_ptr_buttons = 0;
+int g_ptr_buttons_prev = 0;
 int g_ptr_x = 0;
 int g_ptr_y = 0;
 int g_ptr_x_prev = 0;
 int g_ptr_y_prev = 0;
 bool g_ptr_have_prev = false;
+// After LBUTTON edge: full primary blit + CPU dirty (Mirror often misses Z-order uncover).
+int g_validate_frames = 0;
 uint32_t g_cursor_hash_sent = 0;
 uint32_t g_copyrects_sent = 0;
 
@@ -425,6 +431,11 @@ void handle_input(const std::vector<uint8_t>& payload) {
   if (payload[0] == kInputPointer && payload.size() >= kInputPointerSize) {
     ++g_input_pointer;
     g_ptr_buttons = payload[1];
+    if ((g_ptr_buttons_prev & 1) != (g_ptr_buttons & 1)) {
+      // Press/release may raise a window; keep validating a few ticks for async paint.
+      g_validate_frames = 8;
+    }
+    g_ptr_buttons_prev = g_ptr_buttons;
     const int x = read_u16_le(payload.data() + 2);
     const int y = read_u16_le(payload.data() + 4);
     if (g_ptr_have_prev) {
@@ -442,7 +453,9 @@ void handle_input(const std::vector<uint8_t>& payload) {
   }
   if (payload[0] == kInputKey && payload.size() >= kInputKeySize) {
     ++g_input_key;
-    inject_vk(read_u16_le(payload.data() + 2), payload[1] != 0);
+    const bool down = (payload[1] & kInputKeyFlagDown) != 0;
+    const bool extended = (payload[1] & kInputKeyFlagExtended) != 0;
+    inject_vk(read_u16_le(payload.data() + 2), down, extended);
   }
 }
 
@@ -529,26 +542,37 @@ void serve_one(road_desk::media::tls::TlsSession* tls, const std::string& psk,
   const int sh = GetSystemMetrics(SM_CYSCREEN);
   const uint16_t width = static_cast<uint16_t>(sw > 0 ? sw : 1);
   const uint16_t height = static_cast<uint16_t>(sh > 0 ? sh : 1);
-  if (!control_send_auth_ok(tls, width, height)) {
-    logf("send AuthOk failed");
-    return;
-  }
+
+  // Attach capture before AuthOk — otherwise Viewer sees auth ok then an immediate
+  // drop when mirror attach fails (drawn=0 / recv ended).
   SessionCapture cap(capture_mode);
   if (!cap.begin()) {
-    logf("capture begin failed (mirror required but attach failed - install rdm_xpdm)");
+    logf("capture begin failed");
+    control_send_auth_fail(tls, "capture begin failed");
+    return;
+  }
+  if (!control_send_auth_ok(tls, width, height)) {
+    logf("send AuthOk failed");
     return;
   }
   if (cap.using_mirror()) {
     logf("auth ok desktop=%ux%u capture=mirror device=%s - M2 cursor+CopyRect+zlib", width,
          height, cap.mirror_device());
+  } else if (capture_mode != CaptureMode::Gdi) {
+    logf("auth ok desktop=%ux%u capture=gdi (mirror attach failed; fallback) - G3", width,
+         height);
   } else {
     logf("auth ok desktop=%ux%u capture=gdi - G3 cursor+CopyRect+zlib", width, height);
   }
   // Tick lines scrolling in the captured console create a permanent dirty loop.
   road_desk::replace::log_set_mirror_stderr(false);
+  // Clear any sticky modifiers left by a previous session / crashed viewer.
+  release_modifiers();
   g_input_pointer = 0;
   g_input_key = 0;
   g_ptr_have_prev = false;
+  g_ptr_buttons_prev = 0;
+  g_validate_frames = 0;
   g_cursor_hash_sent = 0;
   g_copyrects_sent = 0;
 
@@ -582,16 +606,6 @@ void serve_one(road_desk::media::tls::TlsSession* tls, const std::string& psk,
       break;
     }
 
-    int w = 0;
-    int h = 0;
-    const DWORD cap0 = GetTickCount();
-    mirror_dirties.clear();
-    if (!cap.capture(&frame, &w, &h, &mirror_dirties)) {
-      Sleep(20);
-      continue;
-    }
-    const DWORD cap_ms = GetTickCount() - cap0;
-
     const SOCKET sock = road_desk::media::tls::tls_get_socket(tls);
     const DWORD now = GetTickCount();
     if (now - last_cursor_ms >= 50) {
@@ -618,6 +632,18 @@ void serve_one(road_desk::media::tls::TlsSession* tls, const std::string& psk,
       continue;
     }
 
+    int w = 0;
+    int h = 0;
+    // After LBUTTON edge: full primary blit + CPU dirty (Mirror often misses Z-order uncover).
+    const bool force_validate = cap.using_mirror() && g_validate_frames > 0;
+    const DWORD cap0 = GetTickCount();
+    mirror_dirties.clear();
+    if (!cap.capture(&frame, &w, &h, &mirror_dirties, force_validate)) {
+      Sleep(20);
+      continue;
+    }
+    const DWORD cap_ms = GetTickCount() - cap0;
+
     const size_t frame_bytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 4u;
     if (frame.size() != frame_bytes || frame.empty()) {
       logf("capture size mismatch frame=%zu expect=%zu - skip", frame.size(), frame_bytes);
@@ -632,7 +658,7 @@ void serve_one(road_desk::media::tls::TlsSession* tls, const std::string& psk,
       prev.assign(frame_bytes, 0);
     }
 
-    if (cap.using_mirror()) {
+    if (cap.using_mirror() && !force_validate) {
       dirties.clear();
       if (!have_prev && mirror_dirties.empty()) {
         dirties.push_back(DirtyRect{0, 0, w, h});
@@ -642,8 +668,12 @@ void serve_one(road_desk::media::tls::TlsSession* tls, const std::string& psk,
         }
       }
     } else {
+      // GDI path, or Mirror validate after click (Z-order uncover).
       collect_dirty_rects(frame.data(), have_prev ? prev.data() : nullptr, w, h, !have_prev,
                           &dirties);
+    }
+    if (force_validate && g_validate_frames > 0) {
+      --g_validate_frames;
     }
     if (dirties.empty()) {
       socket_readable(sock, 8);
@@ -653,7 +683,7 @@ void serve_one(road_desk::media::tls::TlsSession* tls, const std::string& psk,
     collapse_dirties_for_send(&dirties, w, h);
 
     copies.clear();
-    if (have_prev && (g_ptr_buttons & 1) && g_ptr_have_prev) {
+    if (have_prev && !force_validate && (g_ptr_buttons & 1) && g_ptr_have_prev) {
       const int mdx = g_ptr_x - g_ptr_x_prev;
       const int mdy = g_ptr_y - g_ptr_y_prev;
       try_extract_copyrects(frame.data(), prev.data(), w, h, mdx, mdy, &dirties, &copies);
@@ -768,10 +798,10 @@ void serve_one(road_desk::media::tls::TlsSession* tls, const std::string& psk,
       const int ex_h = dirties.empty() ? (copies.empty() ? 0 : copies[0].h) : dirties[0].h;
       logf(
           "tick=%u id=%u batch=%u(from %u) copy=%u raw=%u wire=%u ratio=%u%% zlib=%u "
-          "enc_ms=%u send_ms=%u cap_ms=%u drop=%u in_ptr=%u ex=%dx%d",
+          "enc_ms=%u send_ms=%u cap_ms=%u drop=%u in_ptr=%u in_key=%u ex=%dx%d",
           ticks_sent, frame_id - 1, batch_n, before_collapse, copy_this,
           static_cast<unsigned>(raw_this), static_cast<unsigned>(wire_this), ratio, zlib_this,
-          enc_this, send_this, cap_ms, dropped_ticks, g_input_pointer, ex_w, ex_h);
+          enc_this, send_this, cap_ms, dropped_ticks, g_input_pointer, g_input_key, ex_w, ex_h);
     }
   }
 
@@ -781,7 +811,19 @@ void serve_one(road_desk::media::tls::TlsSession* tls, const std::string& psk,
        static_cast<unsigned long long>(sum_wire), static_cast<unsigned long long>(sum_encode_ms),
        static_cast<unsigned long long>(sum_send_ms), dropped_ticks, g_input_pointer, g_input_key);
   release_modifiers();
+  logf("session end: released modifiers/buttons");
   road_desk::replace::log_set_mirror_stderr(true);
+}
+
+BOOL WINAPI on_console_ctrl(DWORD type) {
+  // Ctrl+C / console close must clear sticky keys before process dies.
+  if (type == CTRL_C_EVENT || type == CTRL_BREAK_EVENT || type == CTRL_CLOSE_EVENT ||
+      type == CTRL_LOGOFF_EVENT || type == CTRL_SHUTDOWN_EVENT) {
+    road_desk::replace::release_modifiers();
+    road_desk::replace::logf("replace-host", "console ctrl=%u - released modifiers",
+                             static_cast<unsigned>(type));
+  }
+  return FALSE;  // let default handler continue (exit)
 }
 
 }  // namespace
@@ -791,8 +833,12 @@ int main(int argc, char** argv) {
   using road_desk::replace::parse_capture_mode;
 
   SetProcessDPIAware();
+  SetConsoleCtrlHandler(on_console_ctrl, TRUE);
   road_desk::replace::log_open("replace_host.log");
   logf("boot build=cursor-m2");
+  // Clear sticky Ctrl/Alt left by a previous crash / killed host.
+  road_desk::replace::release_modifiers();
+  logf("boot: cleared sticky modifiers");
 
   if (!wsa_init()) {
     logf("WSAStartup failed");
@@ -832,6 +878,14 @@ int main(int argc, char** argv) {
        capture_mode == CaptureMode::Gdi      ? "gdi"
        : capture_mode == CaptureMode::Mirror ? "mirror"
                                             : "auto");
+
+  // Clear sticky Attach.ToDesktop=1 from older hosts so Device Manager PnP
+  // cannot re-attach Road Desk Mirror while idle (mouse/focus freeze with VNC Mirror).
+  if (capture_mode != CaptureMode::Gdi) {
+    if (rdm_force_detach()) {
+      logf("mirror force-detach ok (Attach.ToDesktop cleared)");
+    }
+  }
 
   if (!road_desk::session::authenticate_psk(psk, psk)) {
     logf("PSK required - set ROAD_DESK_PSK or pass [password]");

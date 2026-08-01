@@ -39,8 +39,12 @@ constexpr size_t kCursorShapeHeaderSize = 1 + 1 + 2 + 2 + 2 + 2;
 
 enum InputType : uint8_t {
   kInputPointer = 1,  // u8 buttons | u16 le x | u16 le y  (VNC-like: 1=L 2=M 4=R)
-  kInputKey = 2,      // u8 down | u16 le vk
+  // u8 flags | u16 le vk — flags: bit0=down, bit1=extended (KF_EXTENDED / numpad Enter)
+  kInputKey = 2,
 };
+
+constexpr uint8_t kInputKeyFlagDown = 1;
+constexpr uint8_t kInputKeyFlagExtended = 2;
 
 // Video payload: u8 codec | u32 le frame_id | u16 le x,y,w,h | pixels
 constexpr size_t kVideoHeaderSize = 1 + 4 + 2 * 4;

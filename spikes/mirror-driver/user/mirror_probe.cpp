@@ -236,12 +236,11 @@ int main(int argc, char** argv) {
     return 0;
   }
   if (argc >= 2 && std::strcmp(argv[1], "detach") == 0) {
-    char dev[128] = {};
-    if (!rdm_find_mirror_device(dev, sizeof(dev)) || !rdm_detach_mirror(dev)) {
+    if (!rdm_force_detach()) {
       std::printf("[mirror_probe] FAIL detach\n");
       return 11;
     }
-    std::printf("[mirror_probe] detached %s\n", dev);
+    std::printf("[mirror_probe] detached (registry Attach.ToDesktop cleared)\n");
     return 0;
   }
   return probe_control();

@@ -12,6 +12,8 @@
 bool rdm_find_mirror_device(char* out_name, size_t out_len);
 bool rdm_attach_mirror(char* device_name, size_t device_name_len);
 bool rdm_detach_mirror(const char* device_name);
+// Clear sticky Attach.ToDesktop=1 + CDS detach (safe if already detached).
+bool rdm_force_detach();
 void rdm_dump_display_devices();
 
 // CreateDC on the mirror device; caller DeleteDC.

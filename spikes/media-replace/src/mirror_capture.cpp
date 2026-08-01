@@ -43,10 +43,8 @@ bool SessionCapture::begin() {
     using_mirror_ = true;
     return true;
   }
+  // Mirror attach failed — keep session alive on GDI (Viewer must not flash-exit).
   using_mirror_ = false;
-  if (mode_ == CaptureMode::Mirror) {
-    return false;
-  }
   return true;
 }
 
@@ -172,19 +170,19 @@ bool SessionCapture::blit_rect(int x, int y, int rw, int rh) {
 }
 
 bool SessionCapture::capture(std::vector<uint8_t>* bgra, int* width, int* height,
-                             std::vector<CaptureDirty>* dirties) {
+                             std::vector<CaptureDirty>* dirties, bool force_full_pixels) {
   if (!begun_ || !bgra || !width || !height || !dirties) {
     return false;
   }
   dirties->clear();
   if (using_mirror_) {
-    return capture_mirror(bgra, width, height, dirties);
+    return capture_mirror(bgra, width, height, dirties, force_full_pixels);
   }
   return gdi_.capture(bgra, width, height);
 }
 
 bool SessionCapture::capture_mirror(std::vector<uint8_t>* bgra, int* width, int* height,
-                                    std::vector<CaptureDirty>* dirties) {
+                                    std::vector<CaptureDirty>* dirties, bool force_full_pixels) {
   const int sw = GetSystemMetrics(SM_CXSCREEN);
   const int sh = GetSystemMetrics(SM_CYSCREEN);
   if (!ensure_dib(sw, sh)) {
@@ -201,7 +199,7 @@ bool SessionCapture::capture_mirror(std::vector<uint8_t>* bgra, int* width, int*
 
   const uint32_t n = rdm_escape_get_dirty(static_cast<HDC>(mirror_hdc_), dirty_buf_.data(),
                                           static_cast<uint32_t>(dirty_buf_.size()));
-  bool need_full = !have_frame_;
+  bool need_full = !have_frame_ || force_full_pixels;
   if (n >= sizeof(RdmDirtyHeader)) {
     const auto* hdr = reinterpret_cast<const RdmDirtyHeader*>(dirty_buf_.data());
     const auto* rects = reinterpret_cast<const RdmRect*>(hdr + 1);
@@ -215,7 +213,9 @@ bool SessionCapture::capture_mirror(std::vector<uint8_t>* bgra, int* width, int*
         break;
       }
       if (rect_in_bounds(r.x, r.y, r.w, r.h)) {
-        dirties->push_back(CaptureDirty{r.x, r.y, r.w, r.h});
+        if (!force_full_pixels) {
+          dirties->push_back(CaptureDirty{r.x, r.y, r.w, r.h});
+        }
       } else {
         need_full = true;
         break;
@@ -225,7 +225,14 @@ bool SessionCapture::capture_mirror(std::vector<uint8_t>* bgra, int* width, int*
     need_full = true;
   }
 
-  if (need_full) {
+  if (force_full_pixels) {
+    // Z-order / activate may change primary pixels without Mirror dirty hooks.
+    // Full blit + caller CPU-diff closes those holes (e.g. click title bar to raise).
+    dirties->clear();
+    if (!blit_rect(0, 0, width_, height_)) {
+      return false;
+    }
+  } else if (need_full) {
     dirties->clear();
     dirties->push_back(CaptureDirty{0, 0, width_, height_});
     if (!blit_rect(0, 0, width_, height_)) {

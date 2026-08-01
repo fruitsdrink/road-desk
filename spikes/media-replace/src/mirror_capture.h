@@ -39,14 +39,16 @@ class SessionCapture {
 
   // Fills BGRA top-down frame.
   // Mirror: also fills dirties (empty => idle). GDI: dirties cleared; caller CPU-diffs.
+  // force_full_pixels: blit entire desktop (still drains ExtEscape). Caller should CPU-diff;
+  // dirties will be cleared so empty means "use pixel compare", not idle.
   bool capture(std::vector<uint8_t>* bgra_top_down, int* width, int* height,
-               std::vector<CaptureDirty>* dirties);
+               std::vector<CaptureDirty>* dirties, bool force_full_pixels = false);
 
  private:
   bool begin_mirror();
   void end_mirror();
   bool capture_mirror(std::vector<uint8_t>* bgra, int* width, int* height,
-                      std::vector<CaptureDirty>* dirties);
+                      std::vector<CaptureDirty>* dirties, bool force_full_pixels);
   bool ensure_dib(int w, int h);
   void release_dib();
   bool blit_rect(int x, int y, int rw, int rh);
