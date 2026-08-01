@@ -29,7 +29,7 @@ G5 通过前：换芯代码不得覆盖 `src/media/libvnc_*`。
 |----|------|
 | Host / Viewer 环境 | Host：Win7 车道真机（例 `TZ-ETC-ENU1`，Intel HD 4600）；Viewer：维护者环境（正式路径验收 2026-08-01） |
 | 生产 Mirror 环境 | **现场无「无 Mirror」生产机**：设备管理器常见已装 `VNC Mirror Driver`、`Radmin Mirror Driver V3` 等。对照/验收默认在此环境做，不假设干净 GDI-only 现场。 |
-| Road Desk 是否使用 Mirror | **当前否**（LibVNC/GDI）；**目标：自研 Mirror**（提前并行，见 [mirror-driver RESULTS](../mirror-driver/RESULTS.md)）。不调用现场已装第三方 Mirror |
+| Road Desk 是否使用 Mirror | **换芯 Host：M2 可走自研 Mirror**（`ROAD_DESK_CAPTURE=auto|mirror|gdi`）；LibVNC 主线仍为 GDI。不调用现场第三方 Mirror |
 | 正式路径（PSK/TLS/指纹/互斥） | **通过**（2026-08-01；维护者确认） |
 | ≥30 分钟浸泡 | **通过**（2026-08-01；维护者确认：无黑屏/闪屏/异常掉线） |
 | 拖窗快照（轻量） | **已填**（录像分析，见下） |
@@ -58,6 +58,7 @@ G5 通过前：换芯代码不得覆盖 `src/media/libvnc_*`。
 | G3 | Input + 优先级 | **代码已出**（2026-08-01；Win7 待点选验证） | 2026-08-01 |
 | G4 | 拖窗档 B（vs LibVNC GDI） | pending | |
 | GM1/GM2 | 自研 Mirror 加载/脏区（见 [mirror-driver RESULTS](../mirror-driver/RESULTS.md)） | **GM1/GM2 通过**（Win7 VM：`gm2` 得脏区） | 2026-08-01 |
+| M2 | Mirror 脏区接入 `replace_host` | **通过**（Win7：`capture=mirror`；拖窗明显改善；软光标不闪） | 2026-08-01 |
 | G4c | 拖窗档 C′（vs VNC/Radmin+Mirror） | pending | |
 | G5 | RESULTS 收口 | pending | |
 
@@ -82,7 +83,8 @@ G5 通过前：换芯代码不得覆盖 `src/media/libvnc_*`。
 | 2026-08-01 | G3：Input | 代码已出 | Host 单线程 select 优先 drain Input；Viewer 发指针/VK；`tls_get_socket` | — | Win7 点选验证 |
 | 2026-08-01 | Track M 开轨 | 进行中 | `spikes/mirror-driver`：控制设备骨架 + probe；共存=上道不强制卸第三方；GM1 见 mirror-driver 清单 | — | 真机 GM1 |
 | 2026-08-01 | GM1 | **通过** | Win7 VM：`mirror_probe` → `GM1_LOADED`；见 mirror-driver RESULTS | — | 开 GM2（脏区/XPDM） |
-| 2026-08-01 | GM2 | **通过** | Win7 VM：`DISPLAYV4` + dirty；见 mirror-driver RESULTS | — | M2 接入 replace_host / G4c |
+| 2026-08-01 | GM2 | **通过** | Win7 VM：`DISPLAYV4` + dirty；见 mirror-driver RESULTS | — | M2 接入 replace_host |
+| 2026-08-01 | M2 | **通过** | Win7：`capture=mirror device=\\.\DISPLAYV4`；拖窗手感明显好于 GDI；去 `CAPTUREBLT` + Viewer 离屏合成后光标静止/移动均不闪 | — | G4c 对照 |
 
 ## 合规
 

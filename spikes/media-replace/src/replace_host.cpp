@@ -1,10 +1,10 @@
-// Track P G3: TLS + Control + GDI Video + Input inject. No LibVNC.
+// Track P + M2: TLS mux Video/Input; capture = Mirror dirties (default) or GDI.
 // Single-thread session I/O (select + send) to avoid TLS read/write deadlock.
 
-#include "capture.h"
 #include "cursor_capture.h"
 #include "inject.h"
 #include "log_util.h"
+#include "mirror_capture.h"
 #include "mux.h"
 #include "protocol.h"
 
@@ -498,7 +498,8 @@ bool drain_incoming(road_desk::media::tls::TlsSession* tls) {
   return true;
 }
 
-void serve_one(road_desk::media::tls::TlsSession* tls, const std::string& psk) {
+void serve_one(road_desk::media::tls::TlsSession* tls, const std::string& psk,
+               road_desk::replace::CaptureMode capture_mode) {
   using namespace road_desk::replace;
   uint8_t ch = 0;
   std::vector<uint8_t> payload;
@@ -532,7 +533,17 @@ void serve_one(road_desk::media::tls::TlsSession* tls, const std::string& psk) {
     logf("send AuthOk failed");
     return;
   }
-  logf("auth ok desktop=%ux%u - G3 cursor+CopyRect+zlib", width, height);
+  SessionCapture cap(capture_mode);
+  if (!cap.begin()) {
+    logf("capture begin failed (mirror required but attach failed - install rdm_xpdm)");
+    return;
+  }
+  if (cap.using_mirror()) {
+    logf("auth ok desktop=%ux%u capture=mirror device=%s - M2 cursor+CopyRect+zlib", width,
+         height, cap.mirror_device());
+  } else {
+    logf("auth ok desktop=%ux%u capture=gdi - G3 cursor+CopyRect+zlib", width, height);
+  }
   // Tick lines scrolling in the captured console create a permanent dirty loop.
   road_desk::replace::log_set_mirror_stderr(false);
   g_input_pointer = 0;
@@ -541,12 +552,12 @@ void serve_one(road_desk::media::tls::TlsSession* tls, const std::string& psk) {
   g_cursor_hash_sent = 0;
   g_copyrects_sent = 0;
 
-  DesktopCapture cap;
   std::vector<uint8_t> frame;
   std::vector<uint8_t> prev;
   std::vector<uint8_t> raw_buf;
   std::vector<uint8_t> send_buf;
   std::vector<DirtyRect> dirties;
+  std::vector<CaptureDirty> mirror_dirties;
   std::vector<CopyRect> copies;
   uint32_t frame_id = 0;
   uint32_t sent_rects = 0;
@@ -574,7 +585,8 @@ void serve_one(road_desk::media::tls::TlsSession* tls, const std::string& psk) {
     int w = 0;
     int h = 0;
     const DWORD cap0 = GetTickCount();
-    if (!cap.capture(&frame, &w, &h)) {
+    mirror_dirties.clear();
+    if (!cap.capture(&frame, &w, &h, &mirror_dirties)) {
       Sleep(20);
       continue;
     }
@@ -620,8 +632,19 @@ void serve_one(road_desk::media::tls::TlsSession* tls, const std::string& psk) {
       prev.assign(frame_bytes, 0);
     }
 
-    collect_dirty_rects(frame.data(), have_prev ? prev.data() : nullptr, w, h, !have_prev,
-                        &dirties);
+    if (cap.using_mirror()) {
+      dirties.clear();
+      if (!have_prev && mirror_dirties.empty()) {
+        dirties.push_back(DirtyRect{0, 0, w, h});
+      } else {
+        for (const CaptureDirty& d : mirror_dirties) {
+          dirties.push_back(DirtyRect{d.x, d.y, d.w, d.h});
+        }
+      }
+    } else {
+      collect_dirty_rects(frame.data(), have_prev ? prev.data() : nullptr, w, h, !have_prev,
+                          &dirties);
+    }
     if (dirties.empty()) {
       socket_readable(sock, 8);
       continue;
@@ -764,9 +787,12 @@ void serve_one(road_desk::media::tls::TlsSession* tls, const std::string& psk) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  using road_desk::replace::CaptureMode;
+  using road_desk::replace::parse_capture_mode;
+
   SetProcessDPIAware();
   road_desk::replace::log_open("replace_host.log");
-  logf("boot build=cursor-soft");
+  logf("boot build=cursor-m2");
 
   if (!wsa_init()) {
     logf("WSAStartup failed");
@@ -776,11 +802,15 @@ int main(int argc, char** argv) {
 
   int port = 5902;
   std::string psk = "road-desk";
+  CaptureMode capture_mode = CaptureMode::Auto;
   if (argc >= 2 && argv[1] && argv[1][0]) {
     port = std::atoi(argv[1]);
   }
   if (argc >= 3 && argv[2] && argv[2][0]) {
     psk = argv[2];
+  }
+  if (argc >= 4 && argv[3] && argv[3][0]) {
+    capture_mode = parse_capture_mode(argv[3]);
   }
   {
     char* e = nullptr;
@@ -790,6 +820,18 @@ int main(int argc, char** argv) {
       free(e);
     }
   }
+  {
+    char* e = nullptr;
+    size_t n = 0;
+    if (_dupenv_s(&e, &n, "ROAD_DESK_CAPTURE") == 0 && e) {
+      capture_mode = parse_capture_mode(e);
+      free(e);
+    }
+  }
+  logf("capture mode=%s (auto|mirror|gdi; env ROAD_DESK_CAPTURE)",
+       capture_mode == CaptureMode::Gdi      ? "gdi"
+       : capture_mode == CaptureMode::Mirror ? "mirror"
+                                            : "auto");
 
   if (!road_desk::session::authenticate_psk(psk, psk)) {
     logf("PSK required - set ROAD_DESK_PSK or pass [password]");
@@ -845,7 +887,7 @@ int main(int argc, char** argv) {
       continue;
     }
     logf("TLS up - awaiting Control auth");
-    serve_one(tls, psk);
+    serve_one(tls, psk, capture_mode);
     road_desk::media::tls::tls_close(tls);
     session.release();
     logf("session released - ready for next client");

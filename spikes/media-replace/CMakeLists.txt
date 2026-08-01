@@ -44,15 +44,19 @@ target_compile_definitions(replace_miniz PUBLIC
   MINIZ_NO_ARCHIVE_WRITING_APIS
 )
 
+set(MIRROR_USER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../mirror-driver/user")
+
 add_executable(replace_host
   src/replace_host.cpp
   src/mux.cpp
   src/capture.cpp
+  src/mirror_capture.cpp
   src/cursor_capture.cpp
   src/inject.cpp
   src/log_util.cpp
+  "${MIRROR_USER_DIR}/mirror_client.cpp"
 )
-target_include_directories(replace_host PRIVATE src)
+target_include_directories(replace_host PRIVATE src "${MIRROR_USER_DIR}")
 target_link_libraries(replace_host PRIVATE replace_tls_session replace_miniz user32 gdi32)
 
 add_executable(replace_viewer

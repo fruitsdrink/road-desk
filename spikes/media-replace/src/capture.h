@@ -5,7 +5,7 @@
 
 namespace road_desk::replace {
 
-// GDI primary-desktop capture (SRCCOPY|CAPTUREBLT). Output top-down BGRA.
+// GDI primary-desktop capture (SRCCOPY, no CAPTUREBLT). Output top-down BGRA.
 class DesktopCapture {
  public:
   DesktopCapture();

@@ -84,8 +84,9 @@ bool DesktopCapture::capture(std::vector<uint8_t>* bgra_top_down, int* width, in
   if (!ensure(w, h)) {
     return false;
   }
+  // SRCCOPY only — keep OS cursor out of framebuffer (Viewer uses soft cursor).
   if (!BitBlt(static_cast<HDC>(mem_dc_), 0, 0, w, h, static_cast<HDC>(screen_dc_), 0, 0,
-              SRCCOPY | CAPTUREBLT)) {
+              SRCCOPY)) {
     return false;
   }
   const size_t bytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 4u;

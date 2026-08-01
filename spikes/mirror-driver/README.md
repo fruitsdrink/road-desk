@@ -9,8 +9,9 @@ Win7 x64 **自研** Mirror 探针。与 [media-replace](../media-replace/)（Tra
 
 | 做 | 不做 |
 |----|------|
-| GM1 控制设备装/卸 + probe | 接入 `replace_host`（M2） |
-| GM2 XPDM Mirror + ExtEscape 脏区 | G4c 手感 / 正式 WHQL |
+| GM1 控制设备装/卸 + probe | G4c 手感 / 正式 WHQL |
+| GM2 XPDM Mirror + ExtEscape 脏区 | |
+| M2 接入 media-replace `replace_host` | |
 | 测试签文档与 sc / INF 流程 | 调用现场 VNC/Radmin Mirror |
 
 **蓝屏停手**：必现蓝屏 → 停 Track M，Track P 可续。

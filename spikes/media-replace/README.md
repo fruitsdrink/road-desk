@@ -1,6 +1,7 @@
 # Track P — media-replace spike
 
-Private mux over Schannel TLS. **No LibVNC.** Does not touch `src/media/libvnc_*`.
+Private mux over Schannel TLS. **No LibVNC.** Does not touch `src/media/libvnc_*`.  
+M2：可选自研 Mirror 脏区采屏（与 [mirror-driver](../mirror-driver/) 双轨）。
 
 ## Build
 
@@ -10,28 +11,22 @@ Private mux over Schannel TLS. **No LibVNC.** Does not touch `src/media/libvnc_*
 
 Artifacts: `../../build/media-replace/replace_host.exe`, `replace_viewer.exe`
 
-## G1 smoke (TLS + Control auth)
+## Run
 
 ```powershell
-# Host
+# Host — capture: auto (default) | mirror | gdi
 ..\..\build\media-replace\replace_host.exe 5902 road-desk
-# note fingerprint from stderr
+# or: replace_host.exe 5902 road-desk mirror
+# or: $env:ROAD_DESK_CAPTURE='gdi'
 
-# Viewer (other shell)
+# Viewer
 $env:ROAD_DESK_TLS_INSECURE='0'
 ..\..\build\media-replace\replace_viewer.exe 127.0.0.1:5902 road-desk <fingerprint>
 ```
 
-Expect: `G1 PASS auth ok desktop=WxH`. Wrong password → exit 2.
+Expect Host: `capture=mirror device=\\.\DISPLAYn` when XPDM is installed; else `capture=gdi`.
 
-## G2 / G3 (Video + Input)
-
-Same connect args. After auth, Viewer opens a window: shows GDI desktop and sends mouse/keyboard on Input channel.
-
-Host log: `G3 Video+Input`, `sent frames=...`  
-Viewer log: `opening G3 window`, `video frame id=...`
-
-Click inside the Viewer window to control the remote. Close window to end session.
+M2 checklist: [docs/m2-checklist.md](./docs/m2-checklist.md)
 
 ## Layout
 
@@ -40,7 +35,6 @@ Click inside the Viewer window to control the remote. Close window to end sessio
 | `src/protocol.h` | channel / control / video types |
 | `src/mux.*` | length-framed mux + Control helpers |
 | `src/capture.*` | GDI primary capture |
+| `src/mirror_capture.*` | Mirror attach + ExtEscape dirties + blit |
 | `src/replace_host.cpp` | listen, TLS, PSK, Video send |
 | `src/replace_viewer.cpp` | connect, TLS, auth, blit window |
-
-Next: G3 Input channel + priority.

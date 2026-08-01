@@ -80,6 +80,13 @@ struct App {
   int local_mx = -1;
   int local_my = -1;
   uint32_t cursor_updates = 0;
+
+  // Client-sized backbuffer: compose desktop+cursor then one BitBlt (avoids move flicker).
+  HDC back_dc = nullptr;
+  HBITMAP back_bmp = nullptr;
+  HGDIOBJ back_old = nullptr;
+  int back_w = 0;
+  int back_h = 0;
 };
 
 App g_app;
@@ -142,6 +149,46 @@ void cursor_dest_rect(int mx, int my, int cw, int ch, int fw, int fh, int hot_x,
   out->bottom = out->top + (dh > 0 ? dh : 1);
 }
 
+void release_backbuffer() {
+  if (g_app.back_dc && g_app.back_old) {
+    SelectObject(g_app.back_dc, g_app.back_old);
+    g_app.back_old = nullptr;
+  }
+  if (g_app.back_bmp) {
+    DeleteObject(g_app.back_bmp);
+    g_app.back_bmp = nullptr;
+  }
+  if (g_app.back_dc) {
+    DeleteDC(g_app.back_dc);
+    g_app.back_dc = nullptr;
+  }
+  g_app.back_w = 0;
+  g_app.back_h = 0;
+}
+
+bool ensure_backbuffer(HDC hdc, int cw, int ch) {
+  if (cw <= 0 || ch <= 0) {
+    return false;
+  }
+  if (g_app.back_dc && g_app.back_bmp && g_app.back_w == cw && g_app.back_h == ch) {
+    return true;
+  }
+  release_backbuffer();
+  g_app.back_dc = CreateCompatibleDC(hdc);
+  if (!g_app.back_dc) {
+    return false;
+  }
+  g_app.back_bmp = CreateCompatibleBitmap(hdc, cw, ch);
+  if (!g_app.back_bmp) {
+    release_backbuffer();
+    return false;
+  }
+  g_app.back_old = SelectObject(g_app.back_dc, g_app.back_bmp);
+  g_app.back_w = cw;
+  g_app.back_h = ch;
+  return true;
+}
+
 void invalidate_local_cursor(HWND hwnd, int old_mx, int old_my, int new_mx, int new_my) {
   if (!hwnd) {
     return;
@@ -164,17 +211,29 @@ void invalidate_local_cursor(HWND hwnd, int old_mx, int old_my, int new_mx, int 
   if (!draw || fw <= 0 || fh <= 0) {
     return;
   }
-  RECT a{};
-  RECT b{};
+  RECT uni{};
+  SetRectEmpty(&uni);
+  bool have = false;
   if (old_mx >= 0 && old_my >= 0) {
+    RECT a{};
     cursor_dest_rect(old_mx, old_my, cw, ch, fw, fh, hx, hy, cwgt, chgt, &a);
-    InflateRect(&a, 1, 1);
-    InvalidateRect(hwnd, &a, FALSE);
+    InflateRect(&a, 2, 2);
+    uni = a;
+    have = true;
   }
   if (new_mx >= 0 && new_my >= 0) {
+    RECT b{};
     cursor_dest_rect(new_mx, new_my, cw, ch, fw, fh, hx, hy, cwgt, chgt, &b);
-    InflateRect(&b, 1, 1);
-    InvalidateRect(hwnd, &b, FALSE);
+    InflateRect(&b, 2, 2);
+    if (have) {
+      UnionRect(&uni, &uni, &b);
+    } else {
+      uni = b;
+      have = true;
+    }
+  }
+  if (have) {
+    InvalidateRect(hwnd, &uni, FALSE);
   }
 }
 
@@ -430,7 +489,7 @@ void paint(HWND hwnd) {
   if (w > 0 && h > 0 && g_app.pixels.size() == static_cast<size_t>(w) * h * 4u) {
     pixels = g_app.pixels.data();
   }
-  if (pixels && cw > 0 && ch > 0) {
+  if (pixels && cw > 0 && ch > 0 && ensure_backbuffer(hdc, cw, ch)) {
     BITMAPINFO bmi{};
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     bmi.bmiHeader.biWidth = w;
@@ -438,12 +497,15 @@ void paint(HWND hwnd) {
     bmi.bmiHeader.biPlanes = 1;
     bmi.bmiHeader.biBitCount = 32;
     bmi.bmiHeader.biCompression = BI_RGB;
-    SetStretchBltMode(hdc, COLORONCOLOR);
-    // Paint under lock without 5.7MB memcpy (was starving UI + backing up TCP).
-    StretchDIBits(hdc, 0, 0, cw, ch, 0, 0, w, h, pixels, &bmi, DIB_RGB_COLORS, SRCCOPY);
+    SetStretchBltMode(g_app.back_dc, COLORONCOLOR);
+    // Compose off-screen so the user never sees a frame without the soft cursor
+    // (StretchDIBits then AlphaBlend on the window DC flickered while moving).
+    StretchDIBits(g_app.back_dc, 0, 0, cw, ch, 0, 0, w, h, pixels, &bmi, DIB_RGB_COLORS,
+                  SRCCOPY);
     ++g_app.frames_drawn;
     LeaveCriticalSection(&g_app.frame_lock);
-    draw_software_cursor(hdc, cw, ch, w, h);
+    draw_software_cursor(g_app.back_dc, cw, ch, w, h);
+    BitBlt(hdc, 0, 0, cw, ch, g_app.back_dc, 0, 0, SRCCOPY);
   } else {
     LeaveCriticalSection(&g_app.frame_lock);
     FillRect(hdc, &rc, reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1));
@@ -489,6 +551,8 @@ void on_mouse(HWND hwnd, WPARAM wparam, LPARAM lparam) {
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   switch (msg) {
+    case WM_ERASEBKGND:
+      return 1;
     case WM_SETCURSOR:
       // Hide OS cursor in client; shape is AlphaBlend'd in paint (instant + correct).
       if (LOWORD(lp) == HTCLIENT) {
@@ -886,6 +950,7 @@ int main(int argc, char** argv) {
   g_app.cursor_bgra.clear();
   g_app.cursor_have = false;
   LeaveCriticalSection(&g_app.cursor_lock);
+  release_backbuffer();
   DeleteCriticalSection(&g_app.frame_lock);
   DeleteCriticalSection(&g_app.input_lock);
   DeleteCriticalSection(&g_app.cursor_lock);
