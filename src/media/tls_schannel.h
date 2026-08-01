@@ -45,6 +45,10 @@ TlsSession* client_handshake(SOCKET tcp_sock, bool insecure,
 int tls_read(TlsSession* session, void* buf, int len);
 int tls_write(TlsSession* session, const void* buf, int len);
 void tls_close(TlsSession* session);
+// Underlying TCP socket (for select/poll). Do not closesocket; use tls_close.
+SOCKET tls_get_socket(TlsSession* session);
+// Bytes already decrypted and ready (0 if need socket recv; <0 on error).
+int tls_pending(TlsSession* session);
 
 // Connected pair bound only to loopback; not a cleartext RFB listen.
 bool make_socket_pair(SOCKET* a, SOCKET* b);

@@ -765,6 +765,17 @@ int tls_write(TlsSession* session, const void* buf, int len) {
   return len;
 }
 
+SOCKET tls_get_socket(TlsSession* session) {
+  return session ? session->sock : INVALID_SOCKET;
+}
+
+int tls_pending(TlsSession* session) {
+  if (!session) {
+    return -1;
+  }
+  return decrypt_available(session);
+}
+
 void tls_close(TlsSession* session) {
   if (!session) {
     return;

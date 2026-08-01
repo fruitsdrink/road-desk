@@ -53,9 +53,9 @@ G5 通过前：换芯代码不得覆盖 `src/media/libvnc_*`。
 | Gate | 含义 | 状态 | 日期 |
 |------|------|------|------|
 | G0 | MVP 基线 + 拖窗快照 | **通过**（正式路径 + 浸泡 + 录像拖窗快照） | 2026-08-01 |
-| G1 | TLS + Control 骨架 | pending | |
-| G2 | Video 看屏闭环 | pending | |
-| G3 | Input + 优先级 | pending | |
+| G1 | TLS + Control 骨架 | **通过**（2026-08-01；Win7：`G1 PASS auth ok desktop=1600x900`；指纹 `39a0462c…4086`） | 2026-08-01 |
+| G2 | Video 看屏闭环 | **通过**（2026-08-01；Win7：`video frame id=0/50` @ 1600x900） | 2026-08-01 |
+| G3 | Input + 优先级 | **代码已出**（2026-08-01；Win7 待点选验证） | 2026-08-01 |
 | G4 | 拖窗档 B（vs LibVNC GDI） | pending | |
 | GM1/GM2 | 自研 Mirror 加载/脏区（见 mirror-driver） | pending | |
 | G4c | 拖窗档 C′（vs VNC/Radmin+Mirror） | pending | |
@@ -76,6 +76,10 @@ G5 通过前：换芯代码不得覆盖 `src/media/libvnc_*`。
 | 2026-08-01 | G0 拖窗减负 | 决策 | 不强制 ≥3 场景/并排打分；多场景表留 G4/G4c | — | — |
 | 2026-08-01 | G0：拖窗快照（录像） | 通过 | Road Desk/LibVNC≈2；经典 VNC≈3；见上表 | 2 | **是** — G0 关门，可开 Track P/M（错周） |
 | 2026-08-01 | 策略：自研 Mirror 提前 | 决策 | 上道手感绑 Mirror；不采购商业 SDK；双轨 P+M | — | G0 后 P/M 错周并行 |
+| 2026-08-01 | G1：mux TLS+Control | 本地通过 | `replace_host`/`replace_viewer`；端口 5902；PSK+指纹；非阻塞 listen 已用 select | — | — |
+| 2026-08-01 | G1：Win7 真环 | **通过** | `auth ok desktop=1600x900`；peer_fp=`39a0462c…4086` | — | **是** — 开 G2 Video（GDI） |
+| 2026-08-01 | G2：GDI Video | **通过** | Win7 `video frame id=0/50` 1600x900 | — | 开 G3 |
+| 2026-08-01 | G3：Input | 代码已出 | Host 单线程 select 优先 drain Input；Viewer 发指针/VK；`tls_get_socket` | — | Win7 点选验证 |
 
 ## 合规
 
