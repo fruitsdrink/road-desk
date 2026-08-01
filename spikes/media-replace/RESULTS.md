@@ -39,7 +39,7 @@ G5 已过；**迁移 PR 落地前**仍勿直接覆盖 `src/media/libvnc_*`（按
 | mux + Mirror/GDI 进 `src/media/`（`mux_host` / `mux_client`） | **已接**；`host-agent` / `viewer` 走 `media_plane.h`，**不再链接 LibVNC** |
 | 构建 | `scripts/build.ps1` 不再 fetch/编 LibVNC；产物 `build/src/agent/host-agent.exe`、`build/src/viewer/viewer.exe` |
 | spike 目录 | 保留作对照；上道以主线 exe 为准 |
-| Mirror 驱动装站/测试签 | **已接** → [`tools/mirror-install/`](../../tools/mirror-install/)（stage 包 + Win7 测试签/GM1/GM2 脚本；WHQL 仍不做） |
+| Mirror 驱动装站/测试签 | **已接** → [`tools/mirror-install/`](../../tools/mirror-install/)（`make-package` → **单文件** `RoadDeskMirrorSetup.exe` 内嵌已签名驱动；WHQL 仍不做） |
 | Host 提权产品化 | **待办**（见下；任务 3） |
 
 **Win7 冒烟（维护者）：** 开发机 `tools/mirror-install/make-package.ps1` → 拷 `build/mirror-package/win7-x64` 到 Win7 → 双击 `Install-RoadDeskMirror.bat`（可能需重启后再点一次）→ 再重启 → **管理员**跑 `host-agent` → 记 fingerprint → `viewer host:port psk fp`；`host-agent.log` 见 `capture=mirror`。Viewer 看 `viewer.log`。

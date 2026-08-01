@@ -28,6 +28,14 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
+Write-Host ""
+Write-Host "==> build native installer (RoadDeskMirrorSetup.exe)"
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here "build-installer.ps1")
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "build-installer failed (exit $LASTEXITCODE)"
+    exit $LASTEXITCODE
+}
+
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here "stage-package.ps1")
 if ($LASTEXITCODE -ne 0) {
     Write-Error "stage-package failed (exit $LASTEXITCODE)"
@@ -35,25 +43,24 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $out = Join-Path (Resolve-Path (Join-Path $here "..\..")) "build\mirror-package\win7-x64"
-$cer = Join-Path $out "RoadDeskTestCert.cer"
-if (-not (Test-Path $cer)) {
-    Write-Error "Package missing RoadDeskTestCert.cer — signing did not run. Do not use -SkipSign unless already signed."
+$exe = Join-Path $out "RoadDeskMirrorSetup.exe"
+if (-not (Test-Path $exe)) {
+    Write-Error "Package missing RoadDeskMirrorSetup.exe"
     exit 1
+}
+$exeSize = (Get-Item $exe).Length
+if ($exeSize -lt 100000) {
+    Write-Host "WARN: installer size $exeSize looks small — payload may not be embedded"
 }
 
 Write-Host ""
 Write-Host "========================================"
-Write-Host " FINAL PACKAGE READY (signed on this PC)"
+Write-Host " SINGLE-FILE INSTALLER READY"
 Write-Host "========================================"
-Write-Host "  $out"
+Write-Host "  $exe"
+Write-Host "  size=$exeSize bytes (drivers+cert embedded; signed on this PC)"
 Write-Host ""
-Write-Host "Win7 host only:"
-Write-Host "  - import RoadDeskTestCert.cer"
-Write-Host "  - enable OS testsigning mode (bcdedit)"
-Write-Host "  - install the already-signed .sys/.dll"
-Write-Host "  (no makecert / signtool on Win7)"
-Write-Host ""
-Write-Host "Copy the whole folder to Win7, then double-click:"
-Write-Host "  Install-RoadDeskMirror.bat"
+Write-Host "Copy ONLY RoadDeskMirrorSetup.exe to the Win7 host and double-click."
+Write-Host "Win7 does not need WDK / makecert / signtool / loose .sys files."
 Write-Host "========================================"
 exit 0

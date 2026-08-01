@@ -28,31 +28,27 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\mirror-install\make-pa
 
 内部：`build-driver` → **`sign-driver`（本机签名）** → `stage-package`。
 
-产物目录（内含已签名二进制 + 公钥证书）：
+**客户机只需拷贝一个文件：**
 
 ```text
-build\mirror-package\win7-x64\
-  Install-RoadDeskMirror.bat   ← 现场双击这个
-  rdmmirror.sys / rdmmini.sys / rdmdisp.dll   ← 已在开发机签好
-  RoadDeskTestCert.cer                       ← 仅供 Win7 导入信任
-  …
+build\mirror-package\win7-x64\RoadDeskMirrorSetup.exe
 ```
 
-把 **整个文件夹** 拷到 Win7。
+（已签名的 sys/dll/inf/cer 嵌在 exe 内，安装时释放到 `%ProgramData%\RoadDesk\mirror-setup-payload\`。）
 
 ### 2) Win7 — 双击安装（不签名）
 
-1. 双击 **`Install-RoadDeskMirror.bat`**（UAC）
-2. 若系统尚未开**测试模式**：安装程序只改 `bcdedit` 并提示重启 → 重启后**再双击一次**装驱动（仍不签名）
+1. 只拷贝并双击 **`RoadDeskMirrorSetup.exe`**（UAC）
+2. 若尚未开**测试模式**：改 `bcdedit` 并提示重启 → 重启后**再双击一次**
 3. 已装过 → 先卸再装；装完再提示重启
 4. **管理员**跑 `host-agent.exe`；`host-agent.log` 见 `capture=mirror`
 
-卸载：双击 `Uninstall-RoadDeskMirror.bat`。
+卸载：`RoadDeskMirrorSetup.exe /uninstall`
 
 ```text
-[开发机]  make-package.ps1  (= 编译 + SignTool 签名 + 打包)
-              ↓ 拷贝 win7-x64
-[Win7]    Install-RoadDeskMirror.bat  (= 导入证书 + 测试模式 + 装已签名驱动)
+[开发机]  make-package.ps1  (= 签名驱动 + 嵌入 + 编单文件 Setup.exe)
+              ↓ 只拷贝 RoadDeskMirrorSetup.exe
+[Win7]    双击 RoadDeskMirrorSetup.exe
               ↓
           重启 → host-agent（管理员）
 ```
@@ -61,12 +57,11 @@ build\mirror-package\win7-x64\
 
 ## 高级：分步脚本（排障用）
 
-| 脚本 | 作用 |
+| 脚本 / 程序 | 作用 |
 |------|------|
+| `native/` + `build-installer.ps1` | 编 `RoadDeskMirrorSetup.exe` |
 | `build-and-sign.ps1` / `stage-package.ps1` | `make-package` 内部调用 |
-| `enable-testsigning.ps1` | 仅 bcdedit |
-| `import-test-cert.ps1` | 仅证书 |
-| `install-gm1.ps1` / `install-gm2.ps1` | 分步装卸 |
+| `enable-testsigning.ps1` 等 | 分步排障（可选） |
 | `verify.ps1` | 服务 / probe 检查 |
 
 `sc start` 错误 **577** → 测试签未生效或证书未导入；用双击安装程序走完「重启后再装」即可。

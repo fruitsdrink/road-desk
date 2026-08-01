@@ -36,7 +36,7 @@ spikes/mirror-driver/
 ```powershell
 # 开发机一键出包
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\mirror-install\make-package.ps1
-# 将 build\mirror-package\win7-x64\ 拷到 Win7，双击 Install-RoadDeskMirror.bat
+# 只需把 build\mirror-package\win7-x64\RoadDeskMirrorSetup.exe 拷到 Win7 双击
 ```
 
 深潜步骤仍见下方 docs。
