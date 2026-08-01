@@ -32,7 +32,18 @@ G5 已过；**迁移 PR 落地前**仍勿直接覆盖 `src/media/libvnc_*`（按
 
 **不构成失败（已接受）：** 未达 ToDesk 档 C；未做 File/剪贴板/登录前；Radmin 未测。
 
-**G5 之后（非本探针门禁）：** 将 `spikes/media-replace` + `spikes/mirror-driver` 迁入 `src/media/` 与装站路径，去主线 LibVNC 链接，带测试签 Mirror 部署说明；上道 Host **必须管理员**跑 mirror。
+**G5 之后（非本探针门禁）：** 将 `spikes/media-replace` + `spikes/mirror-driver` 迁入 `src/media/` 与装站路径，去主线 LibVNC 链接，带测试签 Mirror 部署说明。
+
+### 迁移待办：Host 管理员权限（必须处理）
+
+**事实（2026-08-01）：** Mirror 采帧本身不要求管理员；但 **清 HKLM `Attach.ToDesktop` / peer scrub** 需要管理员。非提升进程开设备管理器 → 键鼠失效（已对照）。
+
+| 项 | 要求 |
+|----|------|
+| 上道 | `capture=mirror`（及 auto 走到 Mirror）的 Host **必须以管理员运行** |
+| 产品/装站须落地 | 清单 `requireAdministrator`、或安装为 **LocalSystem/管理员服务**、或启动器 UAC 提权；禁止静默以标准用户跑 Mirror 会话 |
+| 失败体验 | 非提升时：启动即明确失败或降级提示（现探针仅 WARN）；**不得**假装 Mirror 正常却在开 DM 时死键鼠 |
+| 文档 | 详见 [`../mirror-driver/docs/coexistence.md`](../mirror-driver/docs/coexistence.md)「管理员硬条件」 |
 
 ## 对照基线（阶段 1 / G0）
 

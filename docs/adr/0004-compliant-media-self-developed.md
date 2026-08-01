@@ -37,5 +37,6 @@ ADR-0002 要求正式交付前去掉 GPL 等 copyleft 媒体依赖。媒体面�
 - MVP 可继续用 LibVNC（内部）；装站/对外交付前须完成：无 GPL 媒体栈 + **自研 Mirror 可装可跑**（或产品书面接受 GDI 上限——默认不接受）。
 - 现场 OS 上已有 VNC/Radmin Mirror **≠** Road Desk 可调用；必须自有驱动与用户态对接。
 - 驱动带来：测试签名/正式签名、安装卸载、蓝屏风险、与已装第三方 Mirror 共存策略——须在 Mirror 探针 RESULTS 单列。
+- **Host 管理员权限（交付必须处理）：** Mirror 会话需提升进程才能 scrub HKLM `Attach.ToDesktop`；非管理员开设备管理器会导致键鼠失效（2026-08-01 对照）。切入主线时须产品化提权（清单 `requireAdministrator` / 服务账户 / 启动器 UAC），不得依赖手工「以管理员运行」。见 [`coexistence.md`](../../spikes/mirror-driver/docs/coexistence.md)。
 - 登录前/锁屏仍可受益于 Mirror，但 **目标阶段单列验收**；换芯 P0 仍先保已登录桌面。
 - 实施节奏见 [spike-media-replace.md](../spike-media-replace.md)；结论记入 [`spikes/media-replace/RESULTS.md`](../../spikes/media-replace/RESULTS.md) 与 Mirror 子结论页。

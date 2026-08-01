@@ -45,6 +45,16 @@
 6. CDS attach/detach 后按挂接前快照恢复 DWM（避免无谓改主题）；DM 路径本身不应触发 CDS
 7. 会话结束：`force_detach` + 全量 scrub
 
+### 管理员硬条件（切入主线必须处理）
+
+| | |
+|--|--|
+| **为何** | scrub `Attach.ToDesktop` 写 **HKLM**；标准用户写失败 → DM PnP 再挂 Mirror → 键鼠死 |
+| **对照** | 同构建：管理员开 DM=正常；非管理员开 DM=键鼠失效（与是否切 GDI 无关） |
+| **上道** | Mirror Host **始终提升**（或 LocalSystem 服务）。装站/清单/`host-agent` 启动路径要产品化，不能靠运维「记得右键管理员」 |
+| **建议落地** | exe 清单 `requestedExecutionLevel=requireAdministrator`；或服务账户跑 Host；启动失败时 UI/日志明确「需要管理员才能用 Mirror」 |
+| **勿做** | 非提升仍挂 Mirror 却只打 WARN；开 DM 再偷偷切 GDI 绕开 |
+
 **已冻住时（旧二进制 / Attach=1 残留）：**
 
 ```bat

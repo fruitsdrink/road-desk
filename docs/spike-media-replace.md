@@ -274,6 +274,8 @@ gantt
 - **管线/驱动再迭代**：架构在，B 或 C′ 未稳 → 延 W8–W9，不采购
 - **自研 Mirror 失败结案**：书面记录后 **才** 议采购商业 Mirror（非默认）
 
+**切入主线必带项：** Host **管理员提权产品化**（Mirror scrub HKLM；非提升 + 开 DM = 键鼠死）。见 RESULTS「迁移待办：Host 管理员权限」与 [coexistence.md](../spikes/mirror-driver/docs/coexistence.md)。
+
 ## 8. 明确不做（本探针）
 
 - 采购/集成商业 Mirror SDK（失败前）
