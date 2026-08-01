@@ -1,0 +1,9 @@
+TARGETNAME=rdmmini
+TARGETTYPE=DRIVER
+
+TARGETLIBS=$(DDK_LIB_PATH)\videoprt.lib
+
+INCLUDES=$(DDK_INC_PATH)
+
+SOURCES=mirror.c \
+        mirror.rc

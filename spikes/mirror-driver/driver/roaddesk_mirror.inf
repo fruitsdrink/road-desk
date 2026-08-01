@@ -1,0 +1,47 @@
+; Road Desk Mirror — GM1 control device (Root enumerated).
+; XPDM display/miniport attach is a later INF section (GM2).
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = System
+ClassGuid   = {4D36E97D-E325-11CE-BFC1-08002BE10318}
+Provider    = %ManufacturerName%
+DriverVer   = 08/01/2026,10.0.0.1
+CatalogFile =
+
+[DestinationDirs]
+DefaultDestDir = 12
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+rdmmirror.sys = 1,,
+
+[Manufacturer]
+%ManufacturerName% = Standard,NTamd64
+
+[Standard.NTamd64]
+%RdmDeviceDesc% = Rdm_Install, Root\RoadDeskMirror
+
+[Rdm_Install]
+CopyFiles = Rdm_CopyFiles
+
+[Rdm_CopyFiles]
+rdmmirror.sys
+
+[Rdm_Install.Services]
+AddService = rdmmirror, 0x00000002, Rdm_Service_Inst
+
+[Rdm_Service_Inst]
+DisplayName    = %RdmServiceName%
+ServiceType    = 1
+StartType      = 3
+ErrorControl   = 1
+ServiceBinary  = %12%\rdmmirror.sys
+
+[Strings]
+ManufacturerName = "Road Desk"
+DiskName         = "Road Desk Mirror Installation Disk"
+RdmDeviceDesc    = "Road Desk Mirror (control)"
+RdmServiceName   = "Road Desk Mirror"

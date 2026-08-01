@@ -1,0 +1,13 @@
+obj*/
+objfre*/
+objchk*/
+*.log
+*.err
+*.wrn
+*.dll
+*.pdb
+*.lib
+*.exp
+*.map
+mirror.htm
+Mirror_files/

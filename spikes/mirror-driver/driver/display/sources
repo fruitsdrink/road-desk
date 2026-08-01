@@ -1,0 +1,16 @@
+TARGETNAME=rdmdisp
+TARGETTYPE=GDI_DRIVER
+
+TARGETLIBS=$(TARGETLIBS) $(SDK_LIB_PATH)\libcntpr.lib
+
+!IFNDEF MSC_WARNING_LEVEL
+MSC_WARNING_LEVEL=/W3
+!ENDIF
+
+INCLUDES=$(DDK_INC_PATH)
+
+SOURCES=debug.c     \
+        dirty.c     \
+        enable.c    \
+        screen.c    \
+        mirror.rc

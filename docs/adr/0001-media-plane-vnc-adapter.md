@@ -15,3 +15,4 @@ Status: accepted
 - MVP 体验对齐经典 WinVNC（TightVNC 一档）看屏与键鼠手感；验收以 GUI 操作优先，不以桌面内视频区流畅为准
 - 目录、账号、审计、会话互斥/旁观、中继信令等不得长进 RFB/某一 Fork 内部，须落在控制面或自有通道
 - 换芯探针应重点覆盖：真实车道桌面采集与注入稳定性、登录前/锁屏远控可行性、文件传输通道是否必须离开 VNC
+- 合规换芯的采纳路径见 [ADR-0004](./0004-compliant-media-self-developed.md)；实施计划与进度表见 [spike-media-replace.md](../spike-media-replace.md)

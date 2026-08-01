@@ -15,3 +15,4 @@ Status: accepted
 - 内部构建与正式交付构建的媒体面依赖可以不同，但操作端/被控端代理对媒体面的会话 API 必须稳定
 - 选型或引入任何 VNC/编解码依赖时，须先记录许可证；探针结论需包含「合规替换」工作量，而非仅技术可行性
 - 「开源」不得被默认等同于「可任意商用」
+- 交付前合规替换的具体路径已钉死为 [ADR-0004](./0004-compliant-media-self-developed.md)（自研 C++ 适配器 + GDI + TLS mux）；实施计划见 [spike-media-replace.md](../spike-media-replace.md)

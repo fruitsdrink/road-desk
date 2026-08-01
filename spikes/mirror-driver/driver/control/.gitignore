@@ -1,0 +1,12 @@
+# WDK 7.1 build outputs (local only)
+obj*/
+objfre*/
+objchk*/
+*.log
+*.err
+*.wrn
+*.sys
+*.pdb
+*.lib
+*.exp
+*.map

@@ -1,8 +1,8 @@
 # 技术栈
 
-Status: **frozen**（MVP 选型已冻结；TLS 库与 LibVNC 精确版本由 Win7 探针钉死）
+Status: **media cutover**（2026-08-01：主线已切私有 mux + Mirror/GDI；LibVNC 不再链接；回滚 tag `libvnc-mvp-verified-2026-08-01`）
 
-Related: [CONTEXT.md](../CONTEXT.md), [ADR-0001](./adr/0001-media-plane-vnc-adapter.md), [ADR-0002](./adr/0002-mvp-gpl-then-compliant-media-base.md), [dev-environment.md](./dev-environment.md)
+Related: [CONTEXT.md](../CONTEXT.md), [ADR-0001](./adr/0001-media-plane-vnc-adapter.md), [ADR-0002](./adr/0002-mvp-gpl-then-compliant-media-base.md), [ADR-0004](./adr/0004-compliant-media-self-developed.md), [spike-media-replace.md](./spike-media-replace.md), [dev-environment.md](./dev-environment.md)
 
 ## 约束
 
@@ -18,8 +18,8 @@ Related: [CONTEXT.md](../CONTEXT.md), [ADR-0001](./adr/0001-media-plane-vnc-adap
 | **Viewer** | **C/C++ 薄 UI（原生 Win32）** | 无额外运行时；Win7 可跑；本地壳仅为连接栏 + 远端画面。不用 Electron（与 Win7 冲突）；不用 C#/.NET（避免现场装运行时） |
 | **Host Sidecar** | **Go，工具链钉死 1.20.x** | 单文件 HTTP 工具。`GOOS=windows GOARCH=amd64`；**禁止用 Go 1.21+ 打 Win7 用 Sidecar**（1.20 为官方最后支持 Win7/2008/2012 的系列，建议锁定最后补丁如 1.20.14）。开发机可另装更新 Go 编别的东西，Sidecar 构建必须走 1.20.x |
 | **C++ 工具链** | **MSVC 2022 + CMake，x64** | Agent/Viewer 主线。静态链 CRT 或附带 VC++ 可再发行组件；真 Win7 验证。若某 VNC 适配器强迫特定生成方式再开例外 |
-| **媒体面 VNC 库** | **LibVNC（Server + Client）作适配器** | 不整包 Fork UltraVNC。体验对照用经典 WinVNC 安装版。内部验证许可见 ADR-0002；探针 P1 在真 Win7 锁定可用版本 |
-| **传输加密** | **TLS 包裹 + 预共享口令鉴权** | 保密与鉴权分离；不依赖某一 VNC 扩展才加密。TLS 具体库/版本在 Win7 探针中钉死（如固定 OpenSSL）；无明文模式 |
+| **媒体面** | **自研 TLS mux + Mirror/GDI**（`src/media/mux_*`） | 经 `media_plane.h`；默认 `ROAD_DESK_CAPTURE=auto`。不链接 LibVNC（历史源可留仓、不编）。Mirror Host 需管理员。见 ADR-0004 / spike-media-replace RESULTS |
+| **传输加密** | **Schannel TLS + 预共享口令（PSK）** | 保密与鉴权分离；`src/media/tls_schannel.*`。mux **无明文路径**（`ROAD_DESK_ALLOW_PLAINTEXT` 会使 listen 失败）。Host 自签证书，Viewer 校验 SHA-256 指纹；调试可 `ROAD_DESK_TLS_INSECURE=1` |
 | **仓库布局** | **单仓** | 产品 C++ 与 `tools/host-sidecar`（Go）同仓；见下方目录约定 |
 
 ## 仓库目录约定（单仓）
@@ -31,12 +31,13 @@ road-desk/
   src/
     agent/              # Host Agent（C++）
     viewer/             # Viewer（C++）
-    media/              # VNC/TLS 媒体面适配器（可替换边界）
+    media/              # mux + TLS 媒体面（可替换边界 media_plane.h）
     session/            # 控制面：互斥、预共享口令、会话（无中心）
   tools/
     host-sidecar/       # Go 1.20.x，独立 go.mod
-  third_party/          # LibVNC 等（或 submodule），许可备注
+  spikes/               # 探针对照（media-replace、mirror-driver）
 ```
+
 
 MVP 不强行做巨型 `common` 静态库；协议字段用小范围共享头/文档约定即可。
 

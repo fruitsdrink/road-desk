@@ -1,0 +1,25 @@
+#include "windows.h"
+
+1 RCDATA
+BEGIN
+    17,
+    17,
+    2,
+    2,
+    1,
+    1,
+    0,
+    1,
+    1
+END
+
+#include <ntverp.h>
+
+#define VER_FILETYPE                VFT_DRV
+#define VER_FILESUBTYPE             VFT2_DRV_DISPLAY
+#define VER_FILEDESCRIPTION_STR     "Road Desk Mirror Display"
+#define VER_INTERNALNAME_STR        "rdmdisp.dll"
+#define VER_ORIGINALFILENAME_STR    "rdmdisp.dll"
+
+#define VER_LANGNEUTRAL
+#include "common.ver"

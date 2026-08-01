@@ -1,0 +1,11 @@
+obj*/
+objfre*/
+objchk*/
+*.log
+*.err
+*.wrn
+*.sys
+*.pdb
+*.lib
+*.exp
+*.map

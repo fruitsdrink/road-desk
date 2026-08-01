@@ -1,0 +1,81 @@
+; Road Desk XPDM Mirror (GM2) — display class, not the GM1 control device.
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Provider    = %ManufacturerName%
+ClassGUID   = {4D36E968-E325-11CE-BFC1-08002BE10318}
+Class       = Display
+DriverVer   = 08/01/2026,10.0.1.0
+CatalogFile =
+
+[DestinationDirs]
+DefaultDestDir   = 11
+Rdm.Miniport     = 12
+Rdm.Display      = 11
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+rdmmini.sys = 1,,
+rdmdisp.dll = 1,,
+
+[Manufacturer]
+%ManufacturerName% = Standard,NTamd64
+
+; Root-enumerated software display (Add Legacy Hardware / pnputil with instance).
+[Standard.NTamd64]
+%RdmDeviceDesc% = rdm, Root\RoadDesk_XPDM_Mirror1
+%RdmDeviceDesc% = rdm, RoadDesk_XPDM_Mirror1
+
+[rdm]
+CopyFiles = Rdm.Miniport, Rdm.Display
+
+[Rdm.Miniport]
+rdmmini.sys
+
+[Rdm.Display]
+rdmdisp.dll
+
+[rdm.Services]
+AddService = rdmmini, 0x00000002, Rdm_Service_Inst, Rdm_EventLog_Inst
+
+[Rdm_Service_Inst]
+DisplayName    = %RdmServiceName%
+ServiceType    = 1
+StartType      = 1
+ErrorControl   = 0
+LoadOrderGroup = Video
+ServiceBinary  = %12%\rdmmini.sys
+
+[Rdm_EventLog_Inst]
+AddReg = Rdm_EventLog_AddReg
+
+[Rdm_EventLog_AddReg]
+HKR,,EventMessageFile,0x00020000,"%SystemRoot%\System32\IoLogMsg.dll;%SystemRoot%\System32\drivers\rdmmini.sys"
+HKR,,TypesSupported,0x00010001,7
+
+[rdm.SoftwareSettings]
+AddReg = Rdm_SoftwareDeviceSettings
+
+[Rdm_SoftwareDeviceSettings]
+HKR,, MirrorDriver,                %REG_DWORD%,    1
+HKR,, InstalledDisplayDrivers,     %REG_MULTI_SZ%, rdmdisp
+HKR,, VgaCompatible,               %REG_DWORD%,    0
+; 0 = detach at boot; userspace (replace_host / mirror_probe) attaches for session only.
+; Attach.ToDesktop=1 + VNC Mirror 并存时，打开设备管理器易导致鼠标/焦点失效。
+HKR,, Attach.ToDesktop,            %REG_DWORD%,    0
+
+[rdm.GeneralConfigData]
+MaximumNumberOfDevices = 1
+KeepExistingDriverEnabled = 1
+
+[Strings]
+REG_SZ         = 0x00000000
+REG_MULTI_SZ   = 0x00010000
+REG_EXPAND_SZ  = 0x00020000
+REG_DWORD      = 0x00010001
+ManufacturerName = "Road Desk"
+DiskName         = "Road Desk Mirror XPDM Disk"
+RdmDeviceDesc    = "Road Desk Mirror Driver"
+RdmServiceName   = "Road Desk Mirror Miniport"
