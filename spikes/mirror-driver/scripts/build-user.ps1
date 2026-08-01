@@ -18,4 +18,6 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "Artifact:"
 Write-Host "  $buildDir\mirror_probe.exe"
-Write-Host "Usage: mirror_probe.exe   (expects \\.\RoadDeskMirror after driver install)"
+Write-Host "Usage:"
+Write-Host "  mirror_probe.exe           # GM1 control \\.\RoadDeskMirror"
+Write-Host "  mirror_probe.exe gm2 [sec] # GM2 XPDM dirty poll (see docs/gm2-checklist.md)"

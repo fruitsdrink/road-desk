@@ -6,7 +6,8 @@ Win7 x64 上加载/卸载 Road Desk Mirror **控制设备**（`rdmmirror.sys`）
 > GM1 控制设备**不会**出现在设备管理器「显示适配器」里。  
 > 仅 `pnputil -i -a` 往往只把驱动包进仓库，**不会**自动出现 `\\.\RoadDeskMirror`——请用本页的 `copy` + `sc`。
 
-相关：测试签 [test-signing.md](./test-signing.md) · 勾选清单 [gm1-checklist.md](./gm1-checklist.md)
+相关：测试签 [test-signing.md](./test-signing.md) · 勾选清单 [gm1-checklist.md](./gm1-checklist.md)  
+GM2（显示适配器 XPDM + 脏区）见 **[gm2-checklist.md](./gm2-checklist.md)**，与本页控制设备流程独立。
 
 ---
 

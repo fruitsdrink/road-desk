@@ -9,5 +9,9 @@ if(MSVC)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL$<$<CONFIG:Debug>:Debug>")
 endif()
 
-add_executable(mirror_probe mirror_probe.cpp)
+add_executable(mirror_probe
+  mirror_probe.cpp
+  mirror_client.cpp
+)
 target_include_directories(mirror_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(mirror_probe PRIVATE user32 gdi32)

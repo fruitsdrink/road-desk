@@ -1,0 +1,6 @@
+LIBRARY rdmmini
+
+DESCRIPTION 'Road Desk Mirror Miniport'
+
+EXPORTS
+    DriverEntry
