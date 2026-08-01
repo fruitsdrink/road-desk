@@ -2,6 +2,9 @@
 build/
 out/
 cmake-build-*/
+
+# Vendored spike deps (fetch via spikes/media-plane/scripts/fetch-libvnc.ps1)
+third_party/libvncserver/
 *.exe
 *.dll
 *.lib
@@ -12,6 +15,7 @@ cmake-build-*/
 
 # Go
 tools/host-sidecar/vendor/
+tools/host-sidecar/host-sidecar.exe
 *.test
 
 # IDE / OS

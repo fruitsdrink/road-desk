@@ -1,0 +1,2 @@
+This spike links LibVNCServer/LibVNCClient (GPL-2.0) for internal validation only.
+Do not ship spike binaries or GPL LibVNC into formal Road Desk installers (see ADR-0002).

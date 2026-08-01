@@ -1,0 +1,5 @@
+LibVNCServer / LibVNCClient 0.9.15 (GPL-2.0) may be linked into this
+media adapter for internal MVP validation only.
+
+Do not ship these binaries in a formal roadside / customer install package
+until the media plane is replaced with a compliant implementation (ADR-0002).
