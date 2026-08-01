@@ -215,7 +215,7 @@ flowchart TB
 | W8–W9 | 09-22～10-05 | **G4c** 档 C′ | 稳定/共存 | **G4c** |
 | W10 | 10-06～12 | **G5** 收口 | 部署说明 | **G5** |
 
-`mermaid
+```mermaid
 gantt
   title DualTrackMuxAndMirror
   dateFormat YYYY-MM-DD
@@ -235,7 +235,7 @@ gantt
   GM1_Stable      :2026-08-25, 7d
   GM2_DirtyRects  :2026-09-01, 7d
   M_Integrate     :2026-09-08, 28d
-`
+```
 
 ### 进度检查点
 
