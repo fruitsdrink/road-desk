@@ -29,7 +29,19 @@ spikes/mirror-driver/
   scripts/build-*.ps1 sign-driver.ps1
 ```
 
-## 构建
+## 装站（产品路径）
+
+**[`tools/mirror-install/`](../../tools/mirror-install/)**（任务 2）：
+
+```powershell
+# 开发机一键出包
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\mirror-install\make-package.ps1
+# 将 build\mirror-package\win7-x64\ 拷到 Win7，双击 Install-RoadDeskMirror.bat
+```
+
+深潜步骤仍见下方 docs。
+
+## 构建（spike 脚本，装站工具会调用）
 
 ```powershell
 # 用户态

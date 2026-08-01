@@ -34,3 +34,4 @@ Win7 x64 自研 Mirror：用户态可得脏区+像素；接入换芯采屏后冲
 | 2026-08-01 | GM1 | **通过** | Win7 VM：`GM1_LOADED ok`；flags=LOADED；info 仍 0（无 XPDM）；装驱需测试签证书，仅 pnputil 不够（需 copy+sc / 或补设备节点） |
 | 2026-08-01 | GM2 | **通过** | Win7 VM：装 INF + 重启；`sc query rdmmini` RUNNING；`gm2 10` → attach `\\.\DISPLAYV4`、`info 1504x957 pitch=6016`、多帧 dirty、写出 `dirty_sample.bmp`（与 VMware SVGA 并存） |
 | 2026-08-01 | M2 | **通过** | Win7：`replace_host capture=mirror` 看屏/输入/拖窗；见 media-replace RESULTS |
+| 2026-08-01 | 装站包装 | **已接** | 产品路径 [`tools/mirror-install`](../../tools/mirror-install/)（测试签/GM1/GM2/stage）；源码仍本目录 |

@@ -1,4 +1,4 @@
-# Build
+# Build (includes build/mirror-driver and build/mirror-package stage output)
 build/
 out/
 cmake-build-*/

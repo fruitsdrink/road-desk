@@ -39,10 +39,10 @@ G5 已过；**迁移 PR 落地前**仍勿直接覆盖 `src/media/libvnc_*`（按
 | mux + Mirror/GDI 进 `src/media/`（`mux_host` / `mux_client`） | **已接**；`host-agent` / `viewer` 走 `media_plane.h`，**不再链接 LibVNC** |
 | 构建 | `scripts/build.ps1` 不再 fetch/编 LibVNC；产物 `build/src/agent/host-agent.exe`、`build/src/viewer/viewer.exe` |
 | spike 目录 | 保留作对照；上道以主线 exe 为准 |
-| Mirror 驱动装站/测试签 | **待办**（任务 2） |
-| Host 提权产品化 | **待办**（见下） |
+| Mirror 驱动装站/测试签 | **已接** → [`tools/mirror-install/`](../../tools/mirror-install/)（stage 包 + Win7 测试签/GM1/GM2 脚本；WHQL 仍不做） |
+| Host 提权产品化 | **待办**（见下；任务 3） |
 
-**Win7 冒烟（维护者）：** 管理员跑 `host-agent`（已装 Road Desk Mirror）→ 记 fingerprint → `viewer host:port psk fp` → 看屏/点选/拖窗；日志 `host-agent.log` 应见 `capture=mirror`（或 `ROAD_DESK_CAPTURE=gdi` 回退）。Viewer 侧看 `viewer.log`。
+**Win7 冒烟（维护者）：** 开发机 `tools/mirror-install/make-package.ps1` → 拷 `build/mirror-package/win7-x64` 到 Win7 → 双击 `Install-RoadDeskMirror.bat`（可能需重启后再点一次）→ 再重启 → **管理员**跑 `host-agent` → 记 fingerprint → `viewer host:port psk fp`；`host-agent.log` 见 `capture=mirror`。Viewer 看 `viewer.log`。
 
 ### 迁移待办：Host 管理员权限（必须处理）
 
@@ -138,7 +138,8 @@ G5 已过；**迁移 PR 落地前**仍勿直接覆盖 `src/media/libvnc_*`（按
 | 2026-08-01 | DM+键鼠坑结案 | **记录** | 根因=`Attach.ToDesktop=1`/PnP，非 Mirror 采帧；误切 GDI 会卡+改 Basic；现开 DM 保持 Mirror（同 VNC）已核实可用 | — | 见 coexistence.md |
 | 2026-08-01 | DM×权限对照 | **确认** | 同构建不切 GDI：管理员开 DM=正常；非管理员开 DM=键鼠失效 → **必须管理员跑 mirror Host** | — | coexistence.md |
 | 2026-08-01 | G5 收口 | **通过** | 总判 **切入主线**：A+B+C′（VNC）+ Mirror 门禁齐；Radmin 跳过；迁移主线另开任务 | — | 见上文总判 |
-| 2026-08-01 | 主线切芯 | **代码已合** | `src/media` mux_host/client；`build.ps1` 无 LibVNC；本机编过 host-agent/viewer；Win7 冒烟待维护者 | — | 驱动装站+提权仍待办 |
+| 2026-08-01 | 主线切芯 | **代码已合** | `src/media` mux_host/client；`build.ps1` 无 LibVNC；本机编过 host-agent/viewer；Win7 冒烟待维护者 | — | 提权仍待办 |
+| 2026-08-01 | 任务 2 装站 | **已接** | `tools/mirror-install`：build-and-sign / stage / 测试签 / GM1+GM2 装卸 / verify | — | WHQL 不做；任务 3 提权另开 |
 
 ## 合规
 
