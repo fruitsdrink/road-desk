@@ -105,6 +105,7 @@ int main(int argc, char** argv) {
     road_desk::agent::log_line(
         "WARN: ROAD_DESK_ALLOW_PLAINTEXT ignored — mux requires TLS");
   }
+  // Shared-control counter (not exclusive). Host allows up to 8 concurrent viewers.
   cfg.session_mutex = &g_session_mutex;
 
   {
@@ -118,7 +119,12 @@ int main(int argc, char** argv) {
   g_media = &media;
 
   if (!media.listen(cfg)) {
-    road_desk::agent::log_line("media plane listen failed (port busy / TLS cert?)");
+    road_desk::agent::log_line(
+        "FATAL: media plane listen failed — usually port already in use "
+        "(another host-agent / VNC on same port). See host-agent.log.");
+    std::fprintf(stderr,
+                 "host-agent: listen failed (port %d busy?). Check host-agent.log\n",
+                 cfg.listen_port);
     g_media = nullptr;
     return 1;
   }

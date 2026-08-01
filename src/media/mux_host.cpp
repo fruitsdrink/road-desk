@@ -1,6 +1,6 @@
 // Mux media-plane host — TLS Video/Input; capture = Mirror dirties (default) or GDI.
 // Ported from spikes/media-replace/src/replace_host.cpp.
-// Single-thread session I/O (select + send) to avoid TLS read/write deadlock.
+// Single-thread multi-viewer I/O (select + fan-out) to avoid TLS read/write deadlock.
 
 #include "media_plane.h"
 
@@ -386,18 +386,18 @@ bool send_cursor_shape(tls::TlsSession* tls, const road_desk::replace::CursorSha
   return mux_write(tls, kChannelCursor, body.data(), total);
 }
 
-bool maybe_send_cursor(tls::TlsSession* tls) {
-  road_desk::replace::CursorShape shape;
-  if (!road_desk::replace::capture_cursor_shape(&shape)) {
-    return true;
+bool send_cursor_if_changed(tls::TlsSession* tls, const road_desk::replace::CursorShape& shape,
+                            uint32_t* hash_sent) {
+  if (!hash_sent) {
+    return false;
   }
-  if (shape.hash == g_cursor_hash_sent) {
+  if (shape.hash == *hash_sent) {
     return true;
   }
   if (!send_cursor_shape(tls, shape)) {
     return false;
   }
-  g_cursor_hash_sent = shape.hash;
+  *hash_sent = shape.hash;
   return true;
 }
 
@@ -597,180 +597,240 @@ bool pump_clip_drain(tls::TlsSession* tls, HostClipSession* clip) {
   return drain_incoming(tls, clip);
 }
 
-bool push_local_clipboard(tls::TlsSession* tls, HostClipSession* clip) {
+constexpr size_t kMaxClients = 8;
+
+struct ClientConn {
+  tls::TlsSession* tls = nullptr;
+  bool authed = false;
+  bool need_keyframe = false;
+  bool dead = false;
+  uint32_t cursor_hash_sent = 0;
+  HostClipSession clip;
+};
+
+void close_client(ClientConn* c, session::SessionMutex* mutex) {
+  if (!c) {
+    return;
+  }
+  road_desk::replace::file_recv_abort(&c->clip.recv);
+  if (c->tls) {
+    tls::tls_close(c->tls);
+    c->tls = nullptr;
+  }
+  if (c->authed && mutex) {
+    mutex->release();
+  }
+  c->authed = false;
+  c->dead = true;
+}
+
+unsigned count_authed(const std::vector<ClientConn>& clients) {
+  unsigned n = 0;
+  for (const ClientConn& c : clients) {
+    if (c.authed && !c.dead) {
+      ++n;
+    }
+  }
+  return n;
+}
+
+bool try_auth_client(ClientConn* c, const std::string& psk, session::SessionMutex* mutex) {
   using namespace road_desk::replace;
-  if (!tls || !clip || clip->sending_files) {
+  if (!c || !c->tls || c->authed) {
+    return true;
+  }
+  const SOCKET sock = tls::tls_get_socket(c->tls);
+  const int pending = tls::tls_pending(c->tls);
+  if (!socket_readable(sock, 0) && pending <= 0) {
+    return true;
+  }
+  uint8_t ch = 0;
+  std::vector<uint8_t> payload;
+  if (!mux_read(c->tls, &ch, &payload)) {
+    logf("auth read failed");
+    return false;
+  }
+  if (ch != kChannelControl || payload.empty()) {
+    logf("expected Control auth, got channel=%u", static_cast<unsigned>(ch));
+    control_send_auth_fail(c->tls, "expected control auth");
+    return false;
+  }
+  std::string provided;
+  if (!parse_auth_password(payload.data(), payload.size(), &provided)) {
+    control_send_auth_fail(c->tls, "malformed auth");
+    return false;
+  }
+  if (!road_desk::session::authenticate_psk(psk, provided)) {
+    control_send_auth_fail(c->tls, "auth failed");
+    return false;
+  }
+  const int sw = GetSystemMetrics(SM_CXSCREEN);
+  const int sh = GetSystemMetrics(SM_CYSCREEN);
+  const uint16_t width = static_cast<uint16_t>(sw > 0 ? sw : 1);
+  const uint16_t height = static_cast<uint16_t>(sh > 0 ? sh : 1);
+  if (!control_send_auth_ok(c->tls, width, height)) {
+    logf("send AuthOk failed");
+    return false;
+  }
+  c->authed = true;
+  c->need_keyframe = true;
+  c->clip.last_seq = GetClipboardSequenceNumber();
+  c->cursor_hash_sent = 0;
+  if (mutex) {
+    mutex->try_acquire();
+  }
+  logf("client authed desktop=%ux%u shared-control viewers=%u", width, height,
+       mutex ? mutex->count() : 0);
+  return true;
+}
+
+bool drain_all_clients(std::vector<ClientConn>* clients, const std::string& psk,
+                       session::SessionMutex* mutex) {
+  if (!clients) {
+    return true;
+  }
+  for (ClientConn& c : *clients) {
+    if (c.dead || !c.tls) {
+      continue;
+    }
+    if (!c.authed) {
+      if (!try_auth_client(&c, psk, mutex)) {
+        close_client(&c, mutex);
+      }
+      continue;
+    }
+    if (!drain_incoming(c.tls, &c.clip)) {
+      logf("client gone (recv)");
+      close_client(&c, mutex);
+    }
+  }
+  clients->erase(std::remove_if(clients->begin(), clients->end(),
+                                [](const ClientConn& c) { return c.dead || !c.tls; }),
+                 clients->end());
+  return true;
+}
+
+bool push_clipboard_one(ClientConn* c, uint32_t* shared_xfer_id,
+                        std::vector<ClientConn>* all_for_pump, const std::string& psk,
+                        session::SessionMutex* mutex) {
+  using namespace road_desk::replace;
+  if (!c || !c->tls || !c->authed || c->clip.sending_files) {
     return true;
   }
   const DWORD seq = GetClipboardSequenceNumber();
-  if (seq == 0 || seq == clip->last_seq) {
+  if (seq == 0 || seq == c->clip.last_seq) {
     return true;
   }
-  if (clip->echo.should_skip_seq(seq)) {
-    clip->last_seq = seq;
+  if (c->clip.echo.should_skip_seq(seq)) {
+    c->clip.last_seq = seq;
     return true;
   }
 
-  // Prefer files, then bitmap, then text (HDROP > DIB > TEXT).
+  auto pump = [&]() -> bool {
+    return drain_all_clients(all_for_pump, psk, mutex);
+  };
+
   if (clipboard_has_hdrop()) {
     FileOffer offer;
     std::string err;
-    const uint32_t xid = clip->next_xfer_id++;
+    const uint32_t xid = shared_xfer_id ? (*shared_xfer_id)++ : c->clip.next_xfer_id++;
     if (!clipboard_build_file_offer(xid, &offer, &err)) {
-      logf("clipboard hdrop build failed: %s", err.c_str());
-      clip->last_seq = seq;
+      c->clip.last_seq = seq;
       return true;
     }
     std::vector<uint8_t> payload;
     if (!build_clip_files_offer_payload(offer, &payload)) {
-      logf("clipboard offer encode failed");
-      clip->last_seq = seq;
+      c->clip.last_seq = seq;
       return true;
     }
-    if (!mux_write(tls, kChannelClipboard, payload.data(),
+    if (!mux_write(c->tls, kChannelClipboard, payload.data(),
                    static_cast<uint32_t>(payload.size()))) {
       return false;
     }
-    clip->last_seq = seq;
-    clip->sending_files = true;
-    logf("clipboard files out id=%u entries=%u bytes=%llu", offer.transfer_id,
-         static_cast<unsigned>(offer.entries.size()),
-         static_cast<unsigned long long>(offer.total_file_bytes));
-    const bool ok = file_xfer_send_all(
-        tls, offer,
-        [tls, clip]() { return pump_clip_drain(tls, clip); }, &err);
-    clip->sending_files = false;
+    c->clip.last_seq = seq;
+    c->clip.sending_files = true;
+    const bool ok = file_xfer_send_all(c->tls, offer, pump, &err);
+    c->clip.sending_files = false;
     if (!ok) {
       logf("clipboard files send failed: %s", err.c_str());
-      send_file_abort(tls, offer.transfer_id);
-      return err == "pump abort" ? false : true;
+      send_file_abort(c->tls, offer.transfer_id);
+      return err != "pump abort";
     }
-    logf("clipboard files send done id=%u", offer.transfer_id);
     return true;
   }
 
   if (clipboard_has_dib()) {
     std::vector<uint8_t> dib;
     if (!clipboard_read_dib(&dib)) {
-      logf("clipboard dib read failed");
-      clip->last_seq = seq;
+      c->clip.last_seq = seq;
       return true;
     }
     std::vector<uint8_t> payload;
     if (!build_clip_bitmap_payload(dib, &payload)) {
-      logf("clipboard bitmap encode failed / too large (%zu) - drop", dib.size());
-      clip->last_seq = seq;
+      c->clip.last_seq = seq;
       return true;
     }
-    if (!pump_clip_drain(tls, clip)) {
-      return false;
-    }
-    if (!mux_write(tls, kChannelClipboard, payload.data(),
+    if (!mux_write(c->tls, kChannelClipboard, payload.data(),
                    static_cast<uint32_t>(payload.size()))) {
       return false;
     }
-    if (!pump_clip_drain(tls, clip)) {
-      return false;
-    }
-    clip->last_seq = seq;
-    logf("clipboard bitmap out raw=%zu wire=%zu", dib.size(), payload.size());
+    c->clip.last_seq = seq;
     return true;
   }
 
   if (clipboard_has_text()) {
     std::vector<uint8_t> utf16;
     if (!clipboard_read_text_utf16(&utf16)) {
-      clip->last_seq = seq;
-      return true;
-    }
-    const uint32_t dig = clipboard_text_digest(utf16.data(), utf16.size());
-    if (dig == clip->echo.last_text_digest && clip->echo.should_skip_seq(seq)) {
-      clip->last_seq = seq;
+      c->clip.last_seq = seq;
       return true;
     }
     std::vector<uint8_t> payload;
     if (!build_clip_text_payload(utf16, &payload)) {
-      logf("clipboard text too large (%zu) - drop", utf16.size());
-      clip->last_seq = seq;
+      c->clip.last_seq = seq;
       return true;
     }
-    if (!mux_write(tls, kChannelClipboard, payload.data(),
+    if (!mux_write(c->tls, kChannelClipboard, payload.data(),
                    static_cast<uint32_t>(payload.size()))) {
       return false;
     }
-    clip->last_seq = seq;
-    logf("clipboard text out %zu bytes", utf16.size());
+    c->clip.last_seq = seq;
     return true;
   }
 
-  clip->last_seq = seq;
+  c->clip.last_seq = seq;
   return true;
 }
 
-void serve_one(tls::TlsSession* tls, const std::string& psk,
-               road_desk::replace::CaptureMode capture_mode,
-               const std::atomic<bool>* stop_requested) {
-  using namespace road_desk::replace;
-  uint8_t ch = 0;
-  std::vector<uint8_t> payload;
-  if (!mux_read(tls, &ch, &payload)) {
-    logf("read failed before auth (disconnect)");
-    return;
+bool fanout_host_clipboard(std::vector<ClientConn>* clients, uint32_t* shared_xfer_id,
+                           const std::string& psk, session::SessionMutex* mutex) {
+  if (!clients) {
+    return true;
   }
-  if (ch != kChannelControl || payload.empty()) {
-    logf("expected Control auth, got channel=%u len=%zu", static_cast<unsigned>(ch),
-         payload.size());
-    control_send_auth_fail(tls, "expected control auth");
-    return;
+  for (ClientConn& c : *clients) {
+    if (!c.authed || c.dead) {
+      continue;
+    }
+    if (!push_clipboard_one(&c, shared_xfer_id, clients, psk, mutex)) {
+      close_client(&c, mutex);
+    }
   }
-  std::string provided;
-  if (!parse_auth_password(payload.data(), payload.size(), &provided)) {
-    logf("malformed auth");
-    control_send_auth_fail(tls, "malformed auth");
-    return;
-  }
-  if (!road_desk::session::authenticate_psk(psk, provided)) {
-    logf("auth failed (psk mismatch)");
-    control_send_auth_fail(tls, "auth failed");
-    return;
-  }
+  clients->erase(std::remove_if(clients->begin(), clients->end(),
+                                [](const ClientConn& c) { return c.dead || !c.tls; }),
+                 clients->end());
+  return true;
+}
 
-  const int sw = GetSystemMetrics(SM_CXSCREEN);
-  const int sh = GetSystemMetrics(SM_CYSCREEN);
-  const uint16_t width = static_cast<uint16_t>(sw > 0 ? sw : 1);
-  const uint16_t height = static_cast<uint16_t>(sh > 0 ? sh : 1);
+void serve_shared(SOCKET listen_sock, const std::string& psk,
+                  road_desk::replace::CaptureMode capture_mode,
+                  const std::atomic<bool>* stop_requested, session::SessionMutex* mutex,
+                  tls::HostCredentials* creds) {
+  using namespace road_desk::replace;
+  std::vector<ClientConn> clients;
+  clients.reserve(kMaxClients);
 
   SessionCapture cap(capture_mode);
-  if (!cap.begin()) {
-    logf("capture begin failed");
-    control_send_auth_fail(tls, "capture begin failed");
-    return;
-  }
-  if (!control_send_auth_ok(tls, width, height)) {
-    logf("send AuthOk failed");
-    return;
-  }
-  if (cap.using_mirror()) {
-    logf("auth ok desktop=%ux%u capture=mirror device=%s - M2 cursor+CopyRect+zlib", width,
-         height, cap.mirror_device());
-  } else if (capture_mode != CaptureMode::Gdi) {
-    logf("auth ok desktop=%ux%u capture=gdi (mirror attach failed; fallback) - G3", width,
-         height);
-  } else {
-    logf("auth ok desktop=%ux%u capture=gdi - G3 cursor+CopyRect+zlib", width, height);
-  }
-  media_log_set_mirror_stderr(false);
-  release_modifiers();
-  g_input_pointer = 0;
-  g_input_key = 0;
-  g_ptr_have_prev = false;
-  g_ptr_buttons_prev = 0;
-  g_validate_frames = 0;
-  g_cursor_hash_sent = 0;
-  g_copyrects_sent = 0;
-
-  HostClipSession clip;
-  clip.last_seq = GetClipboardSequenceNumber();
+  bool cap_begun = false;
+  uint32_t shared_xfer_id = 1;
 
   std::vector<uint8_t> frame;
   std::vector<uint8_t> prev;
@@ -783,12 +843,6 @@ void serve_one(tls::TlsSession* tls, const std::string& psk,
   uint32_t sent_rects = 0;
   uint32_t dropped_ticks = 0;
   uint32_t ticks_sent = 0;
-  uint64_t sum_raw = 0;
-  uint64_t sum_wire = 0;
-  uint64_t sum_encode_ms = 0;
-  uint64_t sum_send_ms = 0;
-  uint32_t zlib_rects = 0;
-  uint32_t raw_rects = 0;
   bool have_prev = false;
   DWORD last_send_ms = 0;
   DWORD last_stat_ms = GetTickCount();
@@ -797,52 +851,152 @@ void serve_one(tls::TlsSession* tls, const std::string& psk,
   constexpr DWORD kStatIntervalMs = 1000;
   constexpr DWORD kAttachScrubMs = 2000;
 
-  for (;;) {
-    if (stop_requested && stop_requested->load()) {
-      logf("stop requested - ending session");
-      break;
-    }
-    if (!drain_incoming(tls, &clip)) {
-      logf("client gone (recv) sent_rects=%u drop_ticks=%u input_ptr=%u input_key=%u copy=%u",
-           sent_rects, dropped_ticks, g_input_pointer, g_input_key, g_copyrects_sent);
-      break;
-    }
-    if (!push_local_clipboard(tls, &clip)) {
-      logf("clipboard push failed - client gone?");
-      break;
+  logf("shared-control serve (max_clients=%u)", static_cast<unsigned>(kMaxClients));
+
+  while (!(stop_requested && stop_requested->load()) && listen_sock != INVALID_SOCKET) {
+
+    drain_all_clients(&clients, psk, mutex);
+    fanout_host_clipboard(&clients, &shared_xfer_id, psk, mutex);
+
+    const unsigned authed = count_authed(clients);
+    if (authed == 0 && cap_begun) {
+      cap.end();
+      cap_begun = false;
+      have_prev = false;
+      prev.clear();
+      release_modifiers();
+      media_log_set_mirror_stderr(true);
+      logf("all viewers gone - capture stopped");
     }
 
-    const DWORD loop_now = GetTickCount();
-    if (cap.using_mirror()) {
-      if (loop_now - last_attach_scrub_ms >= kAttachScrubMs) {
-        last_attach_scrub_ms = loop_now;
-        rdm_scrub_foreign_attach_registry();
+    fd_set rfds;
+    FD_ZERO(&rfds);
+    FD_SET(listen_sock, &rfds);
+    for (const ClientConn& c : clients) {
+      if (c.tls && !c.dead) {
+        const SOCKET s = tls::tls_get_socket(c.tls);
+        if (s != INVALID_SOCKET) {
+          FD_SET(s, &rfds);
+        }
       }
     }
-
-    const SOCKET sock = tls::tls_get_socket(tls);
-    const DWORD now = GetTickCount();
-    if (now - last_cursor_ms >= 50) {
-      last_cursor_ms = now;
-      if (!maybe_send_cursor(tls)) {
-        logf("cursor send failed - client gone?");
+    timeval tv{};
+    tv.tv_sec = 0;
+    tv.tv_usec = (authed > 0) ? 2000 : 50000;
+    const int sel = select(0, &rfds, nullptr, nullptr, &tv);
+    if (sel < 0) {
+      const int err = WSAGetLastError();
+      if (stop_requested && stop_requested->load()) {
         break;
       }
+      logf("select failed (%d)", err);
+      break;
     }
 
-    const DWORD min_interval_ms = (g_ptr_buttons & 1) ? 4u : 8u;
-    const bool interval_ok = (last_send_ms == 0) || (now - last_send_ms >= min_interval_ms);
-    if (!interval_ok) {
-      socket_readable(sock, 2);
+    if (sel > 0 && FD_ISSET(listen_sock, &rfds)) {
+      SOCKET tcp = tls::tcp_accept(listen_sock);
+      if (tcp != INVALID_SOCKET) {
+        if (clients.size() >= kMaxClients) {
+          logf("reject: max clients (%u)", static_cast<unsigned>(kMaxClients));
+          closesocket(tcp);
+        } else if (!creds) {
+          closesocket(tcp);
+        } else {
+          tls::TlsSession* tls_sess = tls::server_handshake(tcp, *creds);
+          if (!tls_sess) {
+            logf("TLS handshake failed");
+          } else {
+            ClientConn c;
+            c.tls = tls_sess;
+            clients.push_back(std::move(c));
+            logf("TLS up clients=%u/%u - awaiting auth",
+                 static_cast<unsigned>(clients.size()),
+                 static_cast<unsigned>(kMaxClients));
+          }
+        }
+      }
+    }
+
+    drain_all_clients(&clients, psk, mutex);
+
+    if (count_authed(clients) == 0) {
       continue;
     }
 
-    if (have_prev && !socket_writable(sock, 0)) {
-      ++dropped_ticks;
-      if ((dropped_ticks % 30) == 1) {
-        logf("backpressure drop_ticks=%u (socket not writable, keep prev)", dropped_ticks);
+    if (!cap_begun) {
+      if (!cap.begin()) {
+        logf("capture begin failed - drop viewers");
+        for (ClientConn& c : clients) {
+          if (c.authed) {
+            close_client(&c, mutex);
+          }
+        }
+        clients.clear();
+        continue;
       }
-      socket_readable(sock, 4);
+      cap_begun = true;
+      media_log_set_mirror_stderr(false);
+      if (cap.using_mirror()) {
+        logf("capture started mirror device=%s", cap.mirror_device());
+      } else {
+        logf("capture started gdi");
+      }
+      g_input_pointer = 0;
+      g_input_key = 0;
+      g_ptr_have_prev = false;
+      g_ptr_buttons_prev = 0;
+      g_validate_frames = 0;
+      g_copyrects_sent = 0;
+    }
+
+    const DWORD loop_now = GetTickCount();
+    if (cap.using_mirror() && loop_now - last_attach_scrub_ms >= kAttachScrubMs) {
+      last_attach_scrub_ms = loop_now;
+      rdm_scrub_foreign_attach_registry();
+    }
+
+    if (loop_now - last_cursor_ms >= 50) {
+      last_cursor_ms = loop_now;
+      CursorShape shape;
+      if (capture_cursor_shape(&shape)) {
+        for (ClientConn& c : clients) {
+          if (!c.authed || c.dead) {
+            continue;
+          }
+          if (!send_cursor_if_changed(c.tls, shape, &c.cursor_hash_sent)) {
+            close_client(&c, mutex);
+          }
+        }
+        clients.erase(std::remove_if(clients.begin(), clients.end(),
+                                     [](const ClientConn& c) { return c.dead || !c.tls; }),
+                      clients.end());
+      }
+    }
+
+    const DWORD now = GetTickCount();
+    const DWORD min_interval_ms = (g_ptr_buttons & 1) ? 4u : 8u;
+    if (last_send_ms != 0 && now - last_send_ms < min_interval_ms) {
+      continue;
+    }
+
+    bool any_writable = false;
+    bool any_kf = false;
+    for (ClientConn& c : clients) {
+      if (!c.authed || c.dead) {
+        continue;
+      }
+      if (c.need_keyframe) {
+        any_kf = true;
+      }
+      const SOCKET s = tls::tls_get_socket(c.tls);
+      if (socket_writable(s, 0)) {
+        any_writable = true;
+      } else {
+        c.need_keyframe = true;
+      }
+    }
+    if (!any_writable) {
+      ++dropped_ticks;
       continue;
     }
 
@@ -852,53 +1006,46 @@ void serve_one(tls::TlsSession* tls, const std::string& psk,
     const DWORD cap0 = GetTickCount();
     mirror_dirties.clear();
     if (!cap.capture(&frame, &w, &h, &mirror_dirties, force_validate)) {
-      Sleep(20);
+      Sleep(5);
       continue;
     }
     const DWORD cap_ms = GetTickCount() - cap0;
 
     const size_t frame_bytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 4u;
     if (frame.size() != frame_bytes || frame.empty()) {
-      logf("capture size mismatch frame=%zu expect=%zu - skip", frame.size(), frame_bytes);
-      Sleep(20);
+      Sleep(5);
       continue;
     }
     if (have_prev && prev.size() != frame_bytes) {
-      logf("desktop size changed prev=%zu now=%zu - keyframe", prev.size(), frame_bytes);
       have_prev = false;
     }
     if (!have_prev) {
       prev.assign(frame_bytes, 0);
     }
 
-    if (cap.using_mirror() && !force_validate) {
+    const bool force_full = any_kf || !have_prev;
+    if (cap.using_mirror() && !force_validate && !force_full) {
       dirties.clear();
-      if (!have_prev && mirror_dirties.empty()) {
-        dirties.push_back(DirtyRect{0, 0, w, h});
-      } else {
-        for (const CaptureDirty& d : mirror_dirties) {
-          dirties.push_back(DirtyRect{d.x, d.y, d.w, d.h});
-        }
+      for (const CaptureDirty& d : mirror_dirties) {
+        dirties.push_back(DirtyRect{d.x, d.y, d.w, d.h});
       }
     } else {
-      collect_dirty_rects(frame.data(), have_prev ? prev.data() : nullptr, w, h, !have_prev,
-                          &dirties);
+      collect_dirty_rects(frame.data(), have_prev && !force_full ? prev.data() : nullptr, w, h,
+                          force_full, &dirties);
     }
     if (force_validate && g_validate_frames > 0) {
       --g_validate_frames;
     }
     if (dirties.empty()) {
-      socket_readable(sock, 8);
       continue;
     }
     const unsigned before_collapse = static_cast<unsigned>(dirties.size());
     collapse_dirties_for_send(&dirties, w, h);
 
     copies.clear();
-    if (have_prev && !force_validate && (g_ptr_buttons & 1) && g_ptr_have_prev) {
-      const int mdx = g_ptr_x - g_ptr_x_prev;
-      const int mdy = g_ptr_y - g_ptr_y_prev;
-      try_extract_copyrects(frame.data(), prev.data(), w, h, mdx, mdy, &dirties, &copies);
+    if (have_prev && !force_full && !force_validate && (g_ptr_buttons & 1) && g_ptr_have_prev) {
+      try_extract_copyrects(frame.data(), prev.data(), w, h, g_ptr_x - g_ptr_x_prev,
+                            g_ptr_y - g_ptr_y_prev, &dirties, &copies);
     }
 
     const bool full_keyframe =
@@ -908,84 +1055,97 @@ void serve_one(tls::TlsSession* tls, const std::string& psk,
       split_rects_for_input_slices(&dirties, 256);
     }
 
-    bool ok = true;
+    bool batch_ok = true;
     size_t raw_this = 0;
     size_t wire_this = 0;
     DWORD enc_this = 0;
     DWORD send_this = 0;
     unsigned zlib_this = 0;
-    unsigned raw_this_n = 0;
     unsigned copy_this = 0;
-    const unsigned batch_n =
-        static_cast<unsigned>(dirties.size()) + static_cast<unsigned>(copies.size());
-    unsigned sent_this = 0;
 
     for (const CopyRect& cr : copies) {
-      if (!drain_incoming(tls, &clip)) {
-        ok = false;
-        break;
-      }
-      if (!send_copy_rect(tls, frame_id, cr)) {
-        logf("copyrect send failed - client gone?");
-        ok = false;
-        break;
+      drain_all_clients(&clients, psk, mutex);
+      for (ClientConn& c : clients) {
+        if (!c.authed || c.dead) {
+          continue;
+        }
+        if (!socket_writable(tls::tls_get_socket(c.tls), 0)) {
+          c.need_keyframe = true;
+          continue;
+        }
+        if (!send_copy_rect(c.tls, frame_id, cr)) {
+          close_client(&c, mutex);
+          continue;
+        }
       }
       ++g_copyrects_sent;
       ++copy_this;
       ++sent_rects;
-      ++sent_this;
       ++frame_id;
       wire_this += kCopyRectPayloadSize;
-    }
-    if (!ok) {
-      break;
     }
 
     for (const DirtyRect& r : dirties) {
       if (!rect_in_desk(w, h, r.x, r.y, r.w, r.h)) {
-        logf("bad dirty rect %d,%d %dx%d desk=%dx%d - keyframe", r.x, r.y, r.w, r.h, w, h);
         have_prev = false;
-        sent_this = 0;
-        ok = true;
+        batch_ok = false;
         break;
       }
-      if (!drain_incoming(tls, &clip)) {
-        ok = false;
-        break;
+      drain_all_clients(&clients, psk, mutex);
+      // Encode once via first writable client path: send_video_rect encodes+writes.
+      // Re-encode per client for simplicity (N<=8).
+      bool any_sent = false;
+      for (ClientConn& c : clients) {
+        if (!c.authed || c.dead) {
+          continue;
+        }
+        if (!socket_writable(tls::tls_get_socket(c.tls), 0)) {
+          c.need_keyframe = true;
+          continue;
+        }
+        SendRectStats st{};
+        if (!send_video_rect(c.tls, frame_id, w, h, r.x, r.y, r.w, r.h, frame.data(), &raw_buf,
+                             &send_buf, &st)) {
+          close_client(&c, mutex);
+          continue;
+        }
+        if (!any_sent) {
+          raw_this += st.raw_bytes;
+          wire_this += st.wire_bytes;
+          enc_this += st.encode_ms;
+          send_this += st.send_ms;
+          if (st.codec == kVideoZlibBgra) {
+            ++zlib_this;
+          }
+          any_sent = true;
+        } else {
+          wire_this += st.wire_bytes;
+          send_this += st.send_ms;
+        }
       }
-      SendRectStats st{};
-      if (!send_video_rect(tls, frame_id, w, h, r.x, r.y, r.w, r.h, frame.data(), &raw_buf,
-                           &send_buf, &st)) {
-        logf("video send failed - client gone? id=%u rect=%dx%d", frame_id, r.w, r.h);
-        ok = false;
-        break;
+      if (any_sent) {
+        ++sent_rects;
+        ++frame_id;
       }
-      raw_this += st.raw_bytes;
-      wire_this += st.wire_bytes;
-      enc_this += st.encode_ms;
-      send_this += st.send_ms;
-      if (st.codec == road_desk::replace::kVideoZlibBgra) {
-        ++zlib_this;
-      } else {
-        ++raw_this_n;
-      }
-      ++sent_rects;
-      ++sent_this;
-      ++frame_id;
     }
-    if (!ok) {
-      break;
-    }
-    if (sent_this != batch_n) {
-      have_prev = false;
+
+    clients.erase(std::remove_if(clients.begin(), clients.end(),
+                                 [](const ClientConn& c) { return c.dead || !c.tls; }),
+                  clients.end());
+
+    if (!batch_ok) {
       ++dropped_ticks;
-      logf("partial/bad batch - force keyframe drop_ticks=%u", dropped_ticks);
       continue;
     }
 
+    for (ClientConn& c : clients) {
+      if (c.authed && !c.dead) {
+        c.need_keyframe = false;
+      }
+    }
+
     for (const CopyRect& cr : copies) {
-      DirtyRect d{cr.dx, cr.dy, cr.w, cr.h};
-      copy_rect_to_prev(prev.data(), frame.data(), w, h, d);
+      copy_rect_to_prev(prev.data(), frame.data(), w, h, DirtyRect{cr.dx, cr.dy, cr.w, cr.h});
     }
     for (const DirtyRect& r : dirties) {
       copy_rect_to_prev(prev.data(), frame.data(), w, h, r);
@@ -993,39 +1153,26 @@ void serve_one(tls::TlsSession* tls, const std::string& psk,
     have_prev = true;
     last_send_ms = GetTickCount();
     ++ticks_sent;
-    sum_raw += raw_this;
-    sum_wire += wire_this;
-    sum_encode_ms += enc_this;
-    sum_send_ms += send_this;
-    zlib_rects += zlib_this;
-    raw_rects += raw_this_n;
 
-    const bool first = (ticks_sent == 1);
-    const bool periodic = (last_send_ms - last_stat_ms >= kStatIntervalMs);
-    if (first || periodic) {
+    if (ticks_sent == 1 || last_send_ms - last_stat_ms >= kStatIntervalMs) {
       last_stat_ms = last_send_ms;
-      const unsigned ratio =
-          (raw_this > 0) ? static_cast<unsigned>((wire_this * 100u) / raw_this) : 0;
-      const int ex_w = dirties.empty() ? (copies.empty() ? 0 : copies[0].w) : dirties[0].w;
-      const int ex_h = dirties.empty() ? (copies.empty() ? 0 : copies[0].h) : dirties[0].h;
-      logf(
-          "tick=%u id=%u batch=%u(from %u) copy=%u raw=%u wire=%u ratio=%u%% zlib=%u "
-          "enc_ms=%u send_ms=%u cap_ms=%u drop=%u in_ptr=%u in_key=%u ex=%dx%d",
-          ticks_sent, frame_id - 1, batch_n, before_collapse, copy_this,
-          static_cast<unsigned>(raw_this), static_cast<unsigned>(wire_this), ratio, zlib_this,
-          enc_this, send_this, cap_ms, dropped_ticks, g_input_pointer, g_input_key, ex_w, ex_h);
+      logf("tick=%u viewers=%u batch=%u(from %u) copy=%u wire=%u zlib=%u cap_ms=%u drop=%u",
+           ticks_sent, count_authed(clients),
+           static_cast<unsigned>(dirties.size() + copies.size()), before_collapse, copy_this,
+           static_cast<unsigned>(wire_this), zlib_this, cap_ms, dropped_ticks);
     }
   }
 
-  logf("session stats ticks=%u rects=%u zlib=%u raw=%u raw_B=%llu wire_B=%llu enc_ms=%llu "
-       "send_ms=%llu drop=%u in_ptr=%u in_key=%u",
-       ticks_sent, sent_rects, zlib_rects, raw_rects, static_cast<unsigned long long>(sum_raw),
-       static_cast<unsigned long long>(sum_wire), static_cast<unsigned long long>(sum_encode_ms),
-       static_cast<unsigned long long>(sum_send_ms), dropped_ticks, g_input_pointer, g_input_key);
-  road_desk::replace::file_recv_abort(&clip.recv);
+  for (ClientConn& c : clients) {
+    close_client(&c, mutex);
+  }
+  clients.clear();
+  if (cap_begun) {
+    cap.end();
+  }
   release_modifiers();
-  logf("session end: released modifiers/buttons");
   media_log_set_mirror_stderr(true);
+  logf("shared-control serve end ticks=%u rects=%u", ticks_sent, sent_rects);
 }
 
 }  // namespace
@@ -1180,7 +1327,9 @@ bool MediaPlane::listen(const MediaPlaneConfig& config) {
 
   impl_->listen_sock = tls::tcp_listen(config.listen_port);
   if (impl_->listen_sock == INVALID_SOCKET) {
-    logf("listen failed on %d (fail-fast)", config.listen_port);
+    const int wsa = WSAGetLastError();
+    logf("listen failed on %d (WSA=%d)%s", config.listen_port, wsa,
+         wsa == WSAEADDRINUSE ? " — port already in use (old host-agent / VNC?)" : "");
     tls::free_host_credentials(&impl_->tls_creds);
     impl_->fingerprint.clear();
     if (impl_->wsa_started) {
@@ -1202,70 +1351,9 @@ void MediaPlane::serve() {
     return;
   }
 
-  while (!impl_->stop_requested.load()) {
-    SOCKET listen_sock = impl_->listen_sock;
-    if (listen_sock == INVALID_SOCKET) {
-      break;
-    }
-
-    fd_set rfds;
-    FD_ZERO(&rfds);
-    FD_SET(listen_sock, &rfds);
-    timeval tv{};
-    tv.tv_sec = 0;
-    tv.tv_usec = 200000;  // 200ms — wake to observe stop_requested
-    const int sel = select(0, &rfds, nullptr, nullptr, &tv);
-    if (sel < 0) {
-      const int err = WSAGetLastError();
-      if (impl_->stop_requested.load() || impl_->listen_sock == INVALID_SOCKET) {
-        break;
-      }
-      logf("select failed (%d)", err);
-      break;
-    }
-    if (sel == 0) {
-      continue;
-    }
-    if (impl_->stop_requested.load() || impl_->listen_sock == INVALID_SOCKET) {
-      break;
-    }
-
-    SOCKET tcp = tls::tcp_accept(impl_->listen_sock);
-    if (tcp == INVALID_SOCKET) {
-      const int err = WSAGetLastError();
-      if (err == WSAEWOULDBLOCK) {
-        continue;
-      }
-      if (impl_->stop_requested.load() || impl_->listen_sock == INVALID_SOCKET) {
-        break;
-      }
-      logf("accept failed (%d)", err);
-      break;
-    }
-
-    session::SessionMutex* mutex = impl_->session_mutex;
-    if (mutex && !mutex->try_acquire()) {
-      logf("reject: session busy");
-      closesocket(tcp);
-      continue;
-    }
-
-    tls::TlsSession* tls_sess = tls::server_handshake(tcp, impl_->tls_creds);
-    if (!tls_sess) {
-      logf("TLS handshake failed");
-      if (mutex) {
-        mutex->release();
-      }
-      continue;
-    }
-    logf("TLS up - awaiting Control auth");
-    serve_one(tls_sess, impl_->password, impl_->capture_mode, &impl_->stop_requested);
-    tls::tls_close(tls_sess);
-    if (mutex) {
-      mutex->release();
-    }
-    logf("session released - ready for next client");
-  }
+  logf("serve: shared-control multi-viewer");
+  serve_shared(impl_->listen_sock, impl_->password, impl_->capture_mode, &impl_->stop_requested,
+               impl_->session_mutex, &impl_->tls_creds);
 
   road_desk::replace::release_modifiers();
   impl_->cleanup_listen();

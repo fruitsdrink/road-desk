@@ -13,7 +13,7 @@ Related: [ADR-0004](./adr/0004-compliant-media-self-developed.md), [ADR-0001](./
 
 用有时限、默认可扔的探针，回答：
 
-1. 在保住 `media_plane.h` / Schannel / PSK / 互斥 / `win_input` 的前提下，自研非 RFB 媒体面能否在 Win7 Host 上跑通看屏+键鼠？
+1. 在保住 `media_plane.h` / Schannel / PSK / 互斥 / 注入能力的前提下，自研非 RFB 媒体面能否在 Win7 Host 上跑通看屏+键鼠？
 2. **拖窗手感**能否相对现 LibVNC（GDI）达到 **档 B**？
 3. 自研 Mirror + mux 后，同机相对 VNC/Radmin（Mirror）能否达到 **档 C′**（不被明显 pass）？
 4. 自研 Mirror 失败时：书面结案后再议采购（不默认买）。
@@ -31,8 +31,8 @@ Related: [ADR-0004](./adr/0004-compliant-media-self-developed.md), [ADR-0001](./
 | 编码 P0 | zlib 和/或 raw 脏矩形；**禁止**一上来整屏 JPEG |
 | 手感 | 档 B（优于 LibVNC GDI）为中间门禁；档 **C′**（同机不被 VNC/Radmin+Mirror 明显 pass）为上道目标，绑 Mirror |
 | 文件 / 剪贴板 / 登录前 | 探针 P0 **不做**（mux 可留 channel id） |
-| 主线 LibVNC | 对照基线保留到切换门禁通过；**G5 未通过前禁止覆盖/删除** `src/media/libvnc_*` 与 LibVNC 链接 |
-| LibVNC 备份 | 已验证点：`backup/libvnc-mvp-verified` + tag `libvnc-mvp-verified-2026-08-01`（= `cursor/control-plane-psk-tls` @ `6f650d5`）。换芯只在 `spikes/media-replace/` 与本分支文档演进 |
+| 主线 LibVNC | **已切除**：`libvnc_*` / `win_input.*` 已从 `src/media` 删除；构建不链接 LibVNC |
+| LibVNC 备份 | `backup/libvnc-mvp-verified` + tag `libvnc-mvp-verified-2026-08-01`（= `6f650d5`）；需要时用 git 回滚，勿再把 GPL 源拉回主线 |
 | DPI / 缩放 | 协议坐标 = Host **帧缓冲像素**；Viewer **不得**故意 DPI-unaware；Win8+ 按 [避坑 §L](./spike-media-replace-pitfalls.md)（system DPI aware + 125%/150% 必测）；P0 不上 Per-Monitor V2 |
 
 ### 体验档位
@@ -52,10 +52,9 @@ GDI 整桌采帧 → 脏块 → LibVNC → TLS → Viewer 整帧绘制。现场�
 
 ### 3.1 边界
 
-- **留下**：[`src/media/media_plane.h`](../src/media/media_plane.h)、[`tls_schannel.*`](../src/media/tls_schannel.cpp)、[`win_input.*`](../src/media/win_input.cpp)、session PSK / `SessionMutex`、Agent/Viewer 薄壳接线方式。
-- **拆掉（仅 G5「切入主线」且产品确认后）**：`libvnc_host.cpp` / `libvnc_client.cpp` 及 third_party LibVNC 链接。在此之前 **不得** 用换芯实现覆盖这些文件。
-- **探针期**：实现只放在 `spikes/media-replace/`，可复制/薄包装 TLS 与 input；**不改**主线 LibVNC 适配器源文件（文档与 RESULTS 除外）。
-- **回滚**：需要已验证 LibVNC 树时 → `git checkout backup/libvnc-mvp-verified` 或 `git checkout libvnc-mvp-verified-2026-08-01`。
+- **留下**：[`src/media/media_plane.h`](../src/media/media_plane.h)、[`tls_schannel.*`](../src/media/tls_schannel.cpp)、[`mux_inject.*`](../src/media/mux_inject.cpp)、session PSK / `SessionMutex`、Agent/Viewer 薄壳接线方式。
+- **已拆掉**：`libvnc_host.cpp` / `libvnc_client.cpp` / `win_input.*`；主线不链接 third_party LibVNC（`third_party/libvncserver/` 仍 gitignore，仅 media-plane 探针脚本可 fetch）。
+- **回滚**：需要已验证 LibVNC 树时 → `git checkout backup/libvnc-mvp-verified` 或 tag `libvnc-mvp-verified-2026-08-01`（整树历史状态，勿只cherry-pick GPL 适配器回主线）。
 
 ### 3.2 逻辑通道（单 TLS mux）
 
@@ -252,7 +251,7 @@ gantt
 | 自研 Mirror 主路径 | 登录前完整验收 |
 | 不默认采购 SDK | Per-Monitor V2 |
 
-**不砍**：Win7 真环、Input 优先、驱动可卸、G5 前不覆盖 libvnc_*。
+**不砍**：Win7 真环、Input 优先、驱动可卸。
 
 ## 7. 验收与总判
 
@@ -267,12 +266,12 @@ gantt
 ### 不构成失败
 
 - 未达公网 ToDesk 全特性（档 C）
-- 视频区卡顿；未做 File/剪贴板/登录前完整验收
+- 视频区仍可能卡顿；登录前远控未做（剪贴板/文件已在主线另做）
 
 ### 总判
 
-- **切入主线**（**已选，2026-08-01**）：A + B + C′（VNC；Radmin 跳过）→ 下一步迁 `src/media/`，去 LibVNC，带自研 Mirror 部署
-- **管线/驱动再迭代**：架构在，B 或 C′ 未稳 → 延 W8–W9，不采购
+- **切入主线**（**已选并落地，2026-08-01**）：A + B + C′（VNC；Radmin 跳过）→ `src/media` mux + Mirror；LibVNC 源已删
+- **管线/驱动再迭代**：架构在，B 或 C′ 未稳 → 延 W8–W9，不采购（历史备选项）
 - **自研 Mirror 失败结案**：书面记录后 **才** 议采购商业 Mirror（非默认）
 
 **切入主线必带项：** Mirror 装站见 [`tools/mirror-install/`](../tools/mirror-install/)（单文件 `RoadDeskMirrorSetup.exe`）。Host 提权（任务 3）**已接**：`host-agent` `requireAdministrator` + 非提升拒绝启动。见 RESULTS / [coexistence.md](../spikes/mirror-driver/docs/coexistence.md)。
@@ -283,7 +282,7 @@ gantt
 - 调用现场已装的 VNC/Radmin Mirror 当正式依赖
 - 兼容第三方 VNC Viewer；媒体面改 Go/Rust
 - 整屏 JPEG 默认；中心/审计/中继/浏览器端
-- 探针包当正式装站包；跳过 G0；G5 前覆盖 libvnc_*
+- 探针包当正式装站包；跳过 G0
 
 ## 9. 语言选型摘要
 
@@ -301,11 +300,10 @@ gantt
 
 ## 11. 与主线关系
 
-| 主线（MVP LibVNC） | 本换芯探针 |
-|--------------------|------------|
-| 继续真机验收与浸泡 | 消费其基线数据（G0） |
-| 代码保留至切换门禁 | 探针代码默认可扔，结论必留 |
-| 内部可用 GPL | 探针路径验证无 GPL 交付形态 |
-| 控制面已接线 | 换芯不重写 PSK/互斥；复用 TLS 能力 |
+| 主线（已切 mux） | 本换芯探针（历史） |
+|------------------|--------------------|
+| `mux_host` / `mux_client` + Mirror | 提供 G0–G5 对照与结论页 |
+| 无 GPL 媒体库进交付产物 | 探针代码可保留，结论必留 |
+| 控制面 PSK/互斥/TLS | 换芯未重写；复用 Schannel |
 
 冲突时：**以 Win7 真环稳定性与拖窗对照表为准**，更新本文件与 ADR-0004 Consequences，而不是放宽「不黑屏/不闪屏」或假装达到档 C′。

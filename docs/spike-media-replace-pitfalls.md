@@ -59,7 +59,7 @@ Related: [spike-media-replace.md](./spike-media-replace.md), [ADR-0004](./adr/00
 | # | 坑 | 类型 | 为何危险 | 本探针怎么避 |
 |---|----|------|----------|--------------|
 | D1 | 坐标未按桌面/letterbox 变换 | 行业 | 点偏、点不中 | 与现 Viewer 缩放/letterbox 规则一致；**先**落到 Host 帧缓冲像素，再注入（见 §L） |
-| D2 | 断连/失焦不松修饰键 | 已知 | Ctrl/Alt/Win「粘住」 | 复用 `win_input` 松键路径；断连必调 |
+| D2 | 断连/失焦不松修饰键 | 已知 | Ctrl/Alt/Win「粘住」 | 复用 `mux_inject` / `release_modifiers`；断连必调 |
 | D3 | 绝对/相对鼠标模式混用 | 行业 | 游戏/特殊程序乱飘；车道 GUI 一般要绝对 | P0 **绝对坐标**对桌面像素 |
 | D4 | 注入与采集同锁死锁 | 行业 | 偶发卡死 | 注入队列短、锁粒度小；勿在 BitBlt 持锁时注入重逻辑 |
 | D5 | 承诺登录前/锁屏注入 | 已知 P3 | Session 0 / 安全桌面不是 GDI+SendInput | 探针明确不做；不写进验收 |
@@ -151,7 +151,7 @@ Related: [spike-media-replace.md](./spike-media-replace.md), [ADR-0004](./adr/00
 | L7 | 混用「逻辑坐标 API」与「物理帧」 | 行业 | 例如未感知时的屏幕坐标、或部分 `PhysicalToLogicalPoint` 误用 | 注入路径：Viewer 客户区像素 → 远端帧像素（整数）→ Host `SendInput` 绝对坐标按 **帧 w/h** 映射到 0..65535；禁止在中途再乘/除一次「缩放比例百分比」 |
 | L8 | 只测 100% 缩放 | 已知风险 | 开发机 100%、现场 125%/150% 才爆 | **验收矩阵**见 L.2；未测高 DPI 不得标 G3 完成 |
 | L9 | 字体/控件按 DPI 拉大导致 Viewer UI 挡画面，误改帧缩放 | 行业 | 把工具条尺寸算进远端映射 | 远端画面区与工具条分窗或固定排除；letterbox **只**对画面 HWND 客户区 |
-| L10 | Host Win8+ 未 aware，BitBlt「看起来对」但点击偏 | 行业 | 采集有时仍像满屏，注入用虚拟化 metrics | Host 一律 early DPI aware（与现 `libvnc_host` / spike_host 一致并保留） |
+| L10 | Host Win8+ 未 aware，BitBlt「看起来对」但点击偏 | 行业 | 采集有时仍像满屏，注入用虚拟化 metrics | Host 一律 early DPI aware（与现 `mux_host` / spike_host 一致并保留） |
 
 ### L.2 验收矩阵（DPI / 缩放）
 

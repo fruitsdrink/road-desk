@@ -18,14 +18,15 @@ class SessionMutex;
 namespace road_desk::media {
 
 struct MediaPlaneConfig {
-  int listen_port = 5900;
+  // Outside VNC display-port band (5900–5999) to avoid clashing with Tight/UltraVNC.
+  int listen_port = 38471;
   std::string password = "road-desk";
   std::string desktop_name = "Road Desk";
   // Default true: private mux only on Schannel TLS. Mux has no plaintext path.
   bool require_tls = true;
   // Optional: pre-created cert store path (unused in MVP — host generates self-signed).
   std::string tls_cert_path;
-  // In-process session mutex (Agent-owned). Not cross-process.
+  // Optional in-process session counter (Agent-owned). Shared control; not exclusive.
   session::SessionMutex* session_mutex = nullptr;
 };
 
@@ -54,7 +55,7 @@ class MediaPlane {
 };
 
 struct MediaClientConfig {
-  std::string host_port = "127.0.0.1:5900";
+  std::string host_port = "127.0.0.1:38471";
   std::string password = "road-desk";
   HWND notify_hwnd = nullptr;
   UINT resize_msg = WM_APP + 1;

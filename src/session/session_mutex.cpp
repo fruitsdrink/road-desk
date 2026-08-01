@@ -3,15 +3,14 @@
 namespace road_desk::session {
 
 bool SessionMutex::try_acquire() {
-  if (held_) {
-    return false;
-  }
-  held_ = true;
+  ++count_;
   return true;
 }
 
 void SessionMutex::release() {
-  held_ = false;
+  if (count_ > 0) {
+    --count_;
+  }
 }
 
 }  // namespace road_desk::session

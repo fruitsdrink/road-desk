@@ -1,11 +1,11 @@
 # 媒体面换芯探针结论
 
-Status: **G5 passed — 切入主线**（计划见 [spike-media-replace.md](../../docs/spike-media-replace.md)；避坑见 [spike-media-replace-pitfalls.md](../../docs/spike-media-replace-pitfalls.md)；ADR-0004）  
-Branch: `cursor/media-replace-spike`
+Status: **G5 passed — 主线已切 mux**（计划见 [spike-media-replace.md](../../docs/spike-media-replace.md)；避坑见 [spike-media-replace-pitfalls.md](../../docs/spike-media-replace-pitfalls.md)；ADR-0004）  
+Branch: `dev`（自 `cursor/media-replace-spike` 合入）
 
-对照基线：现主线 LibVNC MVP（`host-agent` / `viewer`）。前序探针：[media-plane RESULTS](../media-plane/RESULTS.md)。
+对照基线（探针期）：当时主线 LibVNC MVP。前序探针：[media-plane RESULTS](../media-plane/RESULTS.md)。
 
-**LibVNC 已验证备份（勿删至切入主线实施完成）**
+**LibVNC 历史备份（主线源码已删除；仅 git 可回滚）**
 
 | 引用 | 指向 |
 |------|------|
@@ -13,7 +13,7 @@ Branch: `cursor/media-replace-spike`
 | Tag | `libvnc-mvp-verified-2026-08-01` |
 | 提交 | `6f650d5`（同 `cursor/control-plane-psk-tls`：PSK + 互斥 + Schannel TLS + LibVNC） |
 
-G5 已过；**迁移 PR 落地前**仍勿直接覆盖 `src/media/libvnc_*`（按迁移任务整批替换）。
+主线 `src/media/libvnc_*` / `win_input.*` **已删除**（2026-08-01）；交付构建不 fetch/链接 LibVNC。
 
 ## 总判（到期三选一）
 
@@ -30,21 +30,23 @@ G5 已过；**迁移 PR 落地前**仍勿直接覆盖 `src/media/libvnc_*`（按
 | **档 C′**（vs VNC+Mirror） | 通过：并排 `20260801_202934.mp4`，mirror≈VNC≈4，不被明显 pass；Radmin 本机未装，跳过 |
 | **Mirror** | GM1/GM2/M2 通过；共存/管理员/Attach.ToDesktop/Basic 主题见 `mirror-driver/docs/coexistence.md` |
 
-**不构成失败（已接受）：** 未达 ToDesk 档 C；未做 File/剪贴板/登录前；Radmin 未测。
+**探针期已接受缺口（此后主线已补齐部分）：** 未达 ToDesk 档 C；Radmin 未测；登录前仍不做。剪贴板（文本/位图/文件 HDROP）与 Mirror 装站/Host 提权已在主线落地。
 
 **G5 之后 / 主线切芯（2026-08-01）：**
 
 | 项 | 状态 |
 |----|------|
-| mux + Mirror/GDI 进 `src/media/`（`mux_host` / `mux_client`） | **已接**；`host-agent` / `viewer` 走 `media_plane.h`，**不再链接 LibVNC** |
-| 构建 | `scripts/build.ps1` 不再 fetch/编 LibVNC；产物 `build/src/agent/host-agent.exe`、`build/src/viewer/viewer.exe` |
+| mux + Mirror/GDI 进 `src/media/`（`mux_host` / `mux_client`） | **已接**；`host-agent` / `viewer` 走 `media_plane.h`，**不链接 LibVNC**；`libvnc_*` / `win_input.*` 已从树中删除 |
+| 构建 | `scripts/build.ps1` 不 fetch/编 LibVNC；产物 `build/src/agent/host-agent.exe`、`build/src/viewer/viewer.exe` |
 | spike 目录 | 保留作对照；上道以主线 exe 为准 |
 | Mirror 驱动装站/测试签 | **已接** → [`tools/mirror-install/`](../../tools/mirror-install/)（`make-package` → **单文件** `RoadDeskMirrorSetup.exe` 内嵌已签名驱动；WHQL 仍不做） |
 | Host 提权产品化 | **已接**（任务 3）：`host-agent` `requireAdministrator` + 非提升 **FATAL 拒绝启动** |
+| 双向剪贴板 | **已接**：文本 / 位图（DIB）/ 文件与目录（HDROP + File 通道） |
+| 多 Viewer 共享控制 | **已接**：最多 8 路同时连接，均可看屏+注入；满员拒连；无旁观/控权 |
 
 **Win7 冒烟（维护者）：** 开发机 `tools/mirror-install/make-package.ps1` → 拷 `build/mirror-package/win7-x64` 到 Win7 → 双击 `Install-RoadDeskMirror.bat`（可能需重启后再点一次）→ 再重启 → **管理员**跑 `host-agent` → 记 fingerprint → `viewer host:port psk fp`；`host-agent.log` 见 `capture=mirror`。Viewer 看 `viewer.log`。
 
-### 迁移待办：Host 管理员权限（必须处理）
+### Host 管理员权限（已产品化；事实仍成立）
 
 **事实（2026-08-01）：** Mirror 采帧本身不要求管理员；但 **清 HKLM `Attach.ToDesktop` / peer scrub** 需要管理员。非提升进程开设备管理器 → 键鼠失效（已对照）。
 
@@ -61,7 +63,7 @@ G5 已过；**迁移 PR 落地前**仍勿直接覆盖 `src/media/libvnc_*`（按
 |----|------|
 | Host / Viewer 环境 | Host：Win7 车道真机（例 `TZ-ETC-ENU1`，Intel HD 4600）；Viewer：维护者环境（正式路径验收 2026-08-01） |
 | 生产 Mirror 环境 | **现场无「无 Mirror」生产机**：设备管理器常见已装 `VNC Mirror Driver`、`Radmin Mirror Driver V3` 等。对照/验收默认在此环境做，不假设干净 GDI-only 现场。 |
-| Road Desk 是否使用 Mirror | **换芯 Host：M2 可走自研 Mirror**（`ROAD_DESK_CAPTURE=auto|mirror|gdi`）；LibVNC 主线仍为 GDI。不调用现场第三方 Mirror |
+| Road Desk 是否使用 Mirror | **主线 Host：默认/auto 走自研 Mirror**（`ROAD_DESK_CAPTURE=auto|mirror|gdi`）。不调用现场第三方 Mirror |
 | 正式路径（PSK/TLS/指纹/互斥） | **通过**（2026-08-01；维护者确认） |
 | ≥30 分钟浸泡 | **通过**（2026-08-01；维护者确认：无黑屏/闪屏/异常掉线） |
 | 拖窗快照（轻量） | **已填**（录像分析，见下） |
@@ -138,15 +140,18 @@ G5 已过；**迁移 PR 落地前**仍勿直接覆盖 `src/media/libvnc_*`（按
 | 2026-08-01 | DM+键鼠坑结案 | **记录** | 根因=`Attach.ToDesktop=1`/PnP，非 Mirror 采帧；误切 GDI 会卡+改 Basic；现开 DM 保持 Mirror（同 VNC）已核实可用 | — | 见 coexistence.md |
 | 2026-08-01 | DM×权限对照 | **确认** | 同构建不切 GDI：管理员开 DM=正常；非管理员开 DM=键鼠失效 → **必须管理员跑 mirror Host** | — | coexistence.md |
 | 2026-08-01 | G5 收口 | **通过** | 总判 **切入主线**：A+B+C′（VNC）+ Mirror 门禁齐；Radmin 跳过；迁移主线另开任务 | — | 见上文总判 |
-| 2026-08-01 | 主线切芯 | **代码已合** | `src/media` mux_host/client；`build.ps1` 无 LibVNC；本机编过 host-agent/viewer；Win7 冒烟待维护者 | — | 提权仍待办 |
+| 2026-08-01 | 主线切芯 | **代码已合** | `src/media` mux_host/client；`build.ps1` 无 LibVNC；本机编过 host-agent/viewer | — | 后续装站/提权/剪贴板 |
 | 2026-08-01 | 任务 2 装站 | **已接** | `tools/mirror-install`：单文件 `RoadDeskMirrorSetup.exe`（内嵌已签名驱动） | — | WHQL 不做 |
-| 2026-08-01 | 任务 3 提权 | **已接** | `host-agent` `requireAdministrator` + 非提升 FATAL 退出 | — | 见「迁移待办：Host 管理员权限」 |
+| 2026-08-01 | 任务 3 提权 | **已接** | `host-agent` `requireAdministrator` + 非提升 FATAL 退出 | — | 见「Host 管理员权限」 |
+| 2026-08-01 | 清理 libvnc_* | **已做** | 删除主线 `libvnc_host/client.cpp`、`win_input.*`；回滚靠 tag | — | NOTICE 已改 |
+| 2026-08-01 | 双向剪贴板 | **已接** | 文本 / 位图 / 文件目录；见 `mux_clipboard` / `mux_file_xfer` | — | 合入 `dev` |
+| 2026-08-01 | 多 Viewer | **已接** | Host `serve_shared`：单线程 select 扇出；共享 Mirror；上限 8 | — | 非互斥 |
 
 ## 合规
 
 | 依赖 | 许可 | 探针是否链接 |
 |------|------|--------------|
-| LibVNC | GPL-2.0 | 目标：**否** |
+| LibVNC | GPL-2.0 | **否**（未链接；主线源已删） |
 | 其它编解码（若引入） | | 登记于此 |
 
 ## 避坑抽查（§J）
@@ -157,4 +162,4 @@ G5 已过；**迁移 PR 落地前**仍勿直接覆盖 `src/media/libvnc_*`（按
 
 ## 明确不做（本探针，须遵守）
 
-商业 Mirror SDK、调用现场第三方 Mirror、第三方 VNC 兼容、Go/Rust 媒体面、文件/剪贴板/登录前、整屏 JPEG 默认、跳过 G0。自研 Mirror 在 [mirror-driver](../mirror-driver/) 并行，不在本目录实现驱动。
+商业 Mirror SDK、调用现场第三方 Mirror、第三方 VNC 兼容、Go/Rust 媒体面、登录前远控、整屏 JPEG 默认、跳过 G0。（剪贴板/文件已在主线另做，不属本探针范围。）自研 Mirror 在 [mirror-driver](../mirror-driver/) 并行，不在本目录实现驱动。

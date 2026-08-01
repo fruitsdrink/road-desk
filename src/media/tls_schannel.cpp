@@ -620,11 +620,15 @@ SOCKET tcp_listen(int port) {
   addr.sin_addr.s_addr = htonl(INADDR_ANY);
   addr.sin_port = htons(static_cast<u_short>(port));
   if (bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+    const int err = WSAGetLastError();
     closesocket(s);
+    WSASetLastError(err);
     return INVALID_SOCKET;
   }
   if (listen(s, 4) == SOCKET_ERROR) {
+    const int err = WSAGetLastError();
     closesocket(s);
+    WSASetLastError(err);
     return INVALID_SOCKET;
   }
   u_long nonblock = 1;

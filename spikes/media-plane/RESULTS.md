@@ -6,9 +6,11 @@ Related: [spike-media-plane.md](../../docs/spike-media-plane.md), ADR-0001, ADR-
 候选：`LibVNCServer/LibVNCClient 0.9.15`（GPL-2.0），探针：`spike_host` / `spike_viewer`。  
 口令：`spike`。构建：`spikes/media-plane/scripts/build.ps1` → `build/spike-media/`。
 
+> **后续（2026-08-01）**：换芯探针已结案并切入主线（见 [media-replace RESULTS](../media-replace/RESULTS.md)）。主线不再链接 LibVNC；`src/media/libvnc_*` 已删除。本页保留为当时选型证据，不代表当前主线实现。
+
 ## 总判
 
-- [x] **继续 A**：VNC 适配器用于 MVP（画面+键鼠），目标能力（文件等）走控制面/自有通道，**正式交付前换合规实现**（ADR-0002）
+- [x] **继续 A**：VNC 适配器用于 MVP（画面+键鼠），目标能力（文件等）走控制面/自有通道，**正式交付前换合规实现**（ADR-0002）— **后续已由换芯探针完成主线切 mux**
 - [ ] **局部自研**
 - [ ] **调整选型**
 

@@ -1,18 +1,20 @@
 #pragma once
 
-// MVP: one remote session per host Agent process at a time.
-// In-process only — not a cross-process / multi-instance lock.
+// Shared-control: counts active media sessions in-process (not exclusive).
+// Not a cross-process / multi-instance lock.
 
 namespace road_desk::session {
 
 class SessionMutex {
  public:
+  // Always succeeds; increments active viewer count.
   bool try_acquire();
   void release();
-  bool held() const { return held_; }
+  bool held() const { return count_ > 0; }
+  unsigned count() const { return count_; }
 
  private:
-  bool held_ = false;
+  unsigned count_ = 0;
 };
 
 }  // namespace road_desk::session

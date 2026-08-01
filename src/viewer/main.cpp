@@ -430,7 +430,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_cmd)
   }
   viewer_boot("console_ok");
 
-  std::string host = "127.0.0.1:5900";
+  std::string host = "127.0.0.1:38471";
   std::string password = "road-desk";
   std::string tls_fingerprint;
   if (cmd_line && cmd_line[0] != L'\0') {

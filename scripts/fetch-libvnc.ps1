@@ -1,4 +1,5 @@
-# Fetch LibVNCServer 0.9.15 into third_party/libvncserver (GPL, internal MVP only).
+# Fetch LibVNCServer 0.9.15 into third_party/libvncserver (GPL).
+# Only for the historical media-plane spike build — mainline product does NOT use LibVNC.
 $ErrorActionPreference = "Stop"
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $dest = Join-Path $root "third_party\libvncserver"
