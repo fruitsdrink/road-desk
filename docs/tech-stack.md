@@ -15,7 +15,7 @@ Related: [CONTEXT.md](../CONTEXT.md), [ADR-0001](./adr/0001-media-plane-vnc-adap
 | 组件 | 选型 | 说明 |
 |------|------|------|
 | **Host Agent** | **C/C++（原生 Win32）** | 便于接 VNC 媒体面适配器；与 Sidecar 语言可分离 |
-| **Viewer** | **C/C++ 薄 UI（原生 Win32）** | 无额外运行时；Win7 可跑；本地壳仅为连接栏 + 远端画面。不用 Electron（与 Win7 冲突）；不用 C#/.NET（避免现场装运行时） |
+| **Viewer** | **C/C++ / 原生 Win32 管理台** | 无额外运行时；Win7 可跑。壳为 Radmin 式管理台（菜单/工具栏/左树/工作区/状态栏）+ 浏览器式会话 Tab（可拖出独立窗）；画面路径保持 C++/GDI + `MediaClient`。不用 Electron；不用 C#/.NET；**不上 Qt**（Qt6 仅规划给未来 Win10+ 产品线，不进 Win7 构建） |
 | **Host Sidecar** | **Go，工具链钉死 1.20.x** | 单文件 HTTP 工具。`GOOS=windows GOARCH=amd64`；**禁止用 Go 1.21+ 打 Win7 用 Sidecar**（1.20 为官方最后支持 Win7/2008/2012 的系列，建议锁定最后补丁如 1.20.14）。开发机可另装更新 Go 编别的东西，Sidecar 构建必须走 1.20.x |
 | **C++ 工具链** | **MSVC 2022 + CMake，x64** | Agent/Viewer 主线。静态链 CRT 或附带 VC++ 可再发行组件；真 Win7 验证。若某 VNC 适配器强迫特定生成方式再开例外 |
 | **媒体面** | **自研 TLS mux + Mirror/GDI**（`src/media/mux_*`） | 经 `media_plane.h`；默认 `ROAD_DESK_CAPTURE=auto`。不链接 LibVNC（历史源可留仓、不编）。Mirror Host 需管理员。见 ADR-0004 / spike-media-replace RESULTS |

@@ -1084,4 +1084,11 @@ void MediaClient::notify_clipboard_changed() {
   LeaveCriticalSection(&impl_->state.clip_lock);
 }
 
+void MediaClient::set_notify_hwnd(HWND hwnd) {
+  if (!impl_) {
+    return;
+  }
+  impl_->state.cfg.notify_hwnd = hwnd;
+}
+
 }  // namespace road_desk::media

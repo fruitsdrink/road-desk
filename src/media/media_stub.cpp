@@ -73,5 +73,7 @@ bool MediaClient::send_vk(unsigned, bool) {
 }
 void MediaClient::release_modifiers() {}
 void MediaClient::set_software_cursor_enabled(bool) {}
+void MediaClient::notify_clipboard_changed() {}
+void MediaClient::set_notify_hwnd(HWND) {}
 
 }  // namespace road_desk::media

@@ -79,6 +79,8 @@ class MediaClient {
   bool start(const MediaClientConfig& config);
   void stop();
   bool connected() const;
+  // Update paint/resize/close notify target (e.g. after reparenting the session HWND).
+  void set_notify_hwnd(HWND hwnd);
 
   bool copy_frame_bgra(std::vector<uint8_t>& out, int& width, int& height) const;
   void send_pointer(int button_mask, int x, int y);
