@@ -1,6 +1,7 @@
 # 媒体面换芯探针：实施计划与进度表
 
-Status: **planned**（分支 `cursor/media-replace-spike`；代码未开；**2026-08-01：自研 Mirror 提前并行**）  
+Status: **G5 passed — 切入主线**（分支 `cursor/media-replace-spike`；结论见 [`spikes/media-replace/RESULTS.md`](../spikes/media-replace/RESULTS.md)；**2026-08-01**）  
+
 Related: [ADR-0004](./adr/0004-compliant-media-self-developed.md), [ADR-0001](./adr/0001-media-plane-vnc-adapter.md), [ADR-0002](./adr/0002-mvp-gpl-then-compliant-media-base.md), [tech-stack.md](./tech-stack.md), [避坑清单](./spike-media-replace-pitfalls.md), [前序探针结论](../spikes/media-plane/RESULTS.md), [本探针结论壳](../spikes/media-replace/RESULTS.md)
 
 **避坑**：实施与每周检查对照 [spike-media-replace-pitfalls.md](./spike-media-replace-pitfalls.md)（含网络：Nagle、mux 饿死、半开连接、长度帧等）。
@@ -256,11 +257,11 @@ gantt
 
 ### 必过
 
-- [ ] 合规（无 GPL 媒体库进交付意图产物）
-- [ ] 看屏+键鼠业务 GUI；TLS；互斥/鉴权
-- [ ] **档 B**（vs LibVNC GDI）
-- [ ] **档 C′**（vs 现场 VNC/Radmin+Mirror；上道手感）— 绑自研 Mirror
-- [ ] Mirror：可装可卸、测试签路径清晰、共存策略已写
+- [x] 合规（无 GPL 媒体库进交付意图产物）— 探针产物为自研 mux/TLS
+- [x] 看屏+键鼠业务 GUI；TLS；互斥/鉴权 — G1–G3
+- [x] **档 B**（vs LibVNC GDI）— G0≈2 → mirror≈4
+- [x] **档 C′**（vs 现场 VNC/Radmin+Mirror；上道手感）— vs VNC 通过；Radmin 跳过
+- [x] Mirror：可装可卸、测试签路径清晰、共存策略已写 — GM1/GM2/M2 + coexistence.md
 
 ### 不构成失败
 
@@ -269,7 +270,7 @@ gantt
 
 ### 总判
 
-- **切入主线**：A + B + C′（或产品书面降级接受无 C′）→ 迁 src/media/，去 LibVNC，带自研 Mirror 部署
+- **切入主线**（**已选，2026-08-01**）：A + B + C′（VNC；Radmin 跳过）→ 下一步迁 `src/media/`，去 LibVNC，带自研 Mirror 部署
 - **管线/驱动再迭代**：架构在，B 或 C′ 未稳 → 延 W8–W9，不采购
 - **自研 Mirror 失败结案**：书面记录后 **才** 议采购商业 Mirror（非默认）
 

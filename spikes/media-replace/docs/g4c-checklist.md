@@ -42,7 +42,7 @@
 - [x] 与 VNC 并排录像（`20260801_202934.mp4`，2026-08-01）
 - [x] Host 日志确认 `capture=mirror`（管理员、关 DM）
 - [x] 分数填入 [`RESULTS.md`](../RESULTS.md)「G4c 拖窗对照」— mirror≈VNC≈4，不被 pass
-- [ ] Radmin 对照（可选）
+- [x] Radmin 对照（可选）— **跳过**（本机未装；不挡 G5）
 - [x] 结论句：**相对 VNC 档 C′ 过**
 
 ## Host / Viewer

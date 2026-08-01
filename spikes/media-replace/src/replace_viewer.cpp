@@ -96,6 +96,7 @@ struct App {
 };
 
 App g_app;
+HHOOK g_kb_hook = nullptr;
 
 void logf(const char* fmt, ...) {
   char line[2048];
@@ -417,6 +418,29 @@ void queue_key(unsigned vk, bool down, bool extended) {
   queue_key_flags(vk, flags);
 }
 
+// Classic VNC / mainline viewer: WH_KEYBOARD_LL so Alt+Tab / Win stay remote.
+LRESULT CALLBACK low_level_keyboard(int code, WPARAM wparam, LPARAM lparam) {
+  if (code == HC_ACTION && g_app.hwnd && GetForegroundWindow() == g_app.hwnd) {
+    const auto* info = reinterpret_cast<KBDLLHOOKSTRUCT*>(lparam);
+    if (info && !(info->flags & LLKHF_INJECTED) && info->vkCode > 0 && info->vkCode <= 0xFE) {
+      const bool down = (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN);
+      const bool extended = (info->flags & LLKHF_EXTENDED) != 0;
+      const unsigned vk = info->vkCode;
+      if (down) {
+        EnterCriticalSection(&g_app.input_lock);
+        const bool already = g_app.key_is_down[vk];
+        LeaveCriticalSection(&g_app.input_lock);
+        if (already) {
+          return 1;  // swallow auto-repeat; still block local shell
+        }
+      }
+      queue_key(vk, down, extended);
+      return 1;  // swallow — otherwise shell steals Alt+Tab locally
+    }
+  }
+  return CallNextHookEx(g_kb_hook, code, wparam, lparam);
+}
+
 void release_all_keys_for_focus_loss() {
   // Synthesize KEYUP for every key we still think is down (esp. Alt/Ctrl).
   EnterCriticalSection(&g_app.input_lock);
@@ -711,6 +735,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_KEYUP:
     case WM_SYSKEYDOWN:
     case WM_SYSKEYUP: {
+      // Prefer WH_KEYBOARD_LL while focused (captures Alt+Tab). Fallback if hook missing.
+      if (g_kb_hook) {
+        return 0;
+      }
       // Ignore auto-repeat KEYDOWNs (bit 30) — Host SendInput repeats poorly / sticks.
       if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && (lp & (1 << 30))) {
         return 0;
@@ -1062,10 +1090,22 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  g_kb_hook = SetWindowsHookExW(WH_KEYBOARD_LL, low_level_keyboard, GetModuleHandleW(nullptr), 0);
+  if (!g_kb_hook) {
+    logf("WARN: WH_KEYBOARD_LL failed (%lu) — Alt+Tab stays local", GetLastError());
+  } else {
+    logf("keyboard hook on (Alt+Tab/Win forwarded while focused)");
+  }
+
   MSG msg{};
   while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
     TranslateMessage(&msg);
     DispatchMessageW(&msg);
+  }
+
+  if (g_kb_hook) {
+    UnhookWindowsHookEx(g_kb_hook);
+    g_kb_hook = nullptr;
   }
 
   InterlockedExchange(&g_app.stop, 1);
