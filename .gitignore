@@ -1,0 +1,30 @@
+# Build
+build/
+out/
+cmake-build-*/
+*.exe
+*.dll
+*.lib
+*.pdb
+*.obj
+*.o
+*.a
+
+# Go
+tools/host-sidecar/vendor/
+*.test
+
+# IDE / OS
+.vs/
+.vscode/
+.idea/
+*.user
+.DS_Store
+Thumbs.db
+
+# Local / secrets
+.env
+.env.*
+*.pem
+*.key
+.dev/
