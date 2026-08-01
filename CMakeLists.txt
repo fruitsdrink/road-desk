@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(road-desk VERSION 0.1.0 LANGUAGES CXX)
+project(road-desk VERSION 0.1.0 LANGUAGES C CXX)
 
 # MVP: MSVC + CMake, x64 (VS 2022 or newer with C++ desktop workload).
 # Prefer the CMake that ships with Visual Studio (mingw cmake may not see VS 18+).
@@ -16,9 +16,14 @@ if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "road-desk MVP targets Windows x64 only")
 endif()
 
-# Match LibVNC / spike_host (/MD). Win7 Host already runs spike with the same CRT DLLs.
+# Match spike_host (/MD). Win7 Host already runs with the same CRT DLLs.
 option(ROAD_DESK_STATIC_CRT "Statically link the MSVC CRT" OFF)
-option(ROAD_DESK_WITH_LIBVNC "LibVNC media adapter (GPL — internal MVP only)" ON)
+# Full mux media plane (default). OFF builds stubs only.
+option(ROAD_DESK_WITH_MEDIA "Mux media plane + Mirror/GDI (OFF = stub)" ON)
+# Legacy name kept so old scripts that pass -DROAD_DESK_WITH_LIBVNC=OFF still stub.
+if(DEFINED ROAD_DESK_WITH_LIBVNC AND NOT ROAD_DESK_WITH_LIBVNC)
+  set(ROAD_DESK_WITH_MEDIA OFF CACHE BOOL "" FORCE)
+endif()
 
 if(MSVC)
   add_compile_options(/W4 /permissive- /utf-8)
@@ -31,9 +36,6 @@ if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL$<$<CONFIG:Debug>:Debug>")
   endif()
 endif()
-
-# Propagate into src/media (re-declared there for standalone clarity).
-set(ROAD_DESK_WITH_LIBVNC ${ROAD_DESK_WITH_LIBVNC} CACHE BOOL "" FORCE)
 
 add_subdirectory(src/session)
 add_subdirectory(src/media)

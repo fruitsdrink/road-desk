@@ -1,4 +1,5 @@
 #include "auth.h"
+#include "media_log.h"
 #include "media_plane.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -21,6 +22,7 @@ HWND g_hwnd = nullptr;
 HHOOK g_kb_hook = nullptr;
 int g_windowed_fb_w = 0;
 int g_windowed_fb_h = 0;
+bool g_tracking_leave = false;
 
 bool fit_rect(int cw, int ch, int fb_w, int fb_h, RECT* out) {
   if (cw <= 0 || ch <= 0 || fb_w <= 0 || fb_h <= 0 || !out) {
@@ -29,13 +31,106 @@ bool fit_rect(int cw, int ch, int fb_w, int fb_h, RECT* out) {
   const double sx = static_cast<double>(cw) / fb_w;
   const double sy = static_cast<double>(ch) / fb_h;
   const double s = (sx < sy) ? sx : sy;
-  const int dw = static_cast<int>(fb_w * s + 0.5);
-  const int dh = static_cast<int>(fb_h * s + 0.5);
+  int dw = 0;
+  int dh = 0;
+  if (s >= 1.0) {
+    // Integer zoom only when enlarging — fractional upscale turns ClearType text to mush.
+    const int si = static_cast<int>(s);
+    dw = fb_w * si;
+    dh = fb_h * si;
+  } else {
+    dw = static_cast<int>(fb_w * s + 0.5);
+    dh = static_cast<int>(fb_h * s + 0.5);
+    if (dw < 1) {
+      dw = 1;
+    }
+    if (dh < 1) {
+      dh = 1;
+    }
+  }
   out->left = (cw - dw) / 2;
   out->top = (ch - dh) / 2;
   out->right = out->left + dw;
   out->bottom = out->top + dh;
   return true;
+}
+
+// GDI StretchDIBits often soft-filters even with COLORONCOLOR; do nearest-neighbor ourselves.
+void scale_nearest_bgra(const uint8_t* src, int sw, int sh, uint8_t* dst, int dw, int dh) {
+  if (!src || !dst || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) {
+    return;
+  }
+  if (dw == sw && dh == sh) {
+    memcpy(dst, src, static_cast<size_t>(sw) * sh * 4);
+    return;
+  }
+  // Integer upscale: replicate pixels (fast + perfectly sharp).
+  if (dw % sw == 0 && dh % sh == 0) {
+    const int mx = dw / sw;
+    const int my = dh / sh;
+    for (int y = 0; y < sh; ++y) {
+      const uint8_t* srow = src + static_cast<size_t>(y) * sw * 4;
+      for (int row = 0; row < my; ++row) {
+        uint8_t* drow = dst + static_cast<size_t>(y * my + row) * dw * 4;
+        if (mx == 1) {
+          memcpy(drow, srow, static_cast<size_t>(sw) * 4);
+        } else {
+          for (int x = 0; x < sw; ++x) {
+            const uint8_t* p = srow + static_cast<size_t>(x) * 4;
+            for (int col = 0; col < mx; ++col) {
+              uint8_t* q = drow + static_cast<size_t>(x * mx + col) * 4;
+              q[0] = p[0];
+              q[1] = p[1];
+              q[2] = p[2];
+              q[3] = p[3];
+            }
+          }
+        }
+      }
+    }
+    return;
+  }
+  for (int y = 0; y < dh; ++y) {
+    const int sy = y * sh / dh;
+    const uint8_t* srow = src + static_cast<size_t>(sy) * sw * 4;
+    uint8_t* drow = dst + static_cast<size_t>(y) * dw * 4;
+    for (int x = 0; x < dw; ++x) {
+      const int sx = x * sw / dw;
+      const uint8_t* p = srow + static_cast<size_t>(sx) * 4;
+      uint8_t* q = drow + static_cast<size_t>(x) * 4;
+      q[0] = p[0];
+      q[1] = p[1];
+      q[2] = p[2];
+      q[3] = p[3];
+    }
+  }
+}
+
+std::vector<uint8_t> g_scale_bgra;
+
+void track_mouse_leave(HWND hwnd) {
+  if (g_tracking_leave) {
+    return;
+  }
+  TRACKMOUSEEVENT tme{};
+  tme.cbSize = sizeof(tme);
+  tme.dwFlags = TME_LEAVE;
+  tme.hwndTrack = hwnd;
+  if (TrackMouseEvent(&tme)) {
+    g_tracking_leave = true;
+  }
+}
+
+bool client_point_in_letterbox(HWND hwnd, LPARAM lparam, int fb_w, int fb_h) {
+  RECT rc{};
+  GetClientRect(hwnd, &rc);
+  RECT dest{};
+  if (!fit_rect(rc.right - rc.left, rc.bottom - rc.top, fb_w, fb_h, &dest)) {
+    return false;
+  }
+  const int cx = GET_X_LPARAM(lparam);
+  const int cy = GET_Y_LPARAM(lparam);
+  return cx >= dest.left && cx < dest.right && cy >= dest.top && cy < dest.bottom;
 }
 
 void apply_resize_to_fb(HWND hwnd, int fb_w, int fb_h) {
@@ -127,23 +222,28 @@ void paint(HWND hwnd) {
   RECT dest{};
   if (w > 0 && h > 0 && fit_rect(cw, ch, w, h, &dest) &&
       bgra.size() >= static_cast<size_t>(w) * h * 4) {
+    const int dw = dest.right - dest.left;
+    const int dh = dest.bottom - dest.top;
+    const uint8_t* bits = bgra.data();
+    int bits_w = w;
+    int bits_h = h;
+    if (dw != w || dh != h) {
+      g_scale_bgra.resize(static_cast<size_t>(dw) * dh * 4);
+      scale_nearest_bgra(bgra.data(), w, h, g_scale_bgra.data(), dw, dh);
+      bits = g_scale_bgra.data();
+      bits_w = dw;
+      bits_h = dh;
+    }
     BITMAPINFO bmi{};
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = w;
-    bmi.bmiHeader.biHeight = -h;
+    bmi.bmiHeader.biWidth = bits_w;
+    bmi.bmiHeader.biHeight = -bits_h;
     bmi.bmiHeader.biPlanes = 1;
     bmi.bmiHeader.biBitCount = 32;
     bmi.bmiHeader.biCompression = BI_RGB;
-    const int dw = dest.right - dest.left;
-    const int dh = dest.bottom - dest.top;
-    SetStretchBltMode(g_back_dc, COLORONCOLOR);
-    if (dw == w && dh == h) {
-      SetDIBitsToDevice(g_back_dc, dest.left, dest.top, w, h, 0, 0, 0, h, bgra.data(), &bmi,
-                        DIB_RGB_COLORS);
-    } else {
-      StretchDIBits(g_back_dc, dest.left, dest.top, dw, dh, 0, 0, w, h, bgra.data(), &bmi,
-                    DIB_RGB_COLORS, SRCCOPY);
-    }
+    // Always 1:1 blit after optional CPU nearest-neighbor scale (no GDI stretch filter).
+    SetDIBitsToDevice(g_back_dc, dest.left, dest.top, bits_w, bits_h, 0, 0, 0, bits_h, bits,
+                      &bmi, DIB_RGB_COLORS);
   } else {
     const wchar_t* msg = L"Connecting / waiting for framebuffer…";
     SetBkMode(g_back_dc, TRANSPARENT);
@@ -224,6 +324,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     case WM_PAINT:
       paint(hwnd);
       return 0;
+    case WM_SETCURSOR:
+      // Suppress OS arrow — software cursor is painted into the framebuffer.
+      if (LOWORD(lparam) == HTCLIENT) {
+        SetCursor(nullptr);
+        return TRUE;
+      }
+      break;
+    case WM_MOUSELEAVE:
+      g_tracking_leave = false;
+      if (g_client) {
+        g_client->set_software_cursor_enabled(false);
+      }
+      return 0;
     case WM_DESTROY:
       release_backbuffer();
       PostQuitMessage(0);
@@ -235,6 +348,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     case WM_MOUSEMOVE: {
       if (!g_client || !g_client->connected()) {
         break;
+      }
+      if (msg == WM_MOUSEMOVE) {
+        track_mouse_leave(hwnd);
       }
       int mask = 0;
       if (wparam & MK_LBUTTON) {
@@ -251,6 +367,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
       int fb_h = 0;
       g_client->copy_frame_bgra(unused, fb_w, fb_h);
       if (fb_w > 0 && fb_h > 0) {
+        if (!client_point_in_letterbox(hwnd, lparam, fb_w, fb_h)) {
+          g_client->set_software_cursor_enabled(false);
+          return 0;
+        }
+        g_client->set_software_cursor_enabled(true);
         g_client->send_pointer(mask, map_mouse_x(hwnd, lparam, fb_w, fb_h),
                                map_mouse_y(hwnd, lparam, fb_w, fb_h));
       }
@@ -262,6 +383,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
           (msg == WM_ACTIVATE && LOWORD(wparam) == WA_INACTIVE)) {
         if (g_client) {
           g_client->release_modifiers();
+          g_client->set_software_cursor_enabled(false);
         }
       }
       break;
@@ -282,39 +404,25 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 
 }  // namespace
 
-void write_viewer_boot(const char* text) {
-  char path[MAX_PATH] = {};
-  const DWORD n = GetModuleFileNameA(nullptr, path, MAX_PATH);
-  if (n == 0 || n >= MAX_PATH) {
-    return;
+void viewer_boot(const char* step) {
+  if (!road_desk::media::media_log_is_open()) {
+    road_desk::media::media_log_open("viewer.log");
   }
-  char* slash = path;
-  for (char* p = path; *p; ++p) {
-    if (*p == '\\' || *p == '/') {
-      slash = p + 1;
-    }
-  }
-  constexpr char name[] = "viewer.boot";
-  if (static_cast<size_t>(path + MAX_PATH - slash) <= sizeof(name)) {
-    return;
-  }
-  memcpy(slash, name, sizeof(name));
-  FILE* f = nullptr;
-  if (fopen_s(&f, path, "wb") == 0 && f) {
-    fputs(text, f);
-    fclose(f);
-  }
+  road_desk::media::media_logf("viewer", "boot %s", step);
 }
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_cmd) {
-  write_viewer_boot("main\n");
+  viewer_boot("main");
+  // System-DPI aware: without this, Win8+/125%–150% bitmap-stretches the whole
+  // window and the remote desktop looks soft/blurry (pitfall L1).
+  SetProcessDPIAware();
 
   if (AllocConsole()) {
     FILE* dummy = nullptr;
     freopen_s(&dummy, "CONOUT$", "w", stdout);
     freopen_s(&dummy, "CONOUT$", "w", stderr);
   }
-  write_viewer_boot("console_ok\n");
+  viewer_boot("console_ok");
 
   std::string host = "127.0.0.1:5900";
   std::string password = "road-desk";
@@ -355,21 +463,22 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_cmd)
     free(env);
   }
   if (!road_desk::session::authenticate_psk(password, password)) {
-    write_viewer_boot("psk_fail\n");
+    viewer_boot("psk_fail");
     std::fprintf(stderr, "PSK required — set ROAD_DESK_PSK or pass password; refusing start\n");
     return 1;
   }
-  write_viewer_boot("args_ok\n");
+  viewer_boot("args_ok");
 
   WNDCLASSEXW wc{};
   wc.cbSize = sizeof(wc);
   wc.lpfnWndProc = WndProc;
   wc.hInstance = instance;
-  wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+  // Soft cursor is composited into copy_frame_bgra (mux client).
+  wc.hCursor = nullptr;
   wc.hbrBackground = nullptr;
   wc.lpszClassName = kWindowClass;
   if (!RegisterClassExW(&wc)) {
-    write_viewer_boot("register_fail\n");
+    viewer_boot("register_fail");
     return 1;
   }
 
@@ -377,11 +486,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_cmd)
                            CW_USEDEFAULT, CW_USEDEFAULT, 1024, 768, nullptr, nullptr, instance,
                            nullptr);
   if (!g_hwnd) {
-    write_viewer_boot("create_fail\n");
+    viewer_boot("create_fail");
     return 1;
   }
   ShowWindow(g_hwnd, show_cmd);
-  write_viewer_boot("window_ok\n");
+  viewer_boot("window_ok");
 
   road_desk::media::MediaClient client;
   g_client = &client;
@@ -412,20 +521,20 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_cmd)
   }
   cfg.tls_fingerprint_sha256 = tls_fingerprint;
   if (cfg.require_tls && !cfg.tls_insecure && cfg.tls_fingerprint_sha256.empty()) {
-    write_viewer_boot("tls_fp_missing\n");
+    viewer_boot("tls_fp_missing");
     std::fprintf(stderr,
                  "TLS fingerprint required (ROAD_DESK_TLS_FINGERPRINT or 3rd arg), "
                  "or set ROAD_DESK_TLS_INSECURE=1 for debug\n");
     g_client = nullptr;
     return 1;
   }
-  write_viewer_boot("before_start\n");
+  viewer_boot("before_start");
   if (!client.start(cfg)) {
-    write_viewer_boot("start_fail\n");
+    viewer_boot("start_fail");
     g_client = nullptr;
     return 1;
   }
-  write_viewer_boot("started\n");
+  viewer_boot("started");
 
   // Install hook after client start (spike order was reverse; hook is optional).
   g_kb_hook = SetWindowsHookExW(WH_KEYBOARD_LL, low_level_keyboard, instance, 0);
@@ -442,6 +551,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_cmd)
   }
   g_client = nullptr;
   client.stop();
-  write_viewer_boot("stopped\n");
+  viewer_boot("stopped");
+  road_desk::media::media_log_close();
   return 0;
 }

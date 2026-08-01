@@ -1,6 +1,7 @@
 # 媒体面换芯探针：实施计划与进度表
 
-Status: **G5 passed — 切入主线**（分支 `cursor/media-replace-spike`；结论见 [`spikes/media-replace/RESULTS.md`](../spikes/media-replace/RESULTS.md)；**2026-08-01**）  
+Status: **G5 passed — 主线已切 mux**（分支 `cursor/media-replace-spike`；`src/media` 已接 `mux_host`/`mux_client`，无 LibVNC 链接；结论见 [`spikes/media-replace/RESULTS.md`](../spikes/media-replace/RESULTS.md)；**2026-08-01**）  
+
 
 Related: [ADR-0004](./adr/0004-compliant-media-self-developed.md), [ADR-0001](./adr/0001-media-plane-vnc-adapter.md), [ADR-0002](./adr/0002-mvp-gpl-then-compliant-media-base.md), [tech-stack.md](./tech-stack.md), [避坑清单](./spike-media-replace-pitfalls.md), [前序探针结论](../spikes/media-plane/RESULTS.md), [本探针结论壳](../spikes/media-replace/RESULTS.md)
 

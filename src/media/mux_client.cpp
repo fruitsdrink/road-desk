@@ -1,0 +1,843 @@
+// Mux media client — replaces LibVNC viewer path (Track P cutover).
+// Net thread owns TLS after start(); UI queues Input and reads framebuffer.
+
+#include "media_plane.h"
+#include "media_log.h"
+#include "mux.h"
+#include "mux_protocol.h"
+#include "tls_schannel.h"
+
+#include "miniz.h"
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#include <windows.h>
+
+#include <atomic>
+#include <cstdarg>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <vector>
+
+namespace road_desk::media {
+namespace {
+
+constexpr int kKeyQueueCap = 128;
+constexpr char kLogTag[] = "media-client";
+
+struct KeyEvent {
+  uint16_t vk = 0;
+  uint8_t flags = 0;  // kInputKeyFlagDown | kInputKeyFlagExtended
+};
+
+void logf(const char* fmt, ...) {
+  char line[2048];
+  va_list ap;
+  va_start(ap, fmt);
+  std::vsnprintf(line, sizeof(line), fmt, ap);
+  va_end(ap);
+  media_logf(kLogTag, "%s", line);
+}
+
+uint16_t read_u16_le(const uint8_t* p) {
+  return static_cast<uint16_t>(p[0] | (static_cast<uint16_t>(p[1]) << 8));
+}
+
+uint32_t read_u32_le(const uint8_t* p) {
+  return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
+         (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
+}
+
+void write_u16_le(uint8_t* p, uint16_t v) {
+  p[0] = static_cast<uint8_t>(v & 0xff);
+  p[1] = static_cast<uint8_t>((v >> 8) & 0xff);
+}
+
+// Same extended-VK set as mux_inject (MediaClient API has no extended flag).
+bool is_extended_vk(unsigned vk) {
+  switch (vk) {
+    case VK_RMENU:
+    case VK_RCONTROL:
+    case VK_INSERT:
+    case VK_DELETE:
+    case VK_HOME:
+    case VK_END:
+    case VK_PRIOR:
+    case VK_NEXT:
+    case VK_LEFT:
+    case VK_UP:
+    case VK_RIGHT:
+    case VK_DOWN:
+    case VK_NUMLOCK:
+    case VK_DIVIDE:
+    case VK_SNAPSHOT:
+    case VK_RWIN:
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool socket_readable(SOCKET s, DWORD timeout_ms) {
+  if (s == INVALID_SOCKET) {
+    return false;
+  }
+  fd_set rfds;
+  FD_ZERO(&rfds);
+  FD_SET(s, &rfds);
+  timeval tv{};
+  tv.tv_sec = static_cast<long>(timeout_ms / 1000);
+  tv.tv_usec = static_cast<long>((timeout_ms % 1000) * 1000);
+  const int r = select(0, &rfds, nullptr, nullptr, &tv);
+  return r > 0 && FD_ISSET(s, &rfds);
+}
+
+// Alpha-blend software cursor into a BGRA framebuffer (desktop coords).
+void composite_cursor_bgra(std::vector<uint8_t>& fb, int fw, int fh, const uint8_t* cur,
+                           int cw, int ch, int hot_x, int hot_y, int mx, int my) {
+  if (!cur || fw <= 0 || fh <= 0 || cw <= 0 || ch <= 0 || mx < 0 || my < 0) {
+    return;
+  }
+  if (fb.size() < static_cast<size_t>(fw) * fh * 4u) {
+    return;
+  }
+  const int left = mx - hot_x;
+  const int top = my - hot_y;
+  for (int row = 0; row < ch; ++row) {
+    const int dy = top + row;
+    if (dy < 0 || dy >= fh) {
+      continue;
+    }
+    for (int col = 0; col < cw; ++col) {
+      const int dx = left + col;
+      if (dx < 0 || dx >= fw) {
+        continue;
+      }
+      const uint8_t* s = cur + (static_cast<size_t>(row) * cw + col) * 4u;
+      const uint8_t a = s[3];
+      if (a == 0) {
+        continue;
+      }
+      uint8_t* d = fb.data() + (static_cast<size_t>(dy) * fw + dx) * 4u;
+      if (a == 255) {
+        d[0] = s[0];
+        d[1] = s[1];
+        d[2] = s[2];
+        d[3] = 255;
+      } else {
+        const unsigned ia = 255u - a;
+        d[0] = static_cast<uint8_t>((s[0] * a + d[0] * ia) / 255u);
+        d[1] = static_cast<uint8_t>((s[1] * a + d[1] * ia) / 255u);
+        d[2] = static_cast<uint8_t>((s[2] * a + d[2] * ia) / 255u);
+        d[3] = 255;
+      }
+    }
+  }
+}
+
+struct ClientState {
+  MediaClientConfig cfg;
+  tls::TlsSession* tls = nullptr;
+  HANDLE thread = nullptr;
+  volatile LONG stop = 0;
+  std::atomic<bool> connected{false};
+  bool wsa_started = false;
+
+  CRITICAL_SECTION frame_lock{};
+  CRITICAL_SECTION input_lock{};
+  CRITICAL_SECTION cursor_lock{};
+  bool locks_ready = false;
+
+  std::vector<uint8_t> pixels;
+  int width = 0;
+  int height = 0;
+  int desk_w = 0;
+  int desk_h = 0;
+  uint32_t frame_id = 0;
+  std::vector<uint8_t> decode_buf;
+  uint32_t rects_applied = 0;
+  uint32_t zlib_ok = 0;
+  uint32_t raw_ok = 0;
+  uint32_t copy_ok = 0;
+  uint32_t decode_fail = 0;
+  uint64_t wire_bytes = 0;
+  DWORD last_stat_ms = 0;
+
+  // Software cursor (Cursor channel); composited in copy_frame_bgra.
+  std::vector<uint8_t> cursor_bgra;
+  int cursor_w = 0;
+  int cursor_h = 0;
+  int cursor_hot_x = 0;
+  int cursor_hot_y = 0;
+  bool cursor_hidden = true;
+  bool cursor_have = false;
+  int soft_mx = -1;
+  int soft_my = -1;
+  // Viewer sets false on WM_MOUSELEAVE / outside letterbox so overlay does not stick.
+  bool software_cursor_enabled = true;
+  uint32_t cursor_updates = 0;
+
+  // Latest-pointer-wins + small key queue (UI -> net thread).
+  bool ptr_pending = false;
+  uint8_t ptr_buttons = 0;
+  uint16_t ptr_x = 0;
+  uint16_t ptr_y = 0;
+  KeyEvent keys[kKeyQueueCap]{};
+  int key_head = 0;
+  int key_tail = 0;
+  bool key_is_down[256]{};
+  uint32_t input_flush_ok = 0;
+  uint32_t input_coalesced = 0;
+  uint32_t input_key_drop = 0;
+};
+
+void init_locks(ClientState* st) {
+  if (!st->locks_ready) {
+    InitializeCriticalSection(&st->frame_lock);
+    InitializeCriticalSection(&st->input_lock);
+    InitializeCriticalSection(&st->cursor_lock);
+    st->locks_ready = true;
+  }
+}
+
+void destroy_locks(ClientState* st) {
+  if (st->locks_ready) {
+    DeleteCriticalSection(&st->frame_lock);
+    DeleteCriticalSection(&st->input_lock);
+    DeleteCriticalSection(&st->cursor_lock);
+    st->locks_ready = false;
+  }
+}
+
+void apply_cursor_payload(ClientState* st, const std::vector<uint8_t>& payload) {
+  using namespace road_desk::replace;
+  if (payload.size() < kCursorShapeHeaderSize || payload[0] != kCursorShape) {
+    return;
+  }
+  const uint8_t flags = payload[1];
+  const uint16_t hot_x = read_u16_le(payload.data() + 2);
+  const uint16_t hot_y = read_u16_le(payload.data() + 4);
+  const uint16_t w = read_u16_le(payload.data() + 6);
+  const uint16_t h = read_u16_le(payload.data() + 8);
+  bool hidden = (flags & kCursorFlagHidden) != 0;
+  std::vector<uint8_t> bgra;
+  if (!hidden && w > 0 && h > 0) {
+    const size_t need = kCursorShapeHeaderSize + static_cast<size_t>(w) * h * 4u;
+    if (payload.size() < need) {
+      return;
+    }
+    bgra.assign(payload.data() + kCursorShapeHeaderSize,
+                payload.data() + kCursorShapeHeaderSize + static_cast<size_t>(w) * h * 4u);
+  } else {
+    hidden = true;
+  }
+
+  EnterCriticalSection(&st->cursor_lock);
+  st->cursor_bgra.swap(bgra);
+  st->cursor_w = static_cast<int>(w);
+  st->cursor_h = static_cast<int>(h);
+  st->cursor_hot_x = static_cast<int>(hot_x);
+  st->cursor_hot_y = static_cast<int>(hot_y);
+  st->cursor_hidden = hidden;
+  st->cursor_have = !hidden && !st->cursor_bgra.empty();
+  ++st->cursor_updates;
+  LeaveCriticalSection(&st->cursor_lock);
+
+  if (st->cfg.notify_hwnd) {
+    InvalidateRect(st->cfg.notify_hwnd, nullptr, FALSE);
+  }
+}
+
+bool flush_input_queue(ClientState* st) {
+  using namespace road_desk::replace;
+  if (!st->tls) {
+    return false;
+  }
+
+  bool has_ptr = false;
+  uint8_t buttons = 0;
+  uint16_t x = 0;
+  uint16_t y = 0;
+  KeyEvent local_keys[kKeyQueueCap];
+  int nkeys = 0;
+
+  EnterCriticalSection(&st->input_lock);
+  if (st->ptr_pending) {
+    has_ptr = true;
+    buttons = st->ptr_buttons;
+    x = st->ptr_x;
+    y = st->ptr_y;
+    st->ptr_pending = false;
+  }
+  while (st->key_head != st->key_tail && nkeys < kKeyQueueCap) {
+    local_keys[nkeys++] = st->keys[st->key_head];
+    st->key_head = (st->key_head + 1) % kKeyQueueCap;
+  }
+  LeaveCriticalSection(&st->input_lock);
+
+  if (has_ptr) {
+    uint8_t body[kInputPointerSize];
+    body[0] = kInputPointer;
+    body[1] = buttons;
+    write_u16_le(body + 2, x);
+    write_u16_le(body + 4, y);
+    if (!mux_write(st->tls, kChannelInput, body, kInputPointerSize)) {
+      return false;
+    }
+    ++st->input_flush_ok;
+  }
+  for (int i = 0; i < nkeys; ++i) {
+    uint8_t body[kInputKeySize];
+    body[0] = kInputKey;
+    body[1] = local_keys[i].flags;
+    write_u16_le(body + 2, local_keys[i].vk);
+    if (!mux_write(st->tls, kChannelInput, body, kInputKeySize)) {
+      return false;
+    }
+    ++st->input_flush_ok;
+  }
+  return true;
+}
+
+bool ensure_fb_locked(ClientState* st) {
+  if (!st->pixels.empty()) {
+    return true;
+  }
+  if (st->desk_w <= 0 || st->desk_h <= 0) {
+    return false;
+  }
+  st->width = st->desk_w;
+  st->height = st->desk_h;
+  st->pixels.assign(static_cast<size_t>(st->width) * st->height * 4u, 0);
+  return true;
+}
+
+bool apply_video_payload(ClientState* st, const std::vector<uint8_t>& payload) {
+  using namespace road_desk::replace;
+  if (payload.size() < kVideoHeaderSize) {
+    return true;
+  }
+  const uint8_t codec = payload[0];
+  const uint32_t fid = read_u32_le(payload.data() + 1);
+  const uint16_t x = read_u16_le(payload.data() + 5);
+  const uint16_t y = read_u16_le(payload.data() + 7);
+  const uint16_t rw = read_u16_le(payload.data() + 9);
+  const uint16_t rh = read_u16_le(payload.data() + 11);
+  if (rw == 0 || rh == 0) {
+    return true;
+  }
+
+  if (!flush_input_queue(st)) {
+    return false;
+  }
+
+  bool need_paint = false;
+  if (codec == kVideoCopyRect) {
+    if (payload.size() < kCopyRectPayloadSize) {
+      return true;
+    }
+    const uint16_t sx = read_u16_le(payload.data() + 13);
+    const uint16_t sy = read_u16_le(payload.data() + 15);
+    st->wire_bytes += kCopyRectPayloadSize;
+    EnterCriticalSection(&st->frame_lock);
+    if (!ensure_fb_locked(st)) {
+      LeaveCriticalSection(&st->frame_lock);
+      return true;
+    }
+    if (x + rw <= st->width && y + rh <= st->height && sx + rw <= st->width &&
+        sy + rh <= st->height) {
+      std::vector<uint8_t> tmp(static_cast<size_t>(rw) * rh * 4u);
+      for (int row = 0; row < rh; ++row) {
+        const uint8_t* src =
+            st->pixels.data() + (static_cast<size_t>(sy + row) * st->width + sx) * 4u;
+        std::memcpy(tmp.data() + static_cast<size_t>(row) * rw * 4u, src,
+                    static_cast<size_t>(rw) * 4u);
+      }
+      for (int row = 0; row < rh; ++row) {
+        uint8_t* dst =
+            st->pixels.data() + (static_cast<size_t>(y + row) * st->width + x) * 4u;
+        std::memcpy(dst, tmp.data() + static_cast<size_t>(row) * rw * 4u,
+                    static_cast<size_t>(rw) * 4u);
+      }
+      st->frame_id = fid;
+      ++st->rects_applied;
+      ++st->copy_ok;
+      need_paint = true;
+    }
+    LeaveCriticalSection(&st->frame_lock);
+  } else if (codec == kVideoRawBgra || codec == kVideoZlibBgra) {
+    const size_t raw_bytes = static_cast<size_t>(rw) * rh * 4u;
+    const uint8_t* wire = payload.data() + kVideoHeaderSize;
+    const size_t wire_len = payload.size() - kVideoHeaderSize;
+    const uint8_t* src = nullptr;
+    st->wire_bytes += wire_len + kVideoHeaderSize;
+
+    if (codec == kVideoRawBgra) {
+      if (wire_len < raw_bytes) {
+        ++st->decode_fail;
+        return true;
+      }
+      src = wire;
+      ++st->raw_ok;
+    } else {
+      st->decode_buf.resize(raw_bytes);
+      mz_ulong out_len = static_cast<mz_ulong>(raw_bytes);
+      if (mz_uncompress(st->decode_buf.data(), &out_len, wire, static_cast<mz_ulong>(wire_len)) !=
+              MZ_OK ||
+          out_len != raw_bytes) {
+        ++st->decode_fail;
+        return true;
+      }
+      src = st->decode_buf.data();
+      ++st->zlib_ok;
+    }
+
+    EnterCriticalSection(&st->frame_lock);
+    const bool full =
+        (x == 0 && y == 0 && rw == st->desk_w && rh == st->desk_h && st->desk_w > 0);
+    if (full) {
+      st->width = rw;
+      st->height = rh;
+      st->pixels.assign(src, src + raw_bytes);
+      need_paint = true;
+    } else {
+      if (!ensure_fb_locked(st)) {
+        LeaveCriticalSection(&st->frame_lock);
+        return true;
+      }
+      if (x + rw <= st->width && y + rh <= st->height) {
+        for (int row = 0; row < rh; ++row) {
+          uint8_t* dst =
+              st->pixels.data() + (static_cast<size_t>(y + row) * st->width + x) * 4u;
+          std::memcpy(dst, src + static_cast<size_t>(row) * rw * 4u, static_cast<size_t>(rw) * 4u);
+        }
+        need_paint = true;
+      } else {
+        LeaveCriticalSection(&st->frame_lock);
+        return true;
+      }
+    }
+    st->frame_id = fid;
+    ++st->rects_applied;
+    LeaveCriticalSection(&st->frame_lock);
+  } else {
+    return true;
+  }
+
+  if (need_paint && st->cfg.notify_hwnd) {
+    InvalidateRect(st->cfg.notify_hwnd, nullptr, FALSE);
+  }
+
+  const DWORD now = GetTickCount();
+  if (st->last_stat_ms == 0) {
+    st->last_stat_ms = now;
+  }
+  if (fid == 0 || (now - st->last_stat_ms) >= 1000) {
+    st->last_stat_ms = now;
+    logf("recv id=%u codec=%u rect=%u,%u %ux%u applied=%u copy=%u cur=%u flush=%u wire_B=%llu",
+         fid, codec, x, y, rw, rh, st->rects_applied, st->copy_ok, st->cursor_updates,
+         st->input_flush_ok, static_cast<unsigned long long>(st->wire_bytes));
+  }
+  return true;
+}
+
+bool idle_flush_input(void* ctx) {
+  auto* st = static_cast<ClientState*>(ctx);
+  if (InterlockedCompareExchange(&st->stop, 0, 0) != 0) {
+    return false;
+  }
+  return flush_input_queue(st);
+}
+
+DWORD WINAPI net_thread(LPVOID param) {
+  using namespace road_desk::replace;
+  auto* st = static_cast<ClientState*>(param);
+  std::vector<uint8_t> payload;
+  while (InterlockedCompareExchange(&st->stop, 0, 0) == 0) {
+    if (!flush_input_queue(st)) {
+      logf("input flush failed - disconnect");
+      break;
+    }
+    const SOCKET sock = tls::tls_get_socket(st->tls);
+    const int pending = tls::tls_pending(st->tls);
+    if (pending < 0) {
+      logf("tls_pending failed");
+      break;
+    }
+    if (pending == 0 && !socket_readable(sock, 5)) {
+      continue;
+    }
+    uint8_t ch = 0;
+    if (!mux_read_idle(st->tls, &ch, &payload, idle_flush_input, st)) {
+      logf("recv ended");
+      break;
+    }
+    if (!flush_input_queue(st)) {
+      break;
+    }
+    if (ch == kChannelVideo) {
+      if (!apply_video_payload(st, payload)) {
+        break;
+      }
+    } else if (ch == kChannelCursor) {
+      apply_cursor_payload(st, payload);
+    }
+  }
+  InterlockedExchange(&st->stop, 1);
+  st->connected = false;
+  if (st->cfg.notify_hwnd) {
+    PostMessageW(st->cfg.notify_hwnd, WM_CLOSE, 0, 0);
+  }
+  return 0;
+}
+
+void queue_pointer(ClientState* st, int buttons, int x, int y) {
+  EnterCriticalSection(&st->input_lock);
+  if (st->ptr_pending) {
+    ++st->input_coalesced;
+  }
+  st->ptr_pending = true;
+  st->ptr_buttons = static_cast<uint8_t>(buttons & 0xff);
+  st->ptr_x = static_cast<uint16_t>(x < 0 ? 0 : x);
+  st->ptr_y = static_cast<uint16_t>(y < 0 ? 0 : y);
+  LeaveCriticalSection(&st->input_lock);
+
+  EnterCriticalSection(&st->cursor_lock);
+  st->soft_mx = x;
+  st->soft_my = y;
+  LeaveCriticalSection(&st->cursor_lock);
+}
+
+void queue_key_flags(ClientState* st, unsigned vk, uint8_t flags) {
+  using namespace road_desk::replace;
+  if (vk == 0 || vk > 0xFE) {
+    return;
+  }
+  EnterCriticalSection(&st->input_lock);
+  const int next = (st->key_tail + 1) % kKeyQueueCap;
+  if (next != st->key_head) {
+    st->keys[st->key_tail].vk = static_cast<uint16_t>(vk);
+    st->keys[st->key_tail].flags = flags;
+    st->key_tail = next;
+    if (flags & kInputKeyFlagDown) {
+      st->key_is_down[vk] = true;
+    } else {
+      st->key_is_down[vk] = false;
+    }
+  } else {
+    ++st->input_key_drop;
+  }
+  LeaveCriticalSection(&st->input_lock);
+}
+
+void queue_release_modifiers(ClientState* st) {
+  using namespace road_desk::replace;
+  EnterCriticalSection(&st->input_lock);
+  for (unsigned vk = 1; vk < 256; ++vk) {
+    if (!st->key_is_down[vk]) {
+      continue;
+    }
+    st->key_is_down[vk] = false;
+    const int next = (st->key_tail + 1) % kKeyQueueCap;
+    if (next == st->key_head) {
+      ++st->input_key_drop;
+      continue;
+    }
+    st->keys[st->key_tail].vk = static_cast<uint16_t>(vk);
+    st->keys[st->key_tail].flags = 0;  // up
+    st->key_tail = next;
+  }
+  st->ptr_pending = true;
+  st->ptr_buttons = 0;
+  LeaveCriticalSection(&st->input_lock);
+}
+
+}  // namespace
+
+struct MediaClient::Impl {
+  ClientState state;
+  bool log_owned = false;  // true if start() opened viewer.log (not viewer main)
+};
+
+MediaClient::MediaClient() : impl_(new Impl) {
+  init_locks(&impl_->state);
+}
+
+MediaClient::~MediaClient() {
+  stop();
+  if (impl_) {
+    destroy_locks(&impl_->state);
+  }
+  delete impl_;
+  impl_ = nullptr;
+}
+
+bool MediaClient::start(const MediaClientConfig& config) {
+  if (!impl_ || impl_->state.connected.load() || impl_->state.thread) {
+    return false;
+  }
+  ClientState* st = &impl_->state;
+  st->cfg = config;
+  InterlockedExchange(&st->stop, 0);
+
+  // Prefer viewer.log (opened by viewer main). Open it here if standalone.
+  const bool already = media_log_is_open();
+  media_log_open("viewer.log");
+  impl_->log_owned = !already;
+  logf("boot mux-client");
+
+  if (!config.require_tls) {
+    logf("mux client requires TLS (require_tls=false)");
+    return false;
+  }
+  if (!config.tls_insecure && config.tls_fingerprint_sha256.empty()) {
+    logf("TLS fingerprint required, or tls_insecure=true");
+    return false;
+  }
+
+  WSADATA wsa{};
+  if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+    logf("WSAStartup failed");
+    return false;
+  }
+  st->wsa_started = true;
+
+  std::string host;
+  int port = 0;
+  if (!tls::parse_host_port(config.host_port, &host, &port)) {
+    logf("bad host:port '%s'", config.host_port.c_str());
+    WSACleanup();
+    st->wsa_started = false;
+    return false;
+  }
+
+  SOCKET tcp = tls::tcp_connect(host.c_str(), port);
+  if (tcp == INVALID_SOCKET) {
+    logf("TCP connect failed %s:%d", host.c_str(), port);
+    WSACleanup();
+    st->wsa_started = false;
+    return false;
+  }
+
+  st->tls = tls::client_handshake(tcp, config.tls_insecure, config.tls_fingerprint_sha256);
+  if (!st->tls) {
+    logf("TLS handshake failed");
+    WSACleanup();
+    st->wsa_started = false;
+    return false;
+  }
+  logf("TLS up peer_fp=%s", tls::peer_fingerprint_sha256(st->tls).c_str());
+
+  using namespace road_desk::replace;
+  if (!control_send_auth(st->tls, config.password)) {
+    logf("send auth failed");
+    tls::tls_close(st->tls);
+    st->tls = nullptr;
+    WSACleanup();
+    st->wsa_started = false;
+    return false;
+  }
+
+  uint8_t ch = 0;
+  std::vector<uint8_t> payload;
+  if (!mux_read(st->tls, &ch, &payload) || ch != kChannelControl || payload.empty()) {
+    logf("no Control reply");
+    tls::tls_close(st->tls);
+    st->tls = nullptr;
+    WSACleanup();
+    st->wsa_started = false;
+    return false;
+  }
+  if (payload[0] == kCtrlAuthFail) {
+    logf("auth rejected");
+    tls::tls_close(st->tls);
+    st->tls = nullptr;
+    WSACleanup();
+    st->wsa_started = false;
+    return false;
+  }
+  if (payload[0] != kCtrlAuthOk || payload.size() < 5) {
+    logf("unexpected control");
+    tls::tls_close(st->tls);
+    st->tls = nullptr;
+    WSACleanup();
+    st->wsa_started = false;
+    return false;
+  }
+
+  st->desk_w = read_u16_le(payload.data() + 1);
+  st->desk_h = read_u16_le(payload.data() + 3);
+  logf("auth ok desktop=%dx%d", st->desk_w, st->desk_h);
+
+  if (st->cfg.notify_hwnd && st->cfg.resize_msg) {
+    PostMessageW(st->cfg.notify_hwnd, st->cfg.resize_msg, static_cast<WPARAM>(st->desk_w),
+                 static_cast<LPARAM>(st->desk_h));
+  }
+
+  st->thread = CreateThread(nullptr, 0, net_thread, st, 0, nullptr);
+  if (!st->thread) {
+    logf("net thread failed");
+    tls::tls_close(st->tls);
+    st->tls = nullptr;
+    WSACleanup();
+    st->wsa_started = false;
+    return false;
+  }
+
+  st->connected = true;
+  return true;
+}
+
+void MediaClient::stop() {
+  if (!impl_) {
+    return;
+  }
+  ClientState* st = &impl_->state;
+  InterlockedExchange(&st->stop, 1);
+  if (st->tls) {
+    tls::tls_close(st->tls);
+    st->tls = nullptr;
+  }
+  if (st->thread) {
+    WaitForSingleObject(st->thread, 15000);
+    CloseHandle(st->thread);
+    st->thread = nullptr;
+  }
+  st->connected = false;
+
+  EnterCriticalSection(&st->cursor_lock);
+  st->cursor_bgra.clear();
+  st->cursor_have = false;
+  st->cursor_hidden = true;
+  LeaveCriticalSection(&st->cursor_lock);
+
+  EnterCriticalSection(&st->frame_lock);
+  st->pixels.clear();
+  st->width = 0;
+  st->height = 0;
+  LeaveCriticalSection(&st->frame_lock);
+
+  if (st->wsa_started) {
+    WSACleanup();
+    st->wsa_started = false;
+  }
+  logf("stopped applied=%u copy=%u cur=%u flush=%u wire_B=%llu", st->rects_applied, st->copy_ok,
+       st->cursor_updates, st->input_flush_ok, static_cast<unsigned long long>(st->wire_bytes));
+  if (impl_->log_owned) {
+    media_log_close();
+    impl_->log_owned = false;
+  }
+}
+
+bool MediaClient::connected() const {
+  return impl_ && impl_->state.connected.load() &&
+         InterlockedCompareExchange(&impl_->state.stop, 0, 0) == 0;
+}
+
+bool MediaClient::copy_frame_bgra(std::vector<uint8_t>& out, int& width, int& height) const {
+  if (!impl_) {
+    return false;
+  }
+  ClientState* st = &impl_->state;
+
+  EnterCriticalSection(&st->frame_lock);
+  width = st->width;
+  height = st->height;
+  out = st->pixels;
+  LeaveCriticalSection(&st->frame_lock);
+
+  if (width <= 0 || height <= 0 || out.empty()) {
+    return false;
+  }
+
+  std::vector<uint8_t> cur;
+  int cw = 0;
+  int ch = 0;
+  int hx = 0;
+  int hy = 0;
+  int mx = -1;
+  int my = -1;
+  bool draw = false;
+  EnterCriticalSection(&st->cursor_lock);
+  mx = st->soft_mx;
+  my = st->soft_my;
+  if (st->software_cursor_enabled && st->cursor_have && !st->cursor_hidden && mx >= 0 &&
+      my >= 0 && !st->cursor_bgra.empty()) {
+    cur = st->cursor_bgra;
+    cw = st->cursor_w;
+    ch = st->cursor_h;
+    hx = st->cursor_hot_x;
+    hy = st->cursor_hot_y;
+    draw = true;
+  }
+  LeaveCriticalSection(&st->cursor_lock);
+
+  if (draw) {
+    composite_cursor_bgra(out, width, height, cur.data(), cw, ch, hx, hy, mx, my);
+  }
+  return true;
+}
+
+void MediaClient::send_pointer(int button_mask, int x, int y) {
+  if (!impl_ || !impl_->state.connected.load()) {
+    return;
+  }
+  queue_pointer(&impl_->state, button_mask, x, y);
+}
+
+bool MediaClient::send_vk(unsigned vk, bool down) {
+  using namespace road_desk::replace;
+  if (!impl_ || !impl_->state.connected.load()) {
+    return false;
+  }
+  if (vk == 0 || vk > 0xFE) {
+    return false;
+  }
+  // Drop auto-repeat KEYDOWNs when already down (Host SendInput repeats poorly).
+  if (down) {
+    EnterCriticalSection(&impl_->state.input_lock);
+    const bool already = impl_->state.key_is_down[vk];
+    LeaveCriticalSection(&impl_->state.input_lock);
+    if (already) {
+      return true;
+    }
+  }
+  uint8_t flags = down ? kInputKeyFlagDown : 0;
+  if (is_extended_vk(vk)) {
+    flags |= kInputKeyFlagExtended;
+  }
+  queue_key_flags(&impl_->state, vk, flags);
+  return true;
+}
+
+void MediaClient::release_modifiers() {
+  if (!impl_ || !impl_->state.connected.load()) {
+    return;
+  }
+  queue_release_modifiers(&impl_->state);
+}
+
+void MediaClient::set_software_cursor_enabled(bool enabled) {
+  if (!impl_) {
+    return;
+  }
+  ClientState* st = &impl_->state;
+  EnterCriticalSection(&st->cursor_lock);
+  st->software_cursor_enabled = enabled;
+  if (!enabled) {
+    st->soft_mx = -1;
+    st->soft_my = -1;
+  }
+  LeaveCriticalSection(&st->cursor_lock);
+  if (st->cfg.notify_hwnd) {
+    InvalidateRect(st->cfg.notify_hwnd, nullptr, FALSE);
+  }
+}
+
+}  // namespace road_desk::media

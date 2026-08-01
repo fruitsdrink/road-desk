@@ -21,8 +21,7 @@ struct MediaPlaneConfig {
   int listen_port = 5900;
   std::string password = "road-desk";
   std::string desktop_name = "Road Desk";
-  // Default true: RFB only on Schannel TLS. Set false only for local debug
-  // (e.g. ROAD_DESK_ALLOW_PLAINTEXT=1).
+  // Default true: private mux only on Schannel TLS. Mux has no plaintext path.
   bool require_tls = true;
   // Optional: pre-created cert store path (unused in MVP — host generates self-signed).
   std::string tls_cert_path;
@@ -30,8 +29,8 @@ struct MediaPlaneConfig {
   session::SessionMutex* session_mutex = nullptr;
 };
 
-// Host-side media plane (capture + RFB listen + input inject).
-// LibVNC must run on the calling thread — use run() from agent main (like spike_host).
+// Host-side media plane (Mirror/GDI capture + TLS mux + input inject).
+// listen()+serve() on the calling thread (Win7-friendly).
 class MediaPlane {
  public:
   MediaPlane();
@@ -40,7 +39,7 @@ class MediaPlane {
   MediaPlane(const MediaPlane&) = delete;
   MediaPlane& operator=(const MediaPlane&) = delete;
 
-  // Same calling thread for both (LibVNC/Win7). listen() binds; serve() blocks in the event loop.
+  // listen() binds; serve() blocks in accept/session loop until request_stop().
   bool listen(const MediaPlaneConfig& config);
   void serve();
   void request_stop();
@@ -66,7 +65,8 @@ struct MediaClientConfig {
   std::string tls_fingerprint_sha256;
 };
 
-// Viewer-side media client (RFB connect + frame + input send).
+// Viewer-side media client (TLS mux connect + frame + input send).
+// copy_frame_bgra includes composited software cursor.
 class MediaClient {
  public:
   MediaClient();
@@ -83,6 +83,8 @@ class MediaClient {
   void send_pointer(int button_mask, int x, int y);
   bool send_vk(unsigned vk, bool down);
   void release_modifiers();
+  // When false, copy_frame_bgra omits software cursor (mouse left the view / letterbox).
+  void set_software_cursor_enabled(bool enabled);
 
  private:
   struct Impl;

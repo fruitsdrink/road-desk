@@ -1,6 +1,7 @@
 #include "log.h"
 
 #include "auth.h"
+#include "media_log.h"
 #include "media_plane.h"
 #include "session_mutex.h"
 
@@ -24,29 +25,6 @@ void on_signal(int) {
   }
 }
 
-void write_marker(const char* name, const char* text) {
-  char path[MAX_PATH] = {};
-  const DWORD n = GetModuleFileNameA(nullptr, path, MAX_PATH);
-  if (n == 0 || n >= MAX_PATH) {
-    return;
-  }
-  char* slash = path;
-  for (char* p = path; *p; ++p) {
-    if (*p == '\\' || *p == '/') {
-      slash = p + 1;
-    }
-  }
-  if (static_cast<size_t>(path + MAX_PATH - slash) <= strlen(name)) {
-    return;
-  }
-  memcpy(slash, name, strlen(name) + 1);
-  FILE* f = nullptr;
-  if (fopen_s(&f, path, "wb") == 0 && f) {
-    fputs(text, f);
-    fclose(f);
-  }
-}
-
 bool env_truthy(const char* name) {
   char* env = nullptr;
   size_t len = 0;
@@ -62,19 +40,36 @@ bool env_truthy(const char* name) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  write_marker("host-agent.boot", "main\n");
+  SetProcessDPIAware();
 
   std::signal(SIGINT, on_signal);
   std::signal(SIGTERM, on_signal);
-  write_marker("host-agent.boot", "signal_ok\n");
 
   if (!road_desk::agent::init_log()) {
-    write_marker("host-agent.boot", "init_log_fail\n");
     std::fprintf(stderr, "failed to open host-agent.log\n");
     return 1;
   }
-  write_marker("host-agent.boot", "init_log_ok\n");
-  road_desk::agent::log_line("host-agent starting");
+  road_desk::agent::log_line("host-agent starting (mux media plane)");
+
+  {
+    BOOL elevated = FALSE;
+    HANDLE tok = nullptr;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &tok)) {
+      TOKEN_ELEVATION elev{};
+      DWORD got = 0;
+      if (GetTokenInformation(tok, TokenElevation, &elev, sizeof(elev), &got)) {
+        elevated = elev.TokenIsElevated ? TRUE : FALSE;
+      }
+      CloseHandle(tok);
+    }
+    if (!elevated) {
+      road_desk::agent::log_line(
+          "WARN: not elevated — Mirror Attach.ToDesktop scrub needs Administrator; "
+          "opening Device Manager may freeze mouse/keyboard");
+    } else {
+      road_desk::agent::log_line("elevated (Administrator)");
+    }
+  }
 
   road_desk::media::MediaPlaneConfig cfg;
   if (argc >= 2 && argv[1] && argv[1][0]) {
@@ -96,11 +91,15 @@ int main(int argc, char** argv) {
   // Fail-closed: empty PSK is rejected (authenticate_psk).
   if (!road_desk::session::authenticate_psk(cfg.password, cfg.password)) {
     road_desk::agent::log_line("PSK required — set ROAD_DESK_PSK or pass [password]; refusing listen");
-    write_marker("host-agent.boot", "psk_fail\n");
     return 1;
   }
 
-  cfg.require_tls = !env_truthy("ROAD_DESK_ALLOW_PLAINTEXT");
+  // Mux media plane has no plaintext path (TLS-only).
+  cfg.require_tls = true;
+  if (env_truthy("ROAD_DESK_ALLOW_PLAINTEXT")) {
+    road_desk::agent::log_line(
+        "WARN: ROAD_DESK_ALLOW_PLAINTEXT ignored — mux requires TLS");
+  }
   cfg.session_mutex = &g_session_mutex;
 
   {
@@ -110,10 +109,8 @@ int main(int argc, char** argv) {
     road_desk::agent::log_line(line);
   }
 
-  write_marker("host-agent.boot", "before_media\n");
   road_desk::media::MediaPlane media;
   g_media = &media;
-  write_marker("host-agent.boot", "media_ctor_ok\n");
 
   if (!media.listen(cfg)) {
     road_desk::agent::log_line("media plane listen failed (port busy / TLS cert?)");
@@ -133,11 +130,10 @@ int main(int argc, char** argv) {
     }
     road_desk::agent::log_line(line);
   }
-  write_marker("host-agent.boot", "listening\n");
 
   media.serve();
   g_media = nullptr;
   road_desk::agent::log_line("host-agent stopped");
-  write_marker("host-agent.boot", "stopped\n");
+  road_desk::media::media_log_close();
   return 0;
 }
