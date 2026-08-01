@@ -1,0 +1,39 @@
+#pragma once
+
+// Kernel-side IOCTL ABI — must match user/mirror_abi.h layout.
+
+#define RDM_NT_DEVICE_NAME L"\\Device\\RoadDeskMirror"
+#define RDM_DOS_DEVICE_NAME L"\\DosDevices\\RoadDeskMirror"
+
+#define ROAD_DESK_MIRROR_ABI_VERSION 1u
+#define ROAD_DESK_MIRROR_DEVICE_TYPE 0x8000u
+
+#define IOCTL_RDM_GET_STATUS \
+  CTL_CODE(ROAD_DESK_MIRROR_DEVICE_TYPE, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_RDM_GET_INFO \
+  CTL_CODE(ROAD_DESK_MIRROR_DEVICE_TYPE, 0x801, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_RDM_GET_DIRTY \
+  CTL_CODE(ROAD_DESK_MIRROR_DEVICE_TYPE, 0x802, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_RDM_MAP_FB \
+  CTL_CODE(ROAD_DESK_MIRROR_DEVICE_TYPE, 0x803, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+#define RDM_STATUS_LOADED 0x1u
+#define RDM_STATUS_CAPTURE_READY 0x2u
+#define RDM_STATUS_XPDM_ATTACHED 0x4u
+
+// yyyymmdd of this skeleton
+#define RDM_DRIVER_BUILD 20260801u
+
+typedef struct _RDM_STATUS {
+  ULONG AbiVersion;
+  ULONG Flags;
+  ULONG DriverBuild;
+  ULONG Reserved;
+} RDM_STATUS;
+
+typedef struct _RDM_INFO {
+  ULONG Width;
+  ULONG Height;
+  ULONG Pitch;
+  ULONG Format;
+} RDM_INFO;

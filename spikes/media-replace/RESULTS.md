@@ -57,7 +57,7 @@ G5 通过前：换芯代码不得覆盖 `src/media/libvnc_*`。
 | G2 | Video 看屏闭环 | **通过**（2026-08-01；Win7：`video frame id=0/50` @ 1600x900） | 2026-08-01 |
 | G3 | Input + 优先级 | **代码已出**（2026-08-01；Win7 待点选验证） | 2026-08-01 |
 | G4 | 拖窗档 B（vs LibVNC GDI） | pending | |
-| GM1/GM2 | 自研 Mirror 加载/脏区（见 mirror-driver） | pending | |
+| GM1/GM2 | 自研 Mirror 加载/脏区（见 [mirror-driver RESULTS](../mirror-driver/RESULTS.md)） | **GM1 通过**（Win7 VM `GM1_LOADED`）；GM2 pending | 2026-08-01 |
 | G4c | 拖窗档 C′（vs VNC/Radmin+Mirror） | pending | |
 | G5 | RESULTS 收口 | pending | |
 
@@ -80,6 +80,8 @@ G5 通过前：换芯代码不得覆盖 `src/media/libvnc_*`。
 | 2026-08-01 | G1：Win7 真环 | **通过** | `auth ok desktop=1600x900`；peer_fp=`39a0462c…4086` | — | **是** — 开 G2 Video（GDI） |
 | 2026-08-01 | G2：GDI Video | **通过** | Win7 `video frame id=0/50` 1600x900 | — | 开 G3 |
 | 2026-08-01 | G3：Input | 代码已出 | Host 单线程 select 优先 drain Input；Viewer 发指针/VK；`tls_get_socket` | — | Win7 点选验证 |
+| 2026-08-01 | Track M 开轨 | 进行中 | `spikes/mirror-driver`：控制设备骨架 + probe；共存=上道不强制卸第三方；GM1 见 mirror-driver 清单 | — | 真机 GM1 |
+| 2026-08-01 | GM1 | **通过** | Win7 VM：`mirror_probe` → `GM1_LOADED`；见 mirror-driver RESULTS | — | 开 GM2（脏区/XPDM） |
 
 ## 合规
 
@@ -96,4 +98,4 @@ G5 通过前：换芯代码不得覆盖 `src/media/libvnc_*`。
 
 ## 明确不做（本探针，须遵守）
 
-商业 Mirror、自研 Mirror、第三方 VNC 兼容、Go/Rust 媒体面、文件/剪贴板/登录前、整屏 JPEG 默认、跳过 G0。
+商业 Mirror SDK、调用现场第三方 Mirror、第三方 VNC 兼容、Go/Rust 媒体面、文件/剪贴板/登录前、整屏 JPEG 默认、跳过 G0。自研 Mirror 在 [mirror-driver](../mirror-driver/) 并行，不在本目录实现驱动。
