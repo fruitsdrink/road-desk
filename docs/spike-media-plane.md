@@ -1,7 +1,9 @@
 # 媒体面换芯与风险探针计划
 
 Status: **concluded**（2026-08-01；总判 **继续 A**，详见 [结论页](../spikes/media-plane/RESULTS.md)）  
-Related: [ADR-0001](./adr/0001-media-plane-vnc-adapter.md), [ADR-0002](./adr/0002-mvp-gpl-then-compliant-media-base.md), [CONTEXT.md](../CONTEXT.md), [结论页](../spikes/media-plane/RESULTS.md)
+Related: [ADR-0001](./adr/0001-media-plane-vnc-adapter.md), [ADR-0002](./adr/0002-mvp-gpl-then-compliant-media-base.md), [ADR-0004](./adr/0004-compliant-media-self-developed.md), [后续换芯计划](./spike-media-replace.md), [CONTEXT.md](../CONTEXT.md), [结论页](../spikes/media-plane/RESULTS.md)
+
+**后续**：合规换芯（自研非 RFB 适配器）见 [spike-media-replace.md](./spike-media-replace.md) 与 [ADR-0004](./adr/0004-compliant-media-self-developed.md)；结论记入 [`spikes/media-replace/RESULTS.md`](../spikes/media-replace/RESULTS.md)。
 
 探针代码（可扔）：`spikes/media-plane/`（`spike_host` / `spike_viewer`，LibVNC 0.9.15）。构建：`spikes/media-plane/scripts/build.ps1`。
 

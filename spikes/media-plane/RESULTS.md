@@ -84,4 +84,4 @@ Related: [spike-media-plane.md](../../docs/spike-media-plane.md), ADR-0001, ADR-
 2. 补跑 ≥30 分钟浸泡；失败则重开选型，不放宽「不黑屏/不闪屏」
 3. ~~控制面：PSK 会话、加密、单会话互斥接到真连~~ — **已接线**（`authenticate_psk` fail-closed；`SessionMutex` on accept/gone；Schannel TLS 包裹 RFB，默认无明文；指纹信任 / `ROAD_DESK_TLS_INSECURE`）
 4. 文件通道按自有会话设计；登录前单列
-5. 交付前执行 P5 替换
+5. 交付前执行 P5 替换 — 路径已钉死：[ADR-0004](../../docs/adr/0004-compliant-media-self-developed.md)、[spike-media-replace.md](../../docs/spike-media-replace.md)（分支 `cursor/media-replace-spike`）
