@@ -40,7 +40,7 @@ G5 已过；**迁移 PR 落地前**仍勿直接覆盖 `src/media/libvnc_*`（按
 | 构建 | `scripts/build.ps1` 不再 fetch/编 LibVNC；产物 `build/src/agent/host-agent.exe`、`build/src/viewer/viewer.exe` |
 | spike 目录 | 保留作对照；上道以主线 exe 为准 |
 | Mirror 驱动装站/测试签 | **已接** → [`tools/mirror-install/`](../../tools/mirror-install/)（`make-package` → **单文件** `RoadDeskMirrorSetup.exe` 内嵌已签名驱动；WHQL 仍不做） |
-| Host 提权产品化 | **待办**（见下；任务 3） |
+| Host 提权产品化 | **已接**（任务 3）：`host-agent` `requireAdministrator` + 非提升 **FATAL 拒绝启动** |
 
 **Win7 冒烟（维护者）：** 开发机 `tools/mirror-install/make-package.ps1` → 拷 `build/mirror-package/win7-x64` 到 Win7 → 双击 `Install-RoadDeskMirror.bat`（可能需重启后再点一次）→ 再重启 → **管理员**跑 `host-agent` → 记 fingerprint → `viewer host:port psk fp`；`host-agent.log` 见 `capture=mirror`。Viewer 看 `viewer.log`。
 
@@ -51,8 +51,8 @@ G5 已过；**迁移 PR 落地前**仍勿直接覆盖 `src/media/libvnc_*`（按
 | 项 | 要求 |
 |----|------|
 | 上道 | `capture=mirror`（及 auto 走到 Mirror）的 Host **必须以管理员运行** |
-| 产品/装站须落地 | 清单 `requireAdministrator`、或安装为 **LocalSystem/管理员服务**、或启动器 UAC 提权；禁止静默以标准用户跑 Mirror 会话 |
-| 失败体验 | 非提升时：启动即明确失败或降级提示（现探针仅 WARN）；**不得**假装 Mirror 正常却在开 DM 时死键鼠 |
+| 产品/装站须落地 | **已做**：`host-agent` 清单 `requireAdministrator`（UAC）；亦可再装为 LocalSystem 服务。禁止标准用户会话 |
+| 失败体验 | 非提升：**FATAL 拒绝启动**（写 `host-agent.log`）；**不得**假装 Mirror 正常却在开 DM 时死键鼠 |
 | 文档 | 详见 [`../mirror-driver/docs/coexistence.md`](../mirror-driver/docs/coexistence.md)「管理员硬条件」 |
 
 ## 对照基线（阶段 1 / G0）
@@ -139,7 +139,8 @@ G5 已过；**迁移 PR 落地前**仍勿直接覆盖 `src/media/libvnc_*`（按
 | 2026-08-01 | DM×权限对照 | **确认** | 同构建不切 GDI：管理员开 DM=正常；非管理员开 DM=键鼠失效 → **必须管理员跑 mirror Host** | — | coexistence.md |
 | 2026-08-01 | G5 收口 | **通过** | 总判 **切入主线**：A+B+C′（VNC）+ Mirror 门禁齐；Radmin 跳过；迁移主线另开任务 | — | 见上文总判 |
 | 2026-08-01 | 主线切芯 | **代码已合** | `src/media` mux_host/client；`build.ps1` 无 LibVNC；本机编过 host-agent/viewer；Win7 冒烟待维护者 | — | 提权仍待办 |
-| 2026-08-01 | 任务 2 装站 | **已接** | `tools/mirror-install`：build-and-sign / stage / 测试签 / GM1+GM2 装卸 / verify | — | WHQL 不做；任务 3 提权另开 |
+| 2026-08-01 | 任务 2 装站 | **已接** | `tools/mirror-install`：单文件 `RoadDeskMirrorSetup.exe`（内嵌已签名驱动） | — | WHQL 不做 |
+| 2026-08-01 | 任务 3 提权 | **已接** | `host-agent` `requireAdministrator` + 非提升 FATAL 退出 | — | 见「迁移待办：Host 管理员权限」 |
 
 ## 合规
 

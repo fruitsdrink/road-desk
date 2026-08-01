@@ -52,6 +52,8 @@ int main(int argc, char** argv) {
   road_desk::agent::log_line("host-agent starting (mux media plane)");
 
   {
+    // Manifest requests requireAdministrator; still fail-closed if somehow not elevated
+    // (e.g. stripped manifest). Mirror HKLM Attach.ToDesktop scrub needs admin.
     BOOL elevated = FALSE;
     HANDLE tok = nullptr;
     if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &tok)) {
@@ -64,11 +66,14 @@ int main(int argc, char** argv) {
     }
     if (!elevated) {
       road_desk::agent::log_line(
-          "WARN: not elevated — Mirror Attach.ToDesktop scrub needs Administrator; "
-          "opening Device Manager may freeze mouse/keyboard");
-    } else {
-      road_desk::agent::log_line("elevated (Administrator)");
+          "FATAL: not elevated — refusing start. host-agent requires Administrator "
+          "(Mirror Attach.ToDesktop scrub; non-admin + Device Manager freezes input). "
+          "Re-run elevated, or install/run as an admin/LocalSystem service.");
+      std::fprintf(stderr,
+                   "host-agent requires Administrator (UAC). Refusing to start.\n");
+      return 1;
     }
+    road_desk::agent::log_line("elevated (Administrator)");
   }
 
   road_desk::media::MediaPlaneConfig cfg;
