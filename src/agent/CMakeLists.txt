@@ -1,10 +1,24 @@
 add_executable(host-agent
   main.cpp
   log.cpp
+  gateway_config.cpp
+  gateway_client.cpp
 )
 
-target_include_directories(host-agent PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(host-agent PRIVATE road_desk_media_host road_desk_session)
+target_include_directories(host-agent PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_SOURCE_DIR}/src
+)
+target_link_libraries(host-agent PRIVATE
+  road_desk_media_host
+  road_desk_session
+  winhttp
+  iphlpapi
+  ws2_32
+  ole32
+  comdlg32
+  shell32
+)
 
 set_target_properties(host-agent PROPERTIES OUTPUT_NAME "host-agent")
 

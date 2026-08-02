@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: road-desk-pg
+    environment:
+      POSTGRES_USER: roaddesk
+      POSTGRES_PASSWORD: roaddesk
+      POSTGRES_DB: roaddesk
+    ports:
+      # Host 5432 often already taken by a local Postgres; use 5433 on the host.
+      - "5433:5432"
+    volumes:
+      - road_desk_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U roaddesk -d roaddesk"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  road_desk_pg_data:

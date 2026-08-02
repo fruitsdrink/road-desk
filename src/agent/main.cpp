@@ -1,3 +1,5 @@
+#include "gateway_client.h"
+#include "gateway_config.h"
 #include "log.h"
 
 #include "auth.h"
@@ -11,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -82,12 +85,22 @@ int main(int argc, char** argv) {
     road_desk::agent::log_line("elevated (Administrator)");
   }
 
-  road_desk::media::MediaPlaneConfig cfg;
-  if (argc >= 2 && argv[1] && argv[1][0]) {
-    cfg.listen_port = std::atoi(argv[1]);
+  bool no_gateway = false;
+  std::vector<char*> positional;
+  for (int i = 1; i < argc; ++i) {
+    if (argv[i] && std::strcmp(argv[i], "--no-gateway") == 0) {
+      no_gateway = true;
+    } else if (argv[i] && argv[i][0]) {
+      positional.push_back(argv[i]);
+    }
   }
-  if (argc >= 3 && argv[2] && argv[2][0]) {
-    cfg.password = argv[2];
+
+  road_desk::media::MediaPlaneConfig cfg;
+  if (positional.size() >= 1) {
+    cfg.listen_port = std::atoi(positional[0]);
+  }
+  if (positional.size() >= 2) {
+    cfg.password = positional[1];
   }
   {
     // If ROAD_DESK_PSK is set (even empty), it overrides argv — empty => fail-closed.
@@ -148,7 +161,28 @@ int main(int argc, char** argv) {
     road_desk::agent::log_line(line);
   }
 
+  road_desk::agent::GatewayClient gateway;
+  if (!no_gateway) {
+    road_desk::agent::GatewayConfig gcfg;
+    if (!road_desk::agent::load_gateway_config(&gcfg)) {
+      road_desk::agent::log_line("gateway: no agent.json — prompting for config");
+      if (!road_desk::agent::prompt_gateway_config(&gcfg)) {
+        road_desk::agent::log_line(
+            "gateway: config cancelled — media stays up; use --no-gateway to skip");
+      } else if (!road_desk::agent::save_gateway_config(gcfg)) {
+        road_desk::agent::log_line("gateway: save agent.json failed — continuing in-memory");
+      }
+    }
+    if (!gcfg.gateway_url.empty() && !gcfg.agent_psk.empty() && !gcfg.agent_id.empty()) {
+      gateway.start(gcfg, media.bound_port(), ROAD_DESK_VERSION_STRING);
+      road_desk::agent::log_line("gateway: client started (register/heartbeat; failures retry)");
+    }
+  } else {
+    road_desk::agent::log_line("gateway: skipped (--no-gateway)");
+  }
+
   media.serve();
+  gateway.stop();
   g_media = nullptr;
   road_desk::agent::log_line("host-agent stopped");
   road_desk::media::media_log_close();

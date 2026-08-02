@@ -1,6 +1,6 @@
 #include "console_window.h"
 
-#include "demo_book.h"
+#include "address_book.h"
 #include "product_version.h"
 #include "session_host.h"
 
@@ -76,6 +76,23 @@ struct ConsoleState {
 };
 
 ConsoleState* g_console = nullptr;
+
+std::wstring utf8_to_wide_local(const std::string& s) {
+  if (s.empty()) {
+    return {};
+  }
+  int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+  std::wstring w(static_cast<size_t>(n > 0 ? n - 1 : 0), L'\0');
+  if (n > 1) {
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), n);
+  }
+  return w;
+}
+
+const wchar_t* catalog_ready_status() {
+  return address_book_source() == AddressBookSource::kGateway ? L"网关目录 — Ready"
+                                                             : L"演示模式 — Ready";
+}
 
 void destroy_drag_ghost(ConsoleState* st) {
   if (!st || !st->drag_ghost) {
@@ -314,13 +331,19 @@ void fill_list(ConsoleState* st) {
     return;
   }
   ListView_DeleteAllItems(st->list);
-  const std::wstring ip = connect_host_display(st->connect);
-  // MVP: demo agents share one host-agent build; version not yet negotiated on wire.
-  wchar_t ver[32];
-  _snwprintf_s(ver, _TRUNCATE, L"%hs", ROAD_DESK_VERSION_STRING);
-  auto devices = demo_book_devices_under(st->selected_group_id);
+  auto devices = address_book_devices_under(st->selected_group_id);
   int row = 0;
-  for (const DemoNode* d : devices) {
+  for (const BookNode* d : devices) {
+    std::wstring ip = !d->host.empty() ? utf8_to_wide_local(d->host)
+                                       : connect_host_display(st->connect);
+    std::wstring ver;
+    if (!d->version.empty()) {
+      ver = utf8_to_wide_local(d->version);
+    } else {
+      wchar_t buf[32];
+      _snwprintf_s(buf, _TRUNCATE, L"%hs", ROAD_DESK_VERSION_STRING);
+      ver = buf;
+    }
     LVITEMW item{};
     item.mask = LVIF_TEXT | LVIF_PARAM;
     item.iItem = row;
@@ -328,7 +351,7 @@ void fill_list(ConsoleState* st) {
     item.lParam = d->id;
     ListView_InsertItem(st->list, &item);
     ListView_SetItemText(st->list, row, 1, const_cast<LPWSTR>(ip.c_str()));
-    ListView_SetItemText(st->list, row, 2, ver);
+    ListView_SetItemText(st->list, row, 2, const_cast<LPWSTR>(ver.c_str()));
     ListView_SetItemText(st->list, row, 3, const_cast<LPWSTR>(d->role.c_str()));
     ListView_SetItemText(st->list, row, 4, const_cast<LPWSTR>(d->remark.c_str()));
     ++row;
@@ -336,14 +359,18 @@ void fill_list(ConsoleState* st) {
 }
 
 HTREEITEM insert_tree_recursive(ConsoleState* st, HWND tree, HTREEITEM parent, int node_id) {
-  const DemoNode* n = demo_book_find(node_id);
+  const BookNode* n = address_book_find(node_id);
   if (!n) {
     return nullptr;
   }
   std::wstring label = n->name;
-  if (n->kind == DemoNodeKind::kDevice) {
+  if (n->kind == BookNodeKind::kDevice) {
     label += L"  ";
-    label += connect_host_display(st->connect);
+    if (!n->host.empty()) {
+      label += utf8_to_wide_local(n->host);
+    } else {
+      label += connect_host_display(st->connect);
+    }
   }
   TVINSERTSTRUCTW ins{};
   ins.hParent = parent;
@@ -351,10 +378,10 @@ HTREEITEM insert_tree_recursive(ConsoleState* st, HWND tree, HTREEITEM parent, i
   ins.item.mask = TVIF_TEXT | TVIF_PARAM | TVIF_CHILDREN;
   ins.item.pszText = const_cast<wchar_t*>(label.c_str());
   ins.item.lParam = n->id;
-  ins.item.cChildren = (n->kind == DemoNodeKind::kGroup) ? 1 : 0;
+  ins.item.cChildren = (n->kind == BookNodeKind::kGroup) ? 1 : 0;
   HTREEITEM h = TreeView_InsertItem(tree, &ins);
-  if (n->kind == DemoNodeKind::kGroup) {
-    for (const DemoNode* c : demo_book_children(n->id)) {
+  if (n->kind == BookNodeKind::kGroup) {
+    for (const BookNode* c : address_book_children(n->id)) {
       insert_tree_recursive(st, tree, h, c->id);
     }
   }
@@ -363,7 +390,7 @@ HTREEITEM insert_tree_recursive(ConsoleState* st, HWND tree, HTREEITEM parent, i
 
 void fill_tree(ConsoleState* st) {
   TreeView_DeleteAllItems(st->tree);
-  for (const DemoNode* n : demo_book_children(-1)) {
+  for (const BookNode* n : address_book_children(-1)) {
     HTREEITEM root = insert_tree_recursive(st, st->tree, TVI_ROOT, n->id);
     TreeView_Expand(st->tree, root, TVE_EXPAND);
   }
@@ -409,7 +436,7 @@ void remove_session_at(ConsoleState* st, int index) {
     st->active_tab -= 1;
   }
   select_tab(st, st->active_tab);
-  set_status(st, L"演示模式 — Ready");
+  set_status(st, catalog_ready_status());
 }
 
 void on_session_closed(SessionHost* host) {
@@ -422,8 +449,8 @@ void on_session_closed(SessionHost* host) {
 }
 
 bool open_session_for_device(ConsoleState* st, int device_id) {
-  const DemoNode* d = demo_book_find(device_id);
-  if (!d || d->kind != DemoNodeKind::kDevice) {
+  const BookNode* d = address_book_find(device_id);
+  if (!d || d->kind != BookNodeKind::kDevice) {
     return false;
   }
   const int existing = find_session_by_device(st, device_id);
@@ -441,20 +468,28 @@ bool open_session_for_device(ConsoleState* st, int device_id) {
     return false;
   }
 
+  ConnectDefaults connect = st->connect;
+  if (!d->host.empty()) {
+    char hp[128];
+    std::snprintf(hp, sizeof(hp), "%s:%d", d->host.c_str(), d->port > 0 ? d->port : 38471);
+    connect.host_port = hp;
+  }
+
   SessionTab tab;
   tab.device_id = device_id;
   tab.title = d->name;
   tab.host = std::make_unique<SessionHost>();
   tab.host->set_device_id(device_id);
   SessionHost* raw = tab.host.get();
-  if (!raw->open(st->instance, st->session_area, tab.title, st->connect,
+  if (!raw->open(st->instance, st->session_area, tab.title, connect,
                  [](SessionHost* h) { on_session_closed(h); })) {
     set_status(st, L"连接失败");
     return false;
   }
   st->sessions.push_back(std::move(tab));
   select_tab(st, static_cast<int>(st->sessions.size()) - 1);
-  set_status(st, L"已连接（演示：统一 Host Agent）");
+  set_status(st, address_book_source() == AddressBookSource::kGateway ? L"已连接（网关目录）"
+                                                                     : L"已连接（演示：统一 Host Agent）");
   return true;
 }
 
@@ -815,7 +850,7 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
       apply_ui_font(st, st->tab_strip);
       apply_ui_font(st, st->status);
       layout_status_parts(st, 1100);
-      set_status(st, L"演示模式 — Ready");
+      set_status(st, catalog_ready_status());
 
       fill_tree(st);
       layout(st);

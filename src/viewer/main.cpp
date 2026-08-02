@@ -1,3 +1,4 @@
+#include "address_book.h"
 #include "auth.h"
 #include "connect_config.h"
 #include "console_window.h"
@@ -7,6 +8,8 @@
 #include <windows.h>
 
 #include <cstdio>
+#include <cstring>
+#include <cwchar>
 #include <string>
 
 namespace {
@@ -22,13 +25,23 @@ bool cmd_looks_like_direct(const wchar_t* cmd_line) {
   if (!cmd_line || !cmd_line[0]) {
     return false;
   }
-  // Direct mode: first token contains ':' (host:port).
+  // Direct mode: first token contains ':' (host:port), not a flag.
+  if (cmd_line[0] == L'-') {
+    return false;
+  }
   for (const wchar_t* p = cmd_line; *p && *p != L' ' && *p != L'\t'; ++p) {
     if (*p == L':') {
       return true;
     }
   }
   return false;
+}
+
+bool cmd_has_flag(const wchar_t* cmd_line, const wchar_t* flag) {
+  if (!cmd_line || !flag) {
+    return false;
+  }
+  return wcsstr(cmd_line, flag) != nullptr;
 }
 
 }  // namespace
@@ -47,7 +60,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_cmd)
   road_desk::viewer::ConnectDefaults defaults =
       road_desk::viewer::load_connect_defaults();
 
-  const bool direct = cmd_looks_like_direct(cmd_line);
+  const bool force_demo = cmd_has_flag(cmd_line, L"--demo-book");
+  const bool direct = !force_demo && cmd_looks_like_direct(cmd_line);
   if (direct) {
     char narrow[512] = {};
     WideCharToMultiByte(CP_ACP, 0, cmd_line, -1, narrow, sizeof(narrow), nullptr, nullptr);
@@ -92,6 +106,26 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_cmd)
                  "or set ROAD_DESK_TLS_INSECURE=1 for debug\n");
     return 1;
   }
+  if (!direct) {
+    std::string err;
+    road_desk::viewer::DirectoryConfig dir = road_desk::viewer::load_directory_config();
+    const bool want_gateway = !force_demo && !dir.gateway_url.empty() && !dir.directory_key.empty();
+    if (want_gateway) {
+      if (!road_desk::viewer::address_book_load(road_desk::viewer::AddressBookSource::kGateway, dir,
+                                               &err)) {
+        viewer_boot("gateway_directory_fail");
+        std::fprintf(stderr, "gateway directory failed: %s — falling back to demo book\n",
+                     err.c_str());
+        road_desk::viewer::address_book_load(road_desk::viewer::AddressBookSource::kDemo, {}, nullptr);
+      } else {
+        viewer_boot("gateway_directory_ok");
+      }
+    } else {
+      road_desk::viewer::address_book_load(road_desk::viewer::AddressBookSource::kDemo, {}, nullptr);
+      viewer_boot(force_demo ? "demo_book_forced" : "demo_book");
+    }
+  }
+
   viewer_boot(direct ? "direct_mode" : "console_mode");
 
   const int rc = direct ? road_desk::viewer::run_direct_session(instance, show_cmd, defaults)
