@@ -64,10 +64,10 @@ go run ./cmd/gateway
 
 ```powershell
 cd admin
-npm install
-npm run build   # 输出到 tools/gateway/web/dist，由网关托管
+pnpm install
+pnpm build   # 输出到 tools/gateway/web/dist，由网关托管
 # 开发：
-npm run dev     # http://127.0.0.1:5173 ，API 代理到 :8743
+pnpm dev     # http://127.0.0.1:5173 ，API 代理到 :8743
 ```
 
 浏览器打开网关根路径或 Vite 开发地址 → 登录 → 分组/标签/Agent 编目 → 下载两把密钥。
