@@ -119,7 +119,7 @@ Related: [spike-media-replace.md](./spike-media-replace.md), [ADR-0004](./adr/00
 | G2 | 缺 VC++ 运行库 / `VCRUNTIME140_1` | 已知 | Host 起不来误判逻辑 bug | 静态 CRT 或附带可再发行；避免 FH4 依赖（见根 CMake） |
 | G3 | Host 误链 client 库等链接错误 | 已知 | Win7 上 main 前崩溃 | CMake 边界清晰；探针可独立 target |
 | G4 | 监听失败仍进事件循环刷屏 | 已知 | 磁盘日志打满、像死锁 | bind/listen **fail-fast** |
-| G5 | 假设 DXGI / Win8+ API（采集） | 行业 | Win7 编不过或运行挂 | **采集** API 面停在 Win7；DPI API 见 §L（Viewer/新 Host 要用） |
+| G5 | 假设 DXGI / Win8+ API（采集）进 **legacy** 路径 | 行业 | Server 2008/Win7 编不过或运行挂 | 采集分策见 [host-os-capture-strategy.md](./host-os-capture-strategy.md)：NT&lt;6.2 仅 Mirror/GDI；DXGI 仅 modern + 动态加载。DPI API 见 §L |
 | G6 | 高 DPI / 缩放未纳入验收 | 行业 | 见 §L：点偏、糊、尺寸漂移 | 基线与 G2/G3 **必测** 125%/150%；细则 §L |
 
 ---

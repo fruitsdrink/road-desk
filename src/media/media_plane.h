@@ -83,6 +83,14 @@ class MediaClient {
   void set_notify_hwnd(HWND hwnd);
 
   bool copy_frame_bgra(std::vector<uint8_t>& out, int& width, int& height) const;
+  // Desktop pixels only (no software cursor). Use with framebuffer_epoch for UI caches.
+  bool copy_desktop_bgra(std::vector<uint8_t>& out, int& width, int& height) const;
+  // Cheap size probe — never copies the framebuffer (mouse hit-test path).
+  bool framebuffer_size(int* width, int* height) const;
+  // Bumps when Video rects are applied; UI can skip desktop memcpy if unchanged.
+  uint32_t framebuffer_epoch() const;
+  // Composite current software cursor onto a desktop-sized BGRA buffer.
+  void composite_software_cursor(std::vector<uint8_t>& inout, int width, int height) const;
   void send_pointer(int button_mask, int x, int y);
   bool send_vk(unsigned vk, bool down);
   void release_modifiers();

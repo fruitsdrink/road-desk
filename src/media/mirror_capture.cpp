@@ -11,19 +11,6 @@
 
 namespace road_desk::replace {
 
-CaptureMode parse_capture_mode(const char* s) {
-  if (!s || !s[0]) {
-    return CaptureMode::Auto;
-  }
-  if (_stricmp(s, "gdi") == 0) {
-    return CaptureMode::Gdi;
-  }
-  if (_stricmp(s, "mirror") == 0) {
-    return CaptureMode::Mirror;
-  }
-  return CaptureMode::Auto;
-}
-
 SessionCapture::SessionCapture(CaptureMode mode) : mode_(mode) {
   dirty_buf_.resize(RDM_DIRTY_BUF_BYTES);
 }
@@ -35,23 +22,37 @@ SessionCapture::~SessionCapture() {
 bool SessionCapture::begin() {
   begun_ = true;
   have_frame_ = false;
+  using_mirror_ = false;
+  using_dxgi_ = false;
+
   if (mode_ == CaptureMode::Gdi) {
-    using_mirror_ = false;
     return true;
   }
+
+  if (mode_ == CaptureMode::Dxgi) {
+    if (dxgi_.begin()) {
+      using_dxgi_ = true;
+      return true;
+    }
+    // DXGI unavailable — keep session on GDI.
+    return true;
+  }
+
+  // Auto / Mirror: XPDM Mirror (legacy). Auto on modern is resolved to Dxgi before begin.
   if (begin_mirror()) {
     using_mirror_ = true;
     return true;
   }
-  // Mirror attach failed — keep session alive on GDI (Viewer must not flash-exit).
   using_mirror_ = false;
   return true;
 }
 
 void SessionCapture::end() {
   end_mirror();
+  dxgi_.end();
   release_dib();
   using_mirror_ = false;
+  using_dxgi_ = false;
   begun_ = false;
   have_frame_ = false;
 }
@@ -170,13 +171,23 @@ bool SessionCapture::blit_rect(int x, int y, int rw, int rh) {
 }
 
 bool SessionCapture::capture(std::vector<uint8_t>* bgra, int* width, int* height,
-                             std::vector<CaptureDirty>* dirties, bool force_full_pixels) {
-  if (!begun_ || !bgra || !width || !height || !dirties) {
+                             std::vector<CaptureDirty>* dirties, std::vector<CaptureMove>* moves,
+                             bool force_full_pixels) {
+  if (!begun_ || !bgra || !width || !height || !dirties || !moves) {
     return false;
   }
   dirties->clear();
+  moves->clear();
   if (using_mirror_) {
     return capture_mirror(bgra, width, height, dirties, force_full_pixels);
+  }
+  if (using_dxgi_) {
+    if (dxgi_.capture(bgra, width, height, dirties, moves, force_full_pixels)) {
+      return true;
+    }
+    // Mode change / access lost and reinit failed — soft-fall to GDI for the session.
+    dxgi_.end();
+    using_dxgi_ = false;
   }
   return gdi_.capture(bgra, width, height);
 }

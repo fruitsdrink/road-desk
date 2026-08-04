@@ -38,6 +38,7 @@ if(MSVC)
 endif()
 
 add_subdirectory(src/session)
+enable_testing()
 add_subdirectory(src/media)
 add_subdirectory(src/agent)
 add_subdirectory(src/viewer)

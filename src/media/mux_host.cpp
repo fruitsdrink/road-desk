@@ -15,10 +15,9 @@
 #include "mux_protocol.h"
 #include "session_mutex.h"
 #include "tls_schannel.h"
+#include "video_encode.h"
 
 #include "mirror_client.h"
-
-#include "miniz.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -55,6 +54,85 @@ bool wsa_init() {
   return WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
 }
 
+// Aero Shake (title-bar shake → minimize others) fires on jumpy remote absolute mouse.
+// DisallowShaking=1 does not disable Snap; restore previous value when capture ends.
+struct ShakeGuard {
+  bool active = false;
+  bool had_value = false;
+  DWORD prev = 0;
+};
+
+bool set_disallow_shaking(DWORD value) {
+  HKEY key = nullptr;
+  const LONG open = RegOpenKeyExW(
+      HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", 0,
+      KEY_SET_VALUE, &key);
+  if (open != ERROR_SUCCESS) {
+    return false;
+  }
+  const LONG st =
+      RegSetValueExW(key, L"DisallowShaking", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value),
+                     sizeof(value));
+  RegCloseKey(key);
+  return st == ERROR_SUCCESS;
+}
+
+void aero_shake_disable(ShakeGuard* g) {
+  if (!g || g->active) {
+    return;
+  }
+  HKEY key = nullptr;
+  const LONG open = RegOpenKeyExW(
+      HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", 0,
+      KEY_QUERY_VALUE | KEY_SET_VALUE, &key);
+  if (open != ERROR_SUCCESS) {
+    logf("aero-shake: open Advanced failed (%ld)", open);
+    return;
+  }
+  DWORD type = 0;
+  DWORD cb = sizeof(g->prev);
+  const LONG q = RegQueryValueExW(key, L"DisallowShaking", nullptr, &type,
+                                  reinterpret_cast<BYTE*>(&g->prev), &cb);
+  g->had_value = (q == ERROR_SUCCESS && type == REG_DWORD && cb == sizeof(DWORD));
+  const DWORD one = 1;
+  const LONG st =
+      RegSetValueExW(key, L"DisallowShaking", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&one),
+                     sizeof(one));
+  RegCloseKey(key);
+  if (st != ERROR_SUCCESS) {
+    logf("aero-shake: DisallowShaking=1 failed (%ld)", st);
+    return;
+  }
+  g->active = true;
+  logf("aero-shake: DisallowShaking=1 (was %s)",
+       g->had_value ? (g->prev ? "1" : "0") : "unset");
+}
+
+void aero_shake_restore(ShakeGuard* g) {
+  if (!g || !g->active) {
+    return;
+  }
+  if (g->had_value) {
+    if (!set_disallow_shaking(g->prev)) {
+      logf("aero-shake: restore DisallowShaking=%u failed", static_cast<unsigned>(g->prev));
+    } else {
+      logf("aero-shake: restored DisallowShaking=%u", static_cast<unsigned>(g->prev));
+    }
+  } else {
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+                      L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", 0,
+                      KEY_SET_VALUE, &key) == ERROR_SUCCESS) {
+      RegDeleteValueW(key, L"DisallowShaking");
+      RegCloseKey(key);
+      logf("aero-shake: deleted DisallowShaking (was unset)");
+    }
+  }
+  g->active = false;
+  g->had_value = false;
+  g->prev = 0;
+}
+
 void write_u16_le(uint8_t* p, uint16_t v) {
   p[0] = static_cast<uint8_t>(v & 0xff);
   p[1] = static_cast<uint8_t>((v >> 8) & 0xff);
@@ -71,14 +149,6 @@ uint16_t read_u16_le(const uint8_t* p) {
   return static_cast<uint16_t>(p[0] | (static_cast<uint16_t>(p[1]) << 8));
 }
 
-struct SendRectStats {
-  uint32_t raw_bytes = 0;
-  uint32_t wire_bytes = 0;
-  uint8_t codec = 0;
-  DWORD encode_ms = 0;
-  DWORD send_ms = 0;
-};
-
 bool rect_in_desk(int desk_w, int desk_h, int x, int y, int rw, int rh) {
   if (desk_w <= 0 || desk_h <= 0 || rw <= 0 || rh <= 0) {
     return false;
@@ -90,70 +160,6 @@ bool rect_in_desk(int desk_w, int desk_h, int x, int y, int rw, int rh) {
     return false;
   }
   return true;
-}
-
-bool send_video_rect(tls::TlsSession* tls, uint32_t frame_id, int desk_w, int desk_h, int x,
-                     int y, int rw, int rh, const uint8_t* bgra_full,
-                     std::vector<uint8_t>* raw_buf, std::vector<uint8_t>* body_buf,
-                     SendRectStats* st) {
-  using namespace road_desk::replace;
-  if (!tls || !bgra_full || !raw_buf || !body_buf ||
-      !rect_in_desk(desk_w, desk_h, x, y, rw, rh)) {
-    return false;
-  }
-  const uint32_t pix = static_cast<uint32_t>(rw) * static_cast<uint32_t>(rh) * 4u;
-  if (pix == 0 || static_cast<uint32_t>(kVideoHeaderSize) + pix > kMaxPayloadLen) {
-    return false;
-  }
-  const DWORD t0 = GetTickCount();
-  raw_buf->resize(pix);
-  uint8_t* raw = raw_buf->data();
-  for (int row = 0; row < rh; ++row) {
-    const uint8_t* src = bgra_full + (static_cast<size_t>(y + row) * desk_w + x) * 4u;
-    std::memcpy(raw + static_cast<size_t>(row) * rw * 4u, src, static_cast<size_t>(rw) * 4u);
-  }
-
-  mz_ulong bound = mz_compressBound(pix);
-  body_buf->resize(static_cast<size_t>(kVideoHeaderSize) + static_cast<size_t>(bound));
-  uint8_t* body = body_buf->data();
-  write_u32_le(body + 1, frame_id);
-  write_u16_le(body + 5, static_cast<uint16_t>(x));
-  write_u16_le(body + 7, static_cast<uint16_t>(y));
-  write_u16_le(body + 9, static_cast<uint16_t>(rw));
-  write_u16_le(body + 11, static_cast<uint16_t>(rh));
-
-  mz_ulong zlen = bound;
-  const int zrc = mz_compress2(body + kVideoHeaderSize, &zlen, raw, pix, MZ_BEST_SPEED);
-  uint32_t total = 0;
-  uint8_t codec = kVideoRawBgra;
-  if (zrc == MZ_OK && zlen > 0 && zlen < pix) {
-    body[0] = kVideoZlibBgra;
-    codec = kVideoZlibBgra;
-    total = static_cast<uint32_t>(kVideoHeaderSize) + static_cast<uint32_t>(zlen);
-  } else {
-    body_buf->resize(static_cast<size_t>(kVideoHeaderSize) + pix);
-    body = body_buf->data();
-    body[0] = kVideoRawBgra;
-    write_u32_le(body + 1, frame_id);
-    write_u16_le(body + 5, static_cast<uint16_t>(x));
-    write_u16_le(body + 7, static_cast<uint16_t>(y));
-    write_u16_le(body + 9, static_cast<uint16_t>(rw));
-    write_u16_le(body + 11, static_cast<uint16_t>(rh));
-    std::memcpy(body + kVideoHeaderSize, raw, pix);
-    codec = kVideoRawBgra;
-    total = static_cast<uint32_t>(kVideoHeaderSize) + pix;
-  }
-  const DWORD t1 = GetTickCount();
-  const bool ok = mux_write(tls, kChannelVideo, body, total);
-  const DWORD t2 = GetTickCount();
-  if (st) {
-    st->raw_bytes = pix;
-    st->wire_bytes = total;
-    st->codec = codec;
-    st->encode_ms = t1 - t0;
-    st->send_ms = t2 - t1;
-  }
-  return ok;
 }
 
 struct DirtyRect {
@@ -299,6 +305,142 @@ bool rect_pixels_match(const uint8_t* cur, const uint8_t* prev, int desk_w, int 
   return true;
 }
 
+// Sparse compare for motion vote (much cheaper than full-tile memcmp).
+bool sample_block_match(const uint8_t* cur, const uint8_t* prev, int desk_w, int dx, int dy,
+                        int sx, int sy, int w, int h) {
+  if (w <= 0 || h <= 0) {
+    return false;
+  }
+  // 3×3 grid of 4-byte pixels.
+  for (int gy = 0; gy < 3; ++gy) {
+    const int oy = (h - 1) * gy / 2;
+    for (int gx = 0; gx < 3; ++gx) {
+      const int ox = (w - 1) * gx / 2;
+      const uint8_t* a = cur + (static_cast<size_t>(dy + oy) * desk_w + dx + ox) * 4u;
+      const uint8_t* b = prev + (static_cast<size_t>(sy + oy) * desk_w + sx + ox) * 4u;
+      if (std::memcmp(a, b, 4) != 0) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+struct MoveDelta {
+  int dx = 0;
+  int dy = 0;
+  bool ok = false;
+};
+
+int g_last_copy_dx = 0;
+int g_last_copy_dy = 0;
+bool g_have_last_copy_delta = false;
+
+MoveDelta estimate_move_delta(const uint8_t* cur, const uint8_t* prev, int desk_w, int desk_h,
+                              const std::vector<DirtyRect>& dirties, int hint_dx, int hint_dy) {
+  MoveDelta out;
+  if (!cur || !prev || dirties.empty()) {
+    return out;
+  }
+
+  struct Sample {
+    int x, y, w, h;
+  };
+  std::vector<Sample> samples;
+  samples.reserve(24);
+  constexpr int kBlock = 64;
+  for (const DirtyRect& r : dirties) {
+    if (!rect_in_desk(desk_w, desk_h, r.x, r.y, r.w, r.h)) {
+      continue;
+    }
+    for (int y = r.y; y + 16 <= r.y + r.h && samples.size() < 24; y += kBlock) {
+      for (int x = r.x; x + 16 <= r.x + r.w && samples.size() < 24; x += kBlock) {
+        const int bw = (std::min)(32, r.x + r.w - x);
+        const int bh = (std::min)(32, r.y + r.h - y);
+        if (bw >= 16 && bh >= 16) {
+          samples.push_back({x, y, bw, bh});
+        }
+      }
+    }
+    if (samples.size() >= 24) {
+      break;
+    }
+  }
+  if (samples.size() < 4) {
+    return out;
+  }
+
+  auto score_at = [&](int mdx, int mdy) -> int {
+    if (mdx > -2 && mdx < 2 && mdy > -2 && mdy < 2) {
+      return 0;
+    }
+    if (mdx > 800 || mdx < -800 || mdy > 800 || mdy < -800) {
+      return 0;
+    }
+    int ok = 0;
+    for (const Sample& s : samples) {
+      const int sx = s.x - mdx;
+      const int sy = s.y - mdy;
+      if (!rect_in_desk(desk_w, desk_h, sx, sy, s.w, s.h)) {
+        continue;
+      }
+      if (sample_block_match(cur, prev, desk_w, s.x, s.y, sx, sy, s.w, s.h)) {
+        ++ok;
+      }
+    }
+    return ok;
+  };
+
+  int best_dx = hint_dx;
+  int best_dy = hint_dy;
+  int best = score_at(hint_dx, hint_dy);
+  const int need = (std::max)(4, static_cast<int>((samples.size() * 3) / 4));
+
+  auto consider = [&](int cx, int cy) {
+    // Coarse then refine around peaks.
+    for (int dy = cy - 40; dy <= cy + 40; dy += 4) {
+      for (int dx = cx - 40; dx <= cx + 40; dx += 4) {
+        const int sc = score_at(dx, dy);
+        if (sc > best) {
+          best = sc;
+          best_dx = dx;
+          best_dy = dy;
+        }
+      }
+    }
+  };
+
+  consider(hint_dx, hint_dy);
+  if (g_have_last_copy_delta) {
+    consider(g_last_copy_dx, g_last_copy_dy);
+  }
+
+  // Refine ±3 around best.
+  int refine_best = best;
+  int refine_dx = best_dx;
+  int refine_dy = best_dy;
+  for (int dy = best_dy - 3; dy <= best_dy + 3; ++dy) {
+    for (int dx = best_dx - 3; dx <= best_dx + 3; ++dx) {
+      const int sc = score_at(dx, dy);
+      if (sc > refine_best) {
+        refine_best = sc;
+        refine_dx = dx;
+        refine_dy = dy;
+      }
+    }
+  }
+
+  if (refine_best >= need) {
+    out.dx = refine_dx;
+    out.dy = refine_dy;
+    out.ok = true;
+    g_last_copy_dx = refine_dx;
+    g_last_copy_dy = refine_dy;
+    g_have_last_copy_delta = true;
+  }
+  return out;
+}
+
 void try_extract_copyrects(const uint8_t* cur, const uint8_t* prev, int desk_w, int desk_h,
                            int mdx, int mdy, std::vector<DirtyRect>* dirties,
                            std::vector<CopyRect>* copies) {
@@ -306,25 +448,77 @@ void try_extract_copyrects(const uint8_t* cur, const uint8_t* prev, int desk_w, 
   if (!cur || !prev || !dirties || dirties->empty()) {
     return;
   }
-  if (mdx > -4 && mdx < 4 && mdy > -4 && mdy < 4) {
+  if (mdx > -2 && mdx < 2 && mdy > -2 && mdy < 2) {
     return;
   }
-  if (mdx > 600 || mdx < -600 || mdy > 600 || mdy < -600) {
+  if (mdx > 800 || mdx < -800 || mdy > 800 || mdy < -800) {
     return;
   }
+
+  // Block scan: union dirties from window drag rarely match as one rect (old∪new).
+  constexpr int kBlock = 64;
   std::vector<DirtyRect> remain;
   remain.reserve(dirties->size());
+
   for (const DirtyRect& r : *dirties) {
-    const int sx = r.x - mdx;
-    const int sy = r.y - mdy;
-    if (!rect_in_desk(desk_w, desk_h, sx, sy, r.w, r.h) ||
-        !rect_in_desk(desk_w, desk_h, r.x, r.y, r.w, r.h)) {
+    if (!rect_in_desk(desk_w, desk_h, r.x, r.y, r.w, r.h)) {
       remain.push_back(r);
       continue;
     }
-    if (rect_pixels_match(cur, prev, desk_w, r.x, r.y, sx, sy, r.w, r.h)) {
-      copies->push_back({sx, sy, r.x, r.y, r.w, r.h});
-    } else {
+
+    const int sx0 = r.x - mdx;
+    const int sy0 = r.y - mdy;
+    if (rect_in_desk(desk_w, desk_h, sx0, sy0, r.w, r.h) &&
+        rect_pixels_match(cur, prev, desk_w, r.x, r.y, sx0, sy0, r.w, r.h)) {
+      copies->push_back({sx0, sy0, r.x, r.y, r.w, r.h});
+      continue;
+    }
+
+    bool any_copy = false;
+    for (int y = r.y; y < r.y + r.h; y += kBlock) {
+      const int bh = (std::min)(kBlock, r.y + r.h - y);
+      int run_x = -1;
+      int run_w = 0;
+      auto flush_run = [&]() {
+        if (run_w <= 0) {
+          return;
+        }
+        const int sx = run_x - mdx;
+        const int sy = y - mdy;
+        if (rect_in_desk(desk_w, desk_h, sx, sy, run_w, bh)) {
+          copies->push_back({sx, sy, run_x, y, run_w, bh});
+          any_copy = true;
+        } else {
+          remain.push_back({run_x, y, run_w, bh});
+        }
+        run_x = -1;
+        run_w = 0;
+      };
+      for (int x = r.x; x < r.x + r.w; x += kBlock) {
+        const int bw = (std::min)(kBlock, r.x + r.w - x);
+        const int sx = x - mdx;
+        const int sy = y - mdy;
+        const bool ok = rect_in_desk(desk_w, desk_h, sx, sy, bw, bh) &&
+                        rect_pixels_match(cur, prev, desk_w, x, y, sx, sy, bw, bh);
+        if (ok) {
+          if (run_x < 0) {
+            run_x = x;
+            run_w = bw;
+          } else if (run_x + run_w == x) {
+            run_w += bw;
+          } else {
+            flush_run();
+            run_x = x;
+            run_w = bw;
+          }
+        } else {
+          flush_run();
+          remain.push_back({x, y, bw, bh});
+        }
+      }
+      flush_run();
+    }
+    if (!any_copy && remain.empty()) {
       remain.push_back(r);
     }
   }
@@ -430,7 +624,7 @@ void handle_input(const std::vector<uint8_t>& payload) {
     ++g_input_pointer;
     g_ptr_buttons = payload[1];
     if ((g_ptr_buttons_prev & 1) != (g_ptr_buttons & 1)) {
-      g_validate_frames = 8;
+      g_validate_frames = 2;
     }
     g_ptr_buttons_prev = g_ptr_buttons;
     const int x = read_u16_le(payload.data() + 2);
@@ -830,6 +1024,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
 
   SessionCapture cap(capture_mode);
   bool cap_begun = false;
+  ShakeGuard shake_guard;
   uint32_t shared_xfer_id = 1;
 
   std::vector<uint8_t> frame;
@@ -838,6 +1033,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
   std::vector<uint8_t> send_buf;
   std::vector<DirtyRect> dirties;
   std::vector<CaptureDirty> mirror_dirties;
+  std::vector<CaptureMove> mirror_moves;
   std::vector<CopyRect> copies;
   uint32_t frame_id = 0;
   uint32_t sent_rects = 0;
@@ -862,6 +1058,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
     if (authed == 0 && cap_begun) {
       cap.end();
       cap_begun = false;
+      aero_shake_restore(&shake_guard);
       have_prev = false;
       prev.clear();
       release_modifiers();
@@ -936,8 +1133,11 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
       }
       cap_begun = true;
       media_log_set_mirror_stderr(false);
+      aero_shake_disable(&shake_guard);
       if (cap.using_mirror()) {
         logf("capture started mirror device=%s", cap.mirror_device());
+      } else if (cap.using_dxgi()) {
+        logf("capture started dxgi");
       } else {
         logf("capture started gdi");
       }
@@ -947,6 +1147,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
       g_ptr_buttons_prev = 0;
       g_validate_frames = 0;
       g_copyrects_sent = 0;
+      g_have_last_copy_delta = false;
     }
 
     const DWORD loop_now = GetTickCount();
@@ -1002,10 +1203,11 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
 
     int w = 0;
     int h = 0;
-    const bool force_validate = cap.using_mirror() && g_validate_frames > 0;
+    const bool force_validate = cap.provides_dirties() && g_validate_frames > 0;
     const DWORD cap0 = GetTickCount();
     mirror_dirties.clear();
-    if (!cap.capture(&frame, &w, &h, &mirror_dirties, force_validate)) {
+    mirror_moves.clear();
+    if (!cap.capture(&frame, &w, &h, &mirror_dirties, &mirror_moves, force_validate)) {
       Sleep(5);
       continue;
     }
@@ -1024,7 +1226,17 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
     }
 
     const bool force_full = any_kf || !have_prev;
-    if (cap.using_mirror() && !force_validate && !force_full) {
+    copies.clear();
+    if (cap.using_dxgi() && !force_validate && !force_full) {
+      // DXGI MoveRects → protocol CopyRect (cheap window drag path).
+      for (const CaptureMove& m : mirror_moves) {
+        if (rect_in_desk(w, h, m.sx, m.sy, m.w, m.h) &&
+            rect_in_desk(w, h, m.dx, m.dy, m.w, m.h)) {
+          copies.push_back(CopyRect{m.sx, m.sy, m.dx, m.dy, m.w, m.h});
+        }
+      }
+    }
+    if (cap.provides_dirties() && !force_validate && !force_full) {
       dirties.clear();
       for (const CaptureDirty& d : mirror_dirties) {
         dirties.push_back(DirtyRect{d.x, d.y, d.w, d.h});
@@ -1036,17 +1248,18 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
     if (force_validate && g_validate_frames > 0) {
       --g_validate_frames;
     }
-    if (dirties.empty()) {
+    if (dirties.empty() && copies.empty()) {
       continue;
     }
-    const unsigned before_collapse = static_cast<unsigned>(dirties.size());
-    collapse_dirties_for_send(&dirties, w, h);
 
-    copies.clear();
-    if (have_prev && !force_full && !force_validate && (g_ptr_buttons & 1) && g_ptr_have_prev) {
-      try_extract_copyrects(frame.data(), prev.data(), w, h, g_ptr_x - g_ptr_x_prev,
-                            g_ptr_y - g_ptr_y_prev, &dirties, &copies);
+    // Heuristic CopyRect disabled: false votes on Mirror dirties caused staircase
+    // ghosts / tears (Win7 video). DXGI native MoveRects above remain the only path.
+    if (!(g_ptr_buttons & 1)) {
+      g_have_last_copy_delta = false;
     }
+
+    const unsigned before_collapse = static_cast<unsigned>(dirties.size() + copies.size());
+    collapse_dirties_for_send(&dirties, w, h);
 
     const bool full_keyframe =
         dirties.size() == 1 && dirties[0].x == 0 && dirties[0].y == 0 && dirties[0].w == w &&
@@ -1092,8 +1305,16 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
         break;
       }
       drain_all_clients(&clients, psk, mutex);
-      // Encode once via first writable client path: send_video_rect encodes+writes.
-      // Re-encode per client for simplicity (N<=8).
+      // Encode once, fan-out the same compressed body to all writable clients.
+      const DWORD enc0 = GetTickCount();
+      EncodeRectStats enc{};
+      if (!encode_video_rect(frame_id, w, h, r.x, r.y, r.w, r.h, frame.data(), &raw_buf, &send_buf,
+                             &enc)) {
+        have_prev = false;
+        batch_ok = false;
+        break;
+      }
+      const DWORD enc_ms = GetTickCount() - enc0;
       bool any_sent = false;
       for (ClientConn& c : clients) {
         if (!c.authed || c.dead) {
@@ -1103,24 +1324,24 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
           c.need_keyframe = true;
           continue;
         }
-        SendRectStats st{};
-        if (!send_video_rect(c.tls, frame_id, w, h, r.x, r.y, r.w, r.h, frame.data(), &raw_buf,
-                             &send_buf, &st)) {
+        const DWORD s0 = GetTickCount();
+        if (!mux_write(c.tls, kChannelVideo, send_buf.data(), enc.wire_bytes)) {
           close_client(&c, mutex);
           continue;
         }
+        const DWORD send_ms = GetTickCount() - s0;
         if (!any_sent) {
-          raw_this += st.raw_bytes;
-          wire_this += st.wire_bytes;
-          enc_this += st.encode_ms;
-          send_this += st.send_ms;
-          if (st.codec == kVideoZlibBgra) {
+          raw_this += enc.raw_bytes;
+          wire_this += enc.wire_bytes;
+          enc_this += enc_ms;
+          send_this += send_ms;
+          if (enc.codec == kVideoZlibBgra) {
             ++zlib_this;
           }
           any_sent = true;
         } else {
-          wire_this += st.wire_bytes;
-          send_this += st.send_ms;
+          wire_this += enc.wire_bytes;
+          send_this += send_ms;
         }
       }
       if (any_sent) {
@@ -1170,6 +1391,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
   if (cap_begun) {
     cap.end();
   }
+  aero_shake_restore(&shake_guard);
   release_modifiers();
   media_log_set_mirror_stderr(true);
   logf("shared-control serve end ticks=%u rects=%u", ticks_sent, sent_rects);
@@ -1279,21 +1501,37 @@ bool MediaPlane::listen(const MediaPlaneConfig& config) {
   impl_->password = config.password;
   impl_->session_mutex = config.session_mutex;
   impl_->stop_requested = false;
-  impl_->capture_mode = road_desk::replace::CaptureMode::Auto;
   {
     char* e = nullptr;
     size_t n = 0;
+    const char* env_cap = nullptr;
     if (_dupenv_s(&e, &n, "ROAD_DESK_CAPTURE") == 0 && e) {
-      impl_->capture_mode = road_desk::replace::parse_capture_mode(e);
+      env_cap = e;
+    }
+    const road_desk::replace::CaptureResolve resolved = road_desk::replace::resolve_capture(env_cap);
+    if (e) {
       free(e);
     }
+    impl_->capture_mode = resolved.effective;
+    if (!resolved.os.ok) {
+      logf("WARN os_version_failed strategy=legacy (conservative)");
+    }
+    if (resolved.note && resolved.note[0]) {
+      logf("os=%u.%u.%u strategy=%s capture=%s resolved=%s (%s)", resolved.os.major,
+           resolved.os.minor, resolved.os.build, road_desk::replace::capture_strategy_name(resolved.strategy),
+           road_desk::replace::capture_mode_name(resolved.requested),
+           road_desk::replace::capture_mode_name(resolved.effective), resolved.note);
+    } else {
+      logf("os=%u.%u.%u strategy=%s capture=%s resolved=%s", resolved.os.major, resolved.os.minor,
+           resolved.os.build, road_desk::replace::capture_strategy_name(resolved.strategy),
+           road_desk::replace::capture_mode_name(resolved.requested),
+           road_desk::replace::capture_mode_name(resolved.effective));
+    }
   }
-  logf("capture mode=%s (auto|mirror|gdi; env ROAD_DESK_CAPTURE)",
-       impl_->capture_mode == road_desk::replace::CaptureMode::Gdi      ? "gdi"
-       : impl_->capture_mode == road_desk::replace::CaptureMode::Mirror ? "mirror"
-                                                                       : "auto");
 
-  if (impl_->capture_mode != road_desk::replace::CaptureMode::Gdi) {
+  // Only scrub Mirror Attach when we may actually attach (legacy auto / force mirror).
+  if (impl_->capture_mode == road_desk::replace::CaptureMode::Auto ||
+      impl_->capture_mode == road_desk::replace::CaptureMode::Mirror) {
     if (rdm_force_detach()) {
       if (elevated) {
         logf("mirror force-detach ok (Attach.ToDesktop cleared)");

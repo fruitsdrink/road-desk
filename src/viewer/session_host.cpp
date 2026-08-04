@@ -150,7 +150,15 @@ LRESULT CALLBACK SessionWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
       return 0;
     case WM_SETCURSOR:
       if (LOWORD(lparam) == HTCLIENT) {
-        SetCursor(nullptr);
+        // While dragging/clicking, show a local OS cursor so feel stays snappy.
+        // Soft (remote) cursor is for hover only — avoids full-frame repaint every move.
+        const bool pressing = (GetKeyState(VK_LBUTTON) < 0) || (GetKeyState(VK_RBUTTON) < 0) ||
+                              (GetKeyState(VK_MBUTTON) < 0);
+        if (pressing) {
+          SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+        } else {
+          SetCursor(nullptr);
+        }
         return TRUE;
       }
       break;
@@ -196,19 +204,22 @@ LRESULT CALLBACK SessionWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
       if (wparam & MK_RBUTTON) {
         mask |= 4;
       }
-      std::vector<uint8_t> unused;
       int fb_w = 0;
       int fb_h = 0;
-      self->client_.copy_frame_bgra(unused, fb_w, fb_h);
-      if (fb_w > 0 && fb_h > 0) {
-        const bool fit_ws = !self->floating_;
-        if (!client_point_in_letterbox(hwnd, lparam, fb_w, fb_h, fit_ws)) {
-          self->client_.set_software_cursor_enabled(false);
-          return 0;
-        }
-        self->client_.set_software_cursor_enabled(true);
-        self->client_.send_pointer(mask, map_mouse_x(hwnd, lparam, fb_w, fb_h, fit_ws),
-                                   map_mouse_y(hwnd, lparam, fb_w, fb_h, fit_ws));
+      if (!self->client_.framebuffer_size(&fb_w, &fb_h)) {
+        return 0;
+      }
+      const bool fit_ws = !self->floating_;
+      if (!client_point_in_letterbox(hwnd, lparam, fb_w, fb_h, fit_ws)) {
+        self->client_.set_software_cursor_enabled(false);
+        return 0;
+      }
+      // Local OS cursor while buttons down (drag); soft cursor on hover only.
+      self->client_.set_software_cursor_enabled(mask == 0);
+      self->client_.send_pointer(mask, map_mouse_x(hwnd, lparam, fb_w, fb_h, fit_ws),
+                                 map_mouse_y(hwnd, lparam, fb_w, fb_h, fit_ws));
+      if (mask == 0) {
+        InvalidateRect(hwnd, nullptr, FALSE);
       }
       return 0;
     }
@@ -434,10 +445,23 @@ void SessionHost::paint() {
   PAINTSTRUCT ps{};
   HDC hdc = BeginPaint(hwnd_, &ps);
 
-  std::vector<uint8_t> bgra;
-  int w = 0;
-  int h = 0;
-  client_.copy_frame_bgra(bgra, w, h);
+  const uint32_t epoch = client_.framebuffer_epoch();
+  if (epoch != desk_epoch_ || desk_bgra_.empty()) {
+    int w = 0;
+    int h = 0;
+    if (client_.copy_desktop_bgra(desk_bgra_, w, h)) {
+      desk_w_ = w;
+      desk_h_ = h;
+      desk_epoch_ = epoch;
+    }
+  }
+
+  std::vector<uint8_t> bgra = desk_bgra_;
+  const int w = desk_w_;
+  const int h = desk_h_;
+  if (w > 0 && h > 0 && !bgra.empty()) {
+    client_.composite_software_cursor(bgra, w, h);
+  }
 
   RECT rc{};
   GetClientRect(hwnd_, &rc);

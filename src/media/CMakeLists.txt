@@ -27,7 +27,11 @@ if(ROAD_DESK_WITH_MEDIA)
     mux_clipboard.cpp
     mux_file_xfer.cpp
     capture.cpp
+    capture_resolve.cpp
     mirror_capture.cpp
+    dxgi_capture.cpp
+    os_version.cpp
+    video_encode.cpp
     cursor_capture.cpp
     mux_inject.cpp
     media_log.cpp
@@ -67,6 +71,21 @@ if(ROAD_DESK_WITH_MEDIA)
 
   add_library(road_desk_media INTERFACE)
   target_link_libraries(road_desk_media INTERFACE road_desk_media_host)
+
+  # Lightweight host-side unit tests (no gtest): strategy matrix + video encode.
+  add_executable(capture_strategy_test
+    tests/capture_strategy_test.cpp
+    capture_resolve.cpp
+    os_version.cpp
+    video_encode.cpp
+  )
+  target_include_directories(capture_strategy_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    "${MINIZ_DIR}"
+  )
+  target_compile_definitions(capture_strategy_test PRIVATE ROAD_DESK_WITH_MEDIA=1)
+  target_link_libraries(capture_strategy_test PRIVATE road_desk_miniz)
+  add_test(NAME capture_strategy_test COMMAND capture_strategy_test)
 else()
   add_library(road_desk_media STATIC
     media_stub.cpp

@@ -172,6 +172,7 @@ struct ClientState {
   int desk_w = 0;
   int desk_h = 0;
   uint32_t frame_id = 0;
+  uint32_t frame_epoch = 0;
   std::vector<uint8_t> decode_buf;
   uint32_t rects_applied = 0;
   uint32_t zlib_ok = 0;
@@ -586,6 +587,7 @@ bool apply_video_payload(ClientState* st, const std::vector<uint8_t>& payload) {
       st->frame_id = fid;
       ++st->rects_applied;
       ++st->copy_ok;
+      ++st->frame_epoch;
       need_paint = true;
     }
     LeaveCriticalSection(&st->frame_lock);
@@ -643,6 +645,7 @@ bool apply_video_payload(ClientState* st, const std::vector<uint8_t>& payload) {
     }
     st->frame_id = fid;
     ++st->rects_applied;
+    ++st->frame_epoch;
     LeaveCriticalSection(&st->frame_lock);
   } else {
     return true;
@@ -975,22 +978,49 @@ bool MediaClient::connected() const {
          InterlockedCompareExchange(&impl_->state.stop, 0, 0) == 0;
 }
 
-bool MediaClient::copy_frame_bgra(std::vector<uint8_t>& out, int& width, int& height) const {
+bool MediaClient::copy_desktop_bgra(std::vector<uint8_t>& out, int& width, int& height) const {
   if (!impl_) {
     return false;
   }
   ClientState* st = &impl_->state;
-
   EnterCriticalSection(&st->frame_lock);
   width = st->width;
   height = st->height;
   out = st->pixels;
   LeaveCriticalSection(&st->frame_lock);
+  return width > 0 && height > 0 && !out.empty();
+}
 
-  if (width <= 0 || height <= 0 || out.empty()) {
+bool MediaClient::framebuffer_size(int* width, int* height) const {
+  if (!impl_ || !width || !height) {
     return false;
   }
+  ClientState* st = &impl_->state;
+  EnterCriticalSection(&st->frame_lock);
+  *width = st->width;
+  *height = st->height;
+  LeaveCriticalSection(&st->frame_lock);
+  return *width > 0 && *height > 0;
+}
 
+uint32_t MediaClient::framebuffer_epoch() const {
+  if (!impl_) {
+    return 0;
+  }
+  ClientState* st = &impl_->state;
+  EnterCriticalSection(&st->frame_lock);
+  const uint32_t e = st->frame_epoch;
+  LeaveCriticalSection(&st->frame_lock);
+  return e;
+}
+
+void MediaClient::composite_software_cursor(std::vector<uint8_t>& inout, int width,
+                                            int height) const {
+  if (!impl_ || width <= 0 || height <= 0 ||
+      inout.size() < static_cast<size_t>(width) * height * 4u) {
+    return;
+  }
+  ClientState* st = &impl_->state;
   std::vector<uint8_t> cur;
   int cw = 0;
   int ch = 0;
@@ -1012,10 +1042,16 @@ bool MediaClient::copy_frame_bgra(std::vector<uint8_t>& out, int& width, int& he
     draw = true;
   }
   LeaveCriticalSection(&st->cursor_lock);
-
   if (draw) {
-    composite_cursor_bgra(out, width, height, cur.data(), cw, ch, hx, hy, mx, my);
+    composite_cursor_bgra(inout, width, height, cur.data(), cw, ch, hx, hy, mx, my);
   }
+}
+
+bool MediaClient::copy_frame_bgra(std::vector<uint8_t>& out, int& width, int& height) const {
+  if (!copy_desktop_bgra(out, width, height)) {
+    return false;
+  }
+  composite_software_cursor(out, width, height);
   return true;
 }
 

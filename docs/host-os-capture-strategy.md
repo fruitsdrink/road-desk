@@ -1,6 +1,6 @@
 # Host OS 分策采集：实施方案
 
-Status: **草案**（分支 `feature/host-os-capture-strategy`；2026-08-04）
+Status: **S0+S1+S2 已落地**（分支 `feature/host-os-capture-strategy`；2026-08-04）
 
 Related: [tech-stack.md](./tech-stack.md), [ADR-0004](./adr/0004-compliant-media-self-developed.md), [spike-media-replace.md](./spike-media-replace.md), [避坑清单](./spike-media-replace-pitfalls.md), [Mirror 共存](../spikes/mirror-driver/docs/coexistence.md)
 
@@ -45,14 +45,14 @@ RtlGetVersion → (major, minor, build)
         │                 禁止加载 DXGI
         │
         └─ NT ≥ 6.2  →  strategy = modern
-                          auto: DXGI → GDI   （DXGI 未落地前：直接 GDI，且不试 Mirror）
+                          auto: DXGI → GDI
                           跳过 XPDM Mirror（除非 env 强制 mirror）
 ```
 
 | 策略档 | OS 例 | `auto` 默认链 | 禁止 |
 |--------|-------|---------------|------|
 | **legacy** | Server 2008、Win7、2008 R2 | Mirror → GDI | DXGI |
-| **modern** | Server 2012、Win8/8.1、Win10/11 | DXGI → GDI（过渡期：仅 GDI） | 默认不 Attach Mirror |
+| **modern** | Server 2012、Win8/8.1、Win10/11 | DXGI → GDI | 默认不 Attach Mirror |
 
 强制覆盖：
 
@@ -171,6 +171,9 @@ modern  := !legacy
 
 ## 10. 当前分支状态
 
-- 分支：`feature/host-os-capture-strategy`（自 `dev`）  
-- 本文件为实施方案草案；**代码尚未改**  
-- 下一步：评审本方案 → 落地 PR-A
+- 分支：`feature/host-os-capture-strategy`（自 `dev`）
+- **S0：** `os_version` + `capture_resolve`；modern 跳过 Mirror
+- **S1：** `video_encode` 一编多发
+- **S2：** `dxgi_capture`（动态加载 dxgi/d3d11）；modern+auto/`dxgi` → DXGI，失败回退 GDI；`provides_dirties()` 接入 mux
+- 单元测试：`capture_strategy_test`
+- 下一步：真机 Gate（Win10 `capture started dxgi`；Win7 仍 Mirror）→ S3 文档/提权收口

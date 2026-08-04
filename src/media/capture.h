@@ -5,6 +5,23 @@
 
 namespace road_desk::replace {
 
+struct CaptureDirty {
+  int x = 0;
+  int y = 0;
+  int w = 0;
+  int h = 0;
+};
+
+// Desktop move (DXGI MoveRect / protocol CopyRect). Src → dst, same size.
+struct CaptureMove {
+  int sx = 0;
+  int sy = 0;
+  int dx = 0;
+  int dy = 0;
+  int w = 0;
+  int h = 0;
+};
+
 // GDI primary-desktop capture (SRCCOPY, no CAPTUREBLT). Output top-down BGRA.
 class DesktopCapture {
  public:

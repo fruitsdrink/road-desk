@@ -29,6 +29,7 @@ Write-Host "        viewer.exe host:port [password] [tls_sha256_fingerprint]  (d
 Write-Host "Env: ROAD_DESK_PSK, ROAD_DESK_TLS_FINGERPRINT, ROAD_DESK_TLS_INSECURE=1 (debug),"
 Write-Host "     ROAD_DESK_DEMO_HOST / ROAD_DESK_DEMO_PORT (console demo target),"
 Write-Host "     ROAD_DESK_GATEWAY_URL / ROAD_DESK_VIEWER_KEY (viewer directory),"
-Write-Host "     ROAD_DESK_CAPTURE=auto|mirror|gdi (Host Mirror/GDI)"
+Write-Host "     ROAD_DESK_CAPTURE=auto|mirror|gdi|dxgi (Host; OS strategy resolves auto/dxgi)"
+Write-Host "Tests: cmake --build build --target capture_strategy_test && ctest --test-dir build -R capture_strategy"
 Write-Host "Gateway: docs/gateway.md (tools/gateway + admin)"
 Write-Host "Note: Mirror Host needs Administrator (HKLM Attach.ToDesktop scrub)."

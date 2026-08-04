@@ -1,26 +1,15 @@
 #pragma once
 
 #include "capture.h"
+#include "capture_resolve.h"
+#include "dxgi_capture.h"
 
 #include <cstdint>
 #include <vector>
 
 namespace road_desk::replace {
 
-struct CaptureDirty {
-  int x = 0;
-  int y = 0;
-  int w = 0;
-  int h = 0;
-};
-
-enum class CaptureMode {
-  Auto,    // try Mirror, else GDI
-  Mirror,  // require Mirror attach
-  Gdi      // force GDI + CPU dirty
-};
-
-// Session capture: Mirror ExtEscape dirties + blit pixels, or GDI full frame.
+// Session capture: Mirror / DXGI dirties + pixels, or GDI full frame.
 class SessionCapture {
  public:
   explicit SessionCapture(CaptureMode mode);
@@ -29,20 +18,32 @@ class SessionCapture {
   SessionCapture(const SessionCapture&) = delete;
   SessionCapture& operator=(const SessionCapture&) = delete;
 
-  // Call once after auth. Returns false only if Mirror mode required and attach fails.
+  // Call once after auth. Always keeps session alive (falls back to GDI).
   bool begin();
   void end();
 
   bool using_mirror() const { return using_mirror_; }
-  const char* backend_name() const { return using_mirror_ ? "mirror" : "gdi"; }
+  bool using_dxgi() const { return using_dxgi_; }
+  // Native dirty rects (Mirror or DXGI) — mux skips CPU block-diff when set.
+  bool provides_dirties() const { return using_mirror_ || using_dxgi_; }
+  const char* backend_name() const {
+    if (using_mirror_) {
+      return "mirror";
+    }
+    if (using_dxgi_) {
+      return "dxgi";
+    }
+    return "gdi";
+  }
   const char* mirror_device() const { return mirror_dev_; }
 
   // Fills BGRA top-down frame.
-  // Mirror: also fills dirties (empty => idle). GDI: dirties cleared; caller CPU-diffs.
-  // force_full_pixels: blit entire desktop (still drains ExtEscape). Caller should CPU-diff;
-  // dirties will be cleared so empty means "use pixel compare", not idle.
+  // Mirror/DXGI: fills dirties (empty => idle). DXGI also fills moves (CopyRect).
+  // GDI: dirties/moves cleared; caller CPU-diffs.
+  // force_full_pixels: refresh entire desktop; dirties/moves cleared so caller CPU-diffs.
   bool capture(std::vector<uint8_t>* bgra_top_down, int* width, int* height,
-               std::vector<CaptureDirty>* dirties, bool force_full_pixels = false);
+               std::vector<CaptureDirty>* dirties, std::vector<CaptureMove>* moves,
+               bool force_full_pixels = false);
 
  private:
   bool begin_mirror();
@@ -56,6 +57,7 @@ class SessionCapture {
 
   CaptureMode mode_;
   bool using_mirror_ = false;
+  bool using_dxgi_ = false;
   bool begun_ = false;
   bool have_frame_ = false;
   char mirror_dev_[128] = {};
@@ -68,9 +70,8 @@ class SessionCapture {
   int width_ = 0;
   int height_ = 0;
   DesktopCapture gdi_;
+  DxgiCapture dxgi_;
   std::vector<uint8_t> dirty_buf_;
 };
-
-CaptureMode parse_capture_mode(const char* s);
 
 }  // namespace road_desk::replace

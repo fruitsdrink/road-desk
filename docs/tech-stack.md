@@ -2,13 +2,14 @@
 
 Status: **media cutover**（2026-08-01：主线已切私有 mux + Mirror/GDI；LibVNC 不再链接；回滚 tag `libvnc-mvp-verified-2026-08-01`）
 
-Related: [CONTEXT.md](../CONTEXT.md), [ADR-0001](./adr/0001-media-plane-vnc-adapter.md), [ADR-0002](./adr/0002-mvp-gpl-then-compliant-media-base.md), [ADR-0004](./adr/0004-compliant-media-self-developed.md), [spike-media-replace.md](./spike-media-replace.md), [dev-environment.md](./dev-environment.md)
+Related: [CONTEXT.md](../CONTEXT.md), [ADR-0001](./adr/0001-media-plane-vnc-adapter.md), [ADR-0002](./adr/0002-mvp-gpl-then-compliant-media-base.md), [ADR-0004](./adr/0004-compliant-media-self-developed.md), [spike-media-replace.md](./spike-media-replace.md), [host-os-capture-strategy.md](./host-os-capture-strategy.md), [dev-environment.md](./dev-environment.md)
 
 ## 约束
 
 - **Vibe coding**：Host Agent 虽用 C/C++，但默认由 AI 负责实现与改错；维护者只需具备基础 C++ 阅读能力做方向与验收，不以手写大量 C++ 为前提。
 - 工程必须服务于此：小文件、边界清晰、日志可经 Host Sidecar 拉取、避免炫技式现代 C++。
 - 目标 OS：Host 含 Win7 x64 / Server 2008 / 2012；Viewer 需能在 Win7 x64 运行；开发机构建在 Win11 x64。
+- Host 采集分策：NT &lt; 6.2 **legacy**（Mirror→GDI，含 Server 2008）；NT ≥ 6.2 **modern**（跳过 Mirror；DXGI 见 [host-os-capture-strategy.md](./host-os-capture-strategy.md)）。
 
 ## 已定
 
@@ -18,7 +19,7 @@ Related: [CONTEXT.md](../CONTEXT.md), [ADR-0001](./adr/0001-media-plane-vnc-adap
 | **Viewer** | **C/C++ / 原生 Win32 管理台** | 无额外运行时；Win7 可跑。壳为 Radmin 式管理台（菜单/工具栏/左树/工作区/状态栏）+ 浏览器式会话 Tab（可拖出独立窗）；画面路径保持 C++/GDI + `MediaClient`。不用 Electron；不用 C#/.NET；**不上 Qt**（Qt6 仅规划给未来 Win10+ 产品线，不进 Win7 构建） |
 | **Host Sidecar** | **Go，工具链钉死 1.20.x** | 单文件 HTTP 工具。`GOOS=windows GOARCH=amd64`；**禁止用 Go 1.21+ 打 Win7 用 Sidecar**（1.20 为官方最后支持 Win7/2008/2012 的系列，建议锁定最后补丁如 1.20.14）。开发机可另装更新 Go 编别的东西，Sidecar 构建必须走 1.20.x |
 | **C++ 工具链** | **MSVC 2022 + CMake，x64** | Agent/Viewer 主线。静态链 CRT 或附带 VC++ 可再发行组件；真 Win7 验证。若某 VNC 适配器强迫特定生成方式再开例外 |
-| **媒体面** | **自研 TLS mux + Mirror/GDI**（`src/media/mux_*`） | 经 `media_plane.h`；默认 `ROAD_DESK_CAPTURE=auto`。不链接 LibVNC（历史源可留仓、不编）。Mirror Host 需管理员。见 ADR-0004 / spike-media-replace RESULTS |
+| **媒体面** | **自研 TLS mux + Mirror/DXGI/GDI**（`src/media/mux_*`） | 经 `media_plane.h`；默认 `ROAD_DESK_CAPTURE=auto`（按 OS 分策，见 [host-os-capture-strategy.md](./host-os-capture-strategy.md)）。不链接 LibVNC。Mirror Host 需管理员。见 ADR-0004 / spike-media-replace RESULTS |
 | **传输加密** | **Schannel TLS + 预共享口令（PSK）** | 保密与鉴权分离；`src/media/tls_schannel.*`。mux **无明文路径**（`ROAD_DESK_ALLOW_PLAINTEXT` 会使 listen 失败）。Host 自签证书，Viewer 校验 SHA-256 指纹；调试可 `ROAD_DESK_TLS_INSECURE=1` |
 | **仓库布局** | **单仓** | 产品 C++ 与 `tools/host-sidecar`（Go）同仓；见下方目录约定 |
 

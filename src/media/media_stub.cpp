@@ -67,6 +67,20 @@ bool MediaClient::copy_frame_bgra(std::vector<uint8_t>&, int&, int&) const {
   return false;
 }
 
+bool MediaClient::copy_desktop_bgra(std::vector<uint8_t>&, int&, int&) const {
+  return false;
+}
+
+bool MediaClient::framebuffer_size(int*, int*) const {
+  return false;
+}
+
+uint32_t MediaClient::framebuffer_epoch() const {
+  return 0;
+}
+
+void MediaClient::composite_software_cursor(std::vector<uint8_t>&, int, int) const {}
+
 void MediaClient::send_pointer(int, int, int) {}
 bool MediaClient::send_vk(unsigned, bool) {
   return false;
