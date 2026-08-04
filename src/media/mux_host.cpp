@@ -17,6 +17,7 @@
 #include "mux_inject.h"
 #include "mux_protocol.h"
 #include "os_version.h"
+#include "proc_stats.h"
 #include "product_version.h"
 #include "session_mutex.h"
 #include "tls_schannel.h"
@@ -304,47 +305,22 @@ void collapse_dirties_for_send(std::vector<DirtyRect>* rects, int desk_w, int de
   if (!rects || rects->empty() || desk_w <= 0 || desk_h <= 0) {
     return;
   }
-  if (drag_mode) {
-    // One bbox while dragging: many small tiles + drop → staircase ghosts on Win7.
-    if (rects->size() == 1) {
-      return;
-    }
-    int x0 = desk_w;
-    int y0 = desk_h;
-    int x1 = 0;
-    int y1 = 0;
-    for (const DirtyRect& r : *rects) {
-      if (r.x < x0) {
-        x0 = r.x;
-      }
-      if (r.y < y0) {
-        y0 = r.y;
-      }
-      if (r.x + r.w > x1) {
-        x1 = r.x + r.w;
-      }
-      if (r.y + r.h > y1) {
-        y1 = r.y + r.h;
-      }
-    }
-    if (x1 > x0 && y1 > y0) {
-      rects->assign(1, {x0, y0, x1 - x0, y1 - y0});
-    }
-    return;
-  }
   if (rects->size() <= 1) {
     return;
   }
+  // Drag used to be bbox-merged unconditionally, but at 20-60Hz a moving window
+  // diffs into thin edge strips + exposed background. Bboxing them into one
+  // giant AABB re-encoded the whole window every tick (win7 lab: 16-62ms JPEG
+  // per drag tick). Keep the strips unless there is a fragment storm (>24 rects)
+  // or the dirty area covers most of the desktop.
   size_t area = 0;
   for (const DirtyRect& r : *rects) {
     area += static_cast<size_t>(r.w) * static_cast<size_t>(r.h);
   }
   const size_t screen = static_cast<size_t>(desk_w) * static_cast<size_t>(desk_h);
-  if (area * 2u > screen) {
-    rects->assign(1, {0, 0, desk_w, desk_h});
-    return;
-  }
-  if (rects->size() <= 24) {
+  const bool mostly_dirty = area * 2u > screen;
+  const bool fragment_storm = rects->size() > 24u;
+  if (!mostly_dirty && !fragment_storm) {
     return;
   }
   int x0 = desk_w;
@@ -365,9 +341,17 @@ void collapse_dirties_for_send(std::vector<DirtyRect>* rects, int desk_w, int de
       y1 = r.y + r.h;
     }
   }
-  if (x1 > x0 && y1 > y0) {
-    rects->assign(1, {x0, y0, x1 - x0, y1 - y0});
+  if (x1 <= x0 || y1 <= y0) {
+    return;
   }
+  // Non-drag + mostly-dirty gets a real full-desk keyframe (cheapest resync).
+  // During drag only bbox the dirty region - a full-desk frame every tick would
+  // make dragging a large window unresponsive.
+  if (mostly_dirty && !drag_mode) {
+    rects->assign(1, {0, 0, desk_w, desk_h});
+    return;
+  }
+  rects->assign(1, {x0, y0, x1 - x0, y1 - y0});
 }
 
 struct CopyRect {
@@ -573,7 +557,10 @@ void handle_input(const std::vector<uint8_t>& payload) {
     const int prev_btns = g_ptr_buttons_prev.load();
     g_ptr_buttons.store(buttons);
     if ((prev_btns & 1) != (buttons & 1)) {
-      g_validate_frames.store(2);
+      // One validation tick per LMB edge (was 2): each forces a full Mirror blit
+      // + whole-desk diff on Win7, doubling the per-click CPU spike for no extra
+      // correctness (drag ticks full-diff anyway).
+      g_validate_frames.store(1);
     }
     g_ptr_buttons_prev.store(buttons);
     const int x = read_u16_le(payload.data() + 2);
@@ -1252,6 +1239,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
     DWORD last_send_ms = 0;
     DWORD last_stat_ms = GetTickCount();
     DWORD last_attach_scrub_ms = GetTickCount();
+    int idle_empties = 0;
     constexpr DWORD kStatIntervalMs = 1000;
     constexpr DWORD kAttachScrubMs = 2000;
 
@@ -1591,7 +1579,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
               gdi_tick_win_y = wr.top;
               gdi_tick_win_valid = true;
               gdi_drag_hwnd = root;
-              gdi_drag_full_countdown = 24;
+              gdi_drag_full_countdown = 8;
               anchored = true;
               logf("gdi drag anchor: window %dx%d@%d,%d ptr=%d,%d", rw, rh, wr.left, wr.top,
                    mx, my);
@@ -1634,7 +1622,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
             gdi_tick_win_y = y0;
             gdi_tick_win_valid = true;
             gdi_drag_hwnd = nullptr;
-            gdi_drag_full_countdown = 24;
+            gdi_drag_full_countdown = 8;
             anchored = true;
             logf("gdi drag anchor fallback(aabb): %dx%d@%d,%d", x1 - x0, y1 - y0, x0, y0);
           }
@@ -1652,19 +1640,29 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
 
       if (dirties.empty() && copies.empty()) {
         ++enc_empty;
+        // Idle backoff: an unchanged desktop used to spin the capture loop at
+        // thousands of Hz (win7 Mirror full-DIB memcpy) or ~30 Hz (win10 GDI full
+        // BitBlt), pegging a core with nothing to send. Sleep grows to 16ms and
+        // resets on the next shipped tick; worst-case 16ms poll keeps drag-start
+        // latency negligible.
+        constexpr int kIdleSleepMs[] = {0, 2, 4, 8, 16, 16};
+        const int lvl = idle_empties < 6 ? idle_empties : 5;
+        Sleep(kIdleSleepMs[lvl]);
+        ++idle_empties;
         continue;
       }
 
       const unsigned before_collapse = static_cast<unsigned>(dirties.size() + copies.size());
-      // Mirror drag: collapse to AABB for JPEG strips. DXGI with CopyRects: do not
-      // union dirties into a near-full zlib (that wiped MoveRect gains).
+      // Keep dirty strips (moving window = thin edges + exposed background) instead
+      // of one giant AABB; collapse only on fragment storms / mostly-dirty. DXGI
+      // with CopyRects must not union dirties into a near-full zlib either.
       collapse_dirties_for_send(&dirties, w, h, drag_mode && copies.empty());
 
       const bool full_keyframe =
           dirties.size() == 1 && dirties[0].x == 0 && dirties[0].y == 0 && dirties[0].w == w &&
           dirties[0].h == h;
       if (!full_keyframe) {
-        // Legacy drag: keep one AABB JPEG — splitting into many WIC encodes starved Win7 (0.4.2).
+        // Legacy drag: strips stay whole — splitting into many WIC encodes starved Win7 (0.4.2).
         if (!(!modern_lossy && drag_mode)) {
           split_rects_for_input_slices(&dirties, 256);
         }
@@ -1681,6 +1679,11 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
       const unsigned moves_in = static_cast<unsigned>(mirror_moves.size());
       const unsigned dirties_in = static_cast<unsigned>(mirror_dirties.size());
       OutBatch tick_batch;
+      // Rects that actually encoded OK; only these may advance prev (a failed
+      // rect must stay diffed so the next tick re-sends it - otherwise the
+      // viewer misses those pixels forever and shows ghost trails).
+      std::vector<DirtyRect> sent_dirties;
+      sent_dirties.reserve(dirties.size());
 
       for (const CopyRect& cr : copies) {
         std::vector<uint8_t> body(kCopyRectPayloadSize);
@@ -1750,6 +1753,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
           ++h264_this;
         }
         tick_batch.msgs.push_back(std::vector<uint8_t>(send_buf.begin(), send_buf.end()));
+        sent_dirties.push_back(r);
         ++sent_rects;
         ++frame_id;
       }
@@ -1761,11 +1765,19 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
       }
 
       bool shipped = false;
+      bool evicted = false;
+      unsigned evict_this = 0;
       {
         std::lock_guard<std::mutex> lock(shared.outq_mu);
         const size_t max_b = (g_ptr_buttons.load() & 1) ? 1u : kMaxBatches;
         while (shared.outq.size() >= max_b) {
           shared.outq.pop_front();
+          // Evicting a queued-but-unsent batch desyncs prev from the viewer: the
+          // rects were applied to prev but never reached the client, so the next
+          // diff would skip them. Skip prev advancement when eviction happens and
+          // let the following tick re-diff those areas (self-healing, no ghosts).
+          evicted = true;
+          ++evict_this;
           shared.dropped_ticks.fetch_add(1);
           shared.dropped_interval.fetch_add(1);
         }
@@ -1774,7 +1786,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
           shipped = true;
         }
       }
-      if (shipped && use_region && gdi_tick_win_valid) {
+      if (shipped && !evicted && use_region && gdi_tick_win_valid) {
         // The shipped diff is against the last SENT frame, so the region anchor
         // must track the last sent window position; dropped ticks (outq full)
         // must not advance it or the next union misses the window's old spot.
@@ -1785,22 +1797,27 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
       g_video_ptr_x.store(g_ptr_x.load());
       g_video_ptr_y.store(g_ptr_y.load());
       g_video_ptr_have.store(true);
-      force_kf_pending = false;
-      if (full_keyframe) {
-        g_any_need_keyframe.store(false);
-        // Per-client flags were never cleared (lab Win7: force_full every tick → 220KB JPEG storm).
-        g_clear_client_keyframes.store(true);
+      if (!evicted) {
+        force_kf_pending = false;
+        if (full_keyframe) {
+          g_any_need_keyframe.store(false);
+          // Per-client flags were never cleared (lab Win7: force_full every tick → 220KB JPEG storm).
+          g_clear_client_keyframes.store(true);
+        }
       }
 
-      for (const CopyRect& cr : copies) {
-        copy_rect_to_prev(prev.data(), frame.data(), w, h, DirtyRect{cr.dx, cr.dy, cr.w, cr.h});
+      if (shipped && !evicted) {
+        for (const CopyRect& cr : copies) {
+          copy_rect_to_prev(prev.data(), frame.data(), w, h, DirtyRect{cr.dx, cr.dy, cr.w, cr.h});
+        }
+        for (const DirtyRect& r : sent_dirties) {
+          copy_rect_to_prev(prev.data(), frame.data(), w, h, r);
+        }
+        have_prev = true;
       }
-      for (const DirtyRect& r : dirties) {
-        copy_rect_to_prev(prev.data(), frame.data(), w, h, r);
-      }
-      have_prev = true;
       last_send_ms = GetTickCount();
       ++ticks_sent;
+      idle_empties = 0;
 
       ++enc_iters;
       qpc_loop_ms += qpc_ms() - qpc_iter0;
@@ -1812,8 +1829,9 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
           outq_n = shared.outq.size();
         }
         const uint32_t di = shared.dropped_interval.exchange(0);
+        const ProcStats ps = sample_proc_stats();
         logf("tick=%u batch=%u(from %u) kf=%u copy=%u moves_in=%u dirty_in=%u wire=%u zlib=%u jpeg=%u "
-             "h264=%u cap_ms=%u qcap=%.1f qloop=%.1f iters=%u empty=%u enc_ms=%u raw=%u rect=%ux%u@%u,%u greg=%s outq=%u drop=%u drop_total=%u",
+             "h264=%u cap_ms=%u qcap=%.1f qloop=%.1f iters=%u empty=%u enc_ms=%u raw=%u rect=%ux%u@%u,%u greg=%s outq=%u evict=%u drop=%u drop_total=%u cpu1=%.0f cpuN=%.0f mem=%llu mem%%=%.1f",
              ticks_sent, static_cast<unsigned>(dirties.size() + copies.size()), before_collapse,
              full_keyframe ? 1u : 0u, copy_this, moves_in, dirties_in,
              static_cast<unsigned>(wire_this), zlib_this,
@@ -1826,8 +1844,9 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
                             std::to_string(greg_x) + "," + std::to_string(greg_y))
                          : std::string("full"))
                  .c_str(),
-             static_cast<unsigned>(outq_n), di,
-             shared.dropped_ticks.load());
+             static_cast<unsigned>(outq_n), evict_this, di,
+             shared.dropped_ticks.load(), ps.cpu_one_core_pct, ps.cpu_machine_pct,
+             static_cast<unsigned long long>(ps.ws_bytes >> 20), ps.mem_pct);
         qpc_cap_ms = 0.0;
         qpc_loop_ms = 0.0;
         enc_iters = 0;
@@ -1872,7 +1891,8 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
       const uint64_t e = shared.enc_iters_total.load();
       const uint64_t v = shared.vout_iters_total.load();
       const uint64_t m = shared.main_iters_total.load();
-      logf("wd: enc=%llu(+%llu) vout=%llu(+%llu) main=%llu(+%llu) outq=%llu drop=%u",
+      const ProcStats ps_wd = sample_proc_stats();
+      logf("wd: enc=%llu(+%llu) vout=%llu(+%llu) main=%llu(+%llu) outq=%llu drop=%u cpu1=%.0f cpuN=%.0f mem=%llu mem%%=%.1f",
            static_cast<unsigned long long>(e),
            static_cast<unsigned long long>(e - last_e),
            static_cast<unsigned long long>(v),
@@ -1880,7 +1900,8 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
            static_cast<unsigned long long>(m),
            static_cast<unsigned long long>(m - last_m),
            static_cast<unsigned long long>(shared.outq.size()),
-           shared.dropped_ticks.load());
+           shared.dropped_ticks.load(), ps_wd.cpu_one_core_pct, ps_wd.cpu_machine_pct,
+           static_cast<unsigned long long>(ps_wd.ws_bytes >> 20), ps_wd.mem_pct);
       last_e = e;
       last_v = v;
       last_m = m;

@@ -38,6 +38,7 @@ if(ROAD_DESK_WITH_MEDIA)
     mux_inject.cpp
     session_recorder.cpp
     media_log.cpp
+    proc_stats.cpp
     tls_schannel.cpp
     tls_mvp_cert_data.cpp
     "${MIRROR_USER_DIR}/mirror_client.cpp"
@@ -53,7 +54,7 @@ if(ROAD_DESK_WITH_MEDIA)
     road_desk_session
     road_desk_miniz
     ws2_32 gdi32 user32 shell32 secur32 crypt32 ncrypt dwmapi
-    windowscodecs ole32 oleaut32 vfw32
+    windowscodecs ole32 oleaut32 vfw32 psapi
     mfplat mf mfreadwrite mfuuid wmcodecdspuuid
   )
 
@@ -65,6 +66,7 @@ if(ROAD_DESK_WITH_MEDIA)
     jpeg_encode.cpp
     h264_mf.cpp
     media_log.cpp
+    proc_stats.cpp
     tls_schannel.cpp
     tls_mvp_cert_data.cpp
   )
@@ -78,7 +80,7 @@ if(ROAD_DESK_WITH_MEDIA)
     road_desk_session
     road_desk_miniz
     ws2_32 gdi32 user32 shell32 secur32 crypt32 ncrypt
-    windowscodecs ole32 oleaut32
+    windowscodecs ole32 oleaut32 psapi
     mfplat mf mfreadwrite mfuuid wmcodecdspuuid
   )
 

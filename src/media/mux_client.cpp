@@ -9,6 +9,7 @@
 #include "mux_clipboard.h"
 #include "mux_file_xfer.h"
 #include "mux_protocol.h"
+#include "proc_stats.h"
 #include "tls_schannel.h"
 
 #include "miniz.h"
@@ -680,9 +681,11 @@ bool apply_video_payload(ClientState* st, const std::vector<uint8_t>& payload) {
   }
   if (fid == 0 || (now - st->last_stat_ms) >= 1000) {
     st->last_stat_ms = now;
-    logf("recv id=%u codec=%u rect=%u,%u %ux%u applied=%u copy=%u cur=%u flush=%u wire_B=%llu",
+    const ProcStats ps = sample_proc_stats();
+    logf("recv id=%u codec=%u rect=%u,%u %ux%u applied=%u copy=%u cur=%u flush=%u wire_B=%llu cpu1=%.0f cpuN=%.0f mem=%llu mem%%=%.1f",
          fid, codec, x, y, rw, rh, st->rects_applied, st->copy_ok, st->cursor_updates,
-         st->input_flush_ok, static_cast<unsigned long long>(st->wire_bytes));
+         st->input_flush_ok, static_cast<unsigned long long>(st->wire_bytes), ps.cpu_one_core_pct,
+         ps.cpu_machine_pct, static_cast<unsigned long long>(ps.ws_bytes >> 20), ps.mem_pct);
   }
   return true;
 }
@@ -997,8 +1000,8 @@ void MediaClient::stop() {
     WSACleanup();
     st->wsa_started = false;
   }
-  logf("stopped applied=%u copy=%u cur=%u flush=%u wire_B=%llu", st->rects_applied, st->copy_ok,
-       st->cursor_updates, st->input_flush_ok, static_cast<unsigned long long>(st->wire_bytes));
+    logf("stopped applied=%u copy=%u cur=%u flush=%u wire_B=%llu", st->rects_applied, st->copy_ok,
+         st->cursor_updates, st->input_flush_ok, static_cast<unsigned long long>(st->wire_bytes));
   if (impl_->log_owned) {
     media_log_close();
     impl_->log_owned = false;
