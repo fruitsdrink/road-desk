@@ -275,16 +275,20 @@ bool clipboard_build_file_offer(uint32_t transfer_id, FileOffer* offer_out, std:
   std::vector<std::wstring> roots;
   roots.reserve(n);
   for (UINT i = 0; i < n; ++i) {
+    // DragQueryFileW returns the required buffer size excluding the NUL; guard
+    // need == 0 so we never take &path[0] on an empty string (UB).
     const UINT need = DragQueryFileW(hdrop, i, nullptr, 0);
-    std::wstring path(need, L'\0');
+    if (need == 0) {
+      continue;
+    }
+    // Room for the path plus the terminating NUL DragQueryFileW writes
+    // (the old need-sized string overflowed the heap by one wchar_t).
+    std::wstring path(static_cast<size_t>(need) + 1, L'\0');
     if (DragQueryFileW(hdrop, i, &path[0], need + 1) == 0) {
       continue;
     }
     // DragQueryFile length excludes NUL; string may have extra NUL from resize.
-    if (!path.empty() && path.back() == L'\0') {
-      path.pop_back();
-    }
-    while (!path.empty() && (path.back() == L'\0')) {
+    while (!path.empty() && path.back() == L'\0') {
       path.pop_back();
     }
     if (!path.empty()) {

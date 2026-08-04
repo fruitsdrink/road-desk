@@ -1,0 +1,7 @@
+interface:
+  display_name: "C++ Memory Check"
+  short_description: "Audit C++ for memory bugs: leaks, UAF, overflows, handles."
+  default_prompt: "Use $cpp-memory-check to audit this C++ project for memory issues: run the static review checklist, then sanitizer/leak-detector builds, and report findings with severity and fixes."
+  brand_color: "#3B82F6"
+policy:
+  allow_implicit_invocation: true

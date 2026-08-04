@@ -360,28 +360,28 @@ void fill_list(ConsoleState* st) {
 
 HTREEITEM insert_tree_recursive(ConsoleState* st, HWND tree, HTREEITEM parent, int node_id) {
   const BookNode* n = address_book_find(node_id);
-  if (!n) {
+  // The left tree shows the category tree only; agent/device entries are
+  // listed in the detail list when a category is selected.
+  if (!n || n->kind != BookNodeKind::kGroup) {
     return nullptr;
   }
-  std::wstring label = n->name;
-  if (n->kind == BookNodeKind::kDevice) {
-    label += L"  ";
-    if (!n->host.empty()) {
-      label += utf8_to_wide_local(n->host);
-    } else {
-      label += connect_host_display(st->connect);
+  bool has_group_child = false;
+  for (const BookNode* c : address_book_children(n->id)) {
+    if (c->kind == BookNodeKind::kGroup) {
+      has_group_child = true;
+      break;
     }
   }
   TVINSERTSTRUCTW ins{};
   ins.hParent = parent;
   ins.hInsertAfter = TVI_LAST;
   ins.item.mask = TVIF_TEXT | TVIF_PARAM | TVIF_CHILDREN;
-  ins.item.pszText = const_cast<wchar_t*>(label.c_str());
+  ins.item.pszText = const_cast<wchar_t*>(n->name.c_str());
   ins.item.lParam = n->id;
-  ins.item.cChildren = (n->kind == BookNodeKind::kGroup) ? 1 : 0;
+  ins.item.cChildren = has_group_child ? 1 : 0;
   HTREEITEM h = TreeView_InsertItem(tree, &ins);
-  if (n->kind == BookNodeKind::kGroup) {
-    for (const BookNode* c : address_book_children(n->id)) {
+  for (const BookNode* c : address_book_children(n->id)) {
+    if (c->kind == BookNodeKind::kGroup) {
       insert_tree_recursive(st, tree, h, c->id);
     }
   }
