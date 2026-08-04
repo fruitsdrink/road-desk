@@ -518,6 +518,11 @@ void crop_top_left(const uint8_t* src, int src_w, int ew, int eh, std::vector<ui
 }  // namespace
 
 bool session_recorder_enabled() {
+  // 录屏功能已屏蔽（代码保留未删除）。此处直接返回 false，
+  // ROAD_DESK_AUTO_RECORD 环境变量不再生效。
+  // 如需恢复录屏：删除上面的 return false;，并把下面的 #if 0 改成 #if 1。
+  return false;
+#if 0
   char* env = nullptr;
   size_t len = 0;
   if (_dupenv_s(&env, &len, "ROAD_DESK_AUTO_RECORD") != 0 || !env) {
@@ -527,6 +532,7 @@ bool session_recorder_enabled() {
                     env[0] == 'F');
   free(env);
   return !off;
+#endif
 }
 
 std::string session_recorder_debug_dir() {

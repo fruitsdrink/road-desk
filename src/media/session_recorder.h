@@ -27,7 +27,9 @@ void session_recorder_reset();
 bool session_recorder_active();
 std::string session_recorder_debug_dir();
 
-// ROAD_DESK_AUTO_RECORD=0/false disables. Default enabled.
+// Recording is currently hard-disabled (code retained, not deleted):
+// session_recorder_enabled() always returns false and the
+// ROAD_DESK_AUTO_RECORD env override no longer has any effect.
 bool session_recorder_enabled();
 
 }  // namespace road_desk::media
