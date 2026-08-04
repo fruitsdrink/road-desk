@@ -495,6 +495,14 @@ bool open_session_for_device(ConsoleState* st, int device_id) {
 
 std::wstring session_tab_label(const SessionTab& tab) {
   std::wstring label = tab.title;
+  if (tab.host) {
+    const std::string av = tab.host->agent_version();
+    if (!av.empty()) {
+      label += L" [";
+      label += utf8_to_wide_local(av);
+      label += L"]";
+    }
+  }
   if (tab.floating) {
     label += L" ↗";
   }
@@ -858,6 +866,12 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
     }
     case WM_SIZE:
       layout(st);
+      return 0;
+    case WM_SESSION_META:
+      // Connected: the tab label now carries the live agent version.
+      if (st->tab_strip) {
+        InvalidateRect(st->tab_strip, nullptr, TRUE);
+      }
       return 0;
     case WM_SESSION_CLOSED: {
       auto* host = reinterpret_cast<SessionHost*>(lparam);

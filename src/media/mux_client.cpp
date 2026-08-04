@@ -173,6 +173,8 @@ struct ClientState {
   int height = 0;
   int desk_w = 0;
   int desk_h = 0;
+  // Agent version from the auth-ok handshake (empty until connected).
+  std::string agent_version;
   uint32_t frame_id = 0;
   uint32_t frame_epoch = 0;
   std::vector<uint8_t> decode_buf;
@@ -933,7 +935,15 @@ bool MediaClient::start(const MediaClientConfig& config) {
 
   st->desk_w = read_u16_le(payload.data() + 1);
   st->desk_h = read_u16_le(payload.data() + 3);
-  logf("auth ok desktop=%dx%d", st->desk_w, st->desk_h);
+  st->agent_version.clear();
+  if (payload.size() >= 7) {
+    const uint16_t vlen = read_u16_le(payload.data() + 5);
+    if (vlen > 0 && payload.size() >= 7u + vlen) {
+      st->agent_version.assign(payload.begin() + 7, payload.begin() + 7 + vlen);
+    }
+  }
+  logf("auth ok desktop=%dx%d agent=%s", st->desk_w, st->desk_h,
+       st->agent_version.empty() ? "-" : st->agent_version.c_str());
 
   if (st->cfg.notify_hwnd && st->cfg.resize_msg) {
     PostMessageW(st->cfg.notify_hwnd, st->cfg.resize_msg, static_cast<WPARAM>(st->desk_w),
@@ -998,6 +1008,10 @@ void MediaClient::stop() {
 bool MediaClient::connected() const {
   return impl_ && impl_->state.connected.load() &&
          InterlockedCompareExchange(&impl_->state.stop, 0, 0) == 0;
+}
+
+std::string MediaClient::agent_version() const {
+  return impl_ ? impl_->state.agent_version : std::string();
 }
 
 bool MediaClient::copy_desktop_bgra(std::vector<uint8_t>& out, int& width, int& height) const {

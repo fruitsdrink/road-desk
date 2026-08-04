@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(road-desk VERSION 0.4.4 LANGUAGES C CXX)
+project(road-desk VERSION 0.4.9 LANGUAGES C CXX)
 
 # MVP: MSVC + CMake, x64 (VS 2022 or newer with C++ desktop workload).
 # Prefer the CMake that ships with Visual Studio (mingw cmake may not see VS 18+).

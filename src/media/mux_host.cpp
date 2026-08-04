@@ -19,7 +19,6 @@
 #include "os_version.h"
 #include "product_version.h"
 #include "session_mutex.h"
-#include "session_recorder.h"
 #include "tls_schannel.h"
 #include "video_encode.h"
 
@@ -231,6 +230,49 @@ void collect_dirty_rects(const uint8_t* cur, const uint8_t* prev, int desk_w, in
     int run_x1 = -1;
     for (int x = 0; x < desk_w; x += kBlock) {
       const int xw = (x + kBlock < desk_w) ? (x + kBlock) : desk_w;
+      bool dirty = false;
+      for (int yy = y; yy < yh && !dirty; ++yy) {
+        const uint8_t* a = cur + (static_cast<size_t>(yy) * desk_w + x) * 4u;
+        const uint8_t* b = prev + (static_cast<size_t>(yy) * desk_w + x) * 4u;
+        if (std::memcmp(a, b, static_cast<size_t>(xw - x) * 4u) != 0) {
+          dirty = true;
+        }
+      }
+      if (dirty) {
+        if (run_x0 < 0) {
+          run_x0 = x;
+        }
+        run_x1 = xw;
+      } else if (run_x0 >= 0) {
+        out->push_back({run_x0, y, run_x1 - run_x0, yh - y});
+        run_x0 = -1;
+        run_x1 = -1;
+      }
+    }
+    if (run_x0 >= 0) {
+      out->push_back({run_x0, y, run_x1 - run_x0, yh - y});
+    }
+  }
+  coalesce_vertical(out);
+}
+
+// Same block-diff as collect_dirty_rects but scoped to (rx,ry,rw,rh). Used by the
+// GDI drag region path: only the moving window + wake are scanned each tick.
+void collect_dirty_rects_region(const uint8_t* cur, const uint8_t* prev, int desk_w, int rx, int ry,
+                                int rw, int rh, std::vector<DirtyRect>* out) {
+  out->clear();
+  if (rw <= 0 || rh <= 0) {
+    return;
+  }
+  const int xend = rx + rw;
+  const int yend = ry + rh;
+  constexpr int kBlock = 32;
+  for (int y = ry; y < yend; y += kBlock) {
+    const int yh = (y + kBlock < yend) ? (y + kBlock) : yend;
+    int run_x0 = -1;
+    int run_x1 = -1;
+    for (int x = rx; x < xend; x += kBlock) {
+      const int xw = (x + kBlock < xend) ? (x + kBlock) : xend;
       bool dirty = false;
       for (int yy = y; yy < yh && !dirty; ++yy) {
         const uint8_t* a = cur + (static_cast<size_t>(yy) * desk_w + x) * 4u;
@@ -507,6 +549,19 @@ void split_rects_for_input_slices(std::vector<DirtyRect>* rects, int max_h) {
   *rects = std::move(out);
 }
 
+struct PendingInput {
+  uint8_t kind = 0;
+  uint8_t buttons = 0;
+  uint16_t x = 0;
+  uint16_t y = 0;
+  uint16_t vk = 0;
+  bool down = false;
+  bool extended = false;
+};
+// Queued input awaiting injection (see flush_pending_input). Touched only by
+// the inject thread: appended under io_mu while draining, drained without it.
+std::vector<PendingInput> g_pending_input;
+
 void handle_input(const std::vector<uint8_t>& payload) {
   using namespace road_desk::replace;
   if (payload.empty()) {
@@ -533,14 +588,43 @@ void handle_input(const std::vector<uint8_t>& payload) {
     }
     g_ptr_x.store(x);
     g_ptr_y.store(y);
-    inject_pointer(buttons, static_cast<uint16_t>(x), static_cast<uint16_t>(y));
+    PendingInput pi{};
+    pi.kind = kInputPointer;
+    pi.buttons = static_cast<uint8_t>(buttons);
+    pi.x = static_cast<uint16_t>(x);
+    pi.y = static_cast<uint16_t>(y);
+    g_pending_input.push_back(pi);
     return;
   }
   if (payload[0] == kInputKey && payload.size() >= kInputKeySize) {
     ++g_input_key;
     const bool down = (payload[1] & kInputKeyFlagDown) != 0;
     const bool extended = (payload[1] & kInputKeyFlagExtended) != 0;
-    inject_vk(read_u16_le(payload.data() + 2), down, extended);
+    PendingInput pi{};
+    pi.kind = kInputKey;
+    pi.vk = read_u16_le(payload.data() + 2);
+    pi.down = down;
+    pi.extended = extended;
+    g_pending_input.push_back(pi);
+  }
+}
+
+// Input events are read under io_mu (TLS) but injected after the lock is
+// released — SendInput on a VM can take milliseconds per event, and holding
+// io_mu during it starves video-out (drag window/mouse desync on Win10).
+void flush_pending_input() {
+  using namespace road_desk::replace;
+  if (g_pending_input.empty()) {
+    return;
+  }
+  std::vector<PendingInput> q;
+  q.swap(g_pending_input);
+  for (const PendingInput& p : q) {
+    if (p.kind == kInputPointer) {
+      inject_pointer(p.buttons, p.x, p.y);
+    } else if (p.kind == kInputKey) {
+      inject_vk(p.vk, p.down, p.extended);
+    }
   }
 }
 
@@ -591,6 +675,9 @@ bool send_file_abort(tls::TlsSession* tls, uint32_t xfer_id) {
 bool drain_incoming(tls::TlsSession* tls, HostClipSession* clip) {
   using namespace road_desk::replace;
   const SOCKET sock = tls::tls_get_socket(tls);
+  // Bound how many input events are injected per io_mu hold — a fast mouse burst
+  // otherwise keeps the inject thread holding the lock and starves video-out.
+  unsigned input_budget = 64;
   while (socket_readable(sock, 0)) {
     uint8_t ch = 0;
     std::vector<uint8_t> payload;
@@ -599,6 +686,9 @@ bool drain_incoming(tls::TlsSession* tls, HostClipSession* clip) {
     }
     if (ch == kChannelInput) {
       handle_input(payload);
+      if (--input_budget == 0) {
+        return true;  // leave the rest for the next drain pass (inject spins)
+      }
       continue;
     }
     if (ch == kChannelControl && !payload.empty() && payload[0] == kCtrlPing) {
@@ -756,7 +846,7 @@ bool try_auth_client(ClientConn* c, const std::string& psk, session::SessionMute
   const int sh = GetSystemMetrics(SM_CYSCREEN);
   const uint16_t width = static_cast<uint16_t>(sw > 0 ? sw : 1);
   const uint16_t height = static_cast<uint16_t>(sh > 0 ? sh : 1);
-  if (!control_send_auth_ok(c->tls, width, height)) {
+  if (!control_send_auth_ok(c->tls, width, height, ROAD_DESK_VERSION_STRING)) {
     logf("send AuthOk failed");
     return false;
   }
@@ -915,6 +1005,16 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
                   tls::HostCredentials* creds) {
   using namespace road_desk::replace;
 
+  auto qpc_ms = []() -> double {
+    static LARGE_INTEGER freq{};
+    if (freq.QuadPart == 0) {
+      QueryPerformanceFrequency(&freq);
+    }
+    LARGE_INTEGER now{};
+    QueryPerformanceCounter(&now);
+    return static_cast<double>(now.QuadPart) * 1000.0 / static_cast<double>(freq.QuadPart);
+  };
+
   struct OutBatch {
     std::vector<std::vector<uint8_t>> msgs;
   };
@@ -927,6 +1027,9 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
     std::atomic<bool> session_active{false};
     std::atomic<bool> encode_stop{false};
     std::atomic<bool> video_out_stop{false};
+    std::atomic<uint64_t> enc_iters_total{0};
+    std::atomic<uint64_t> vout_iters_total{0};
+    std::atomic<uint64_t> main_iters_total{0};
     // Mid large video TLS write — inject may drain/SendInput but must not mux_write.
     std::atomic<bool> video_writing{false};
     std::atomic<uint32_t> dropped_ticks{0};
@@ -959,11 +1062,29 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
 
   auto video_out_thread_main = [&]() {
     logf("video-out thread start");
+    // Video-out is latency-critical during drag: on a saturated VM (capture
+    // BitBlt + WIC encode) default priority leaves it scheduled ~9x/s, so the
+    // capture thread drops half its batches (outq full) and the dragged window
+    // lags the mouse. Boost it so every captured batch reaches the wire.
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+    // --- temp diagnostics ---
+    unsigned vout_msgs = 0;
+    DWORD vout_lock_ms = 0;
+    DWORD vout_write_ms = 0;
+    unsigned vout_nw = 0;
+    unsigned vout_backlog = 0;
+    DWORD vout_last = GetTickCount();
+    unsigned vout_empty = 0;
+    double vout_qlock_ms = 0.0;
+    double vout_qwrite_ms = 0.0;
+    unsigned vout_iters = 0;
+    // -------------------------
     VideoWriteYieldCtx yield_ctx{};
     yield_ctx.shared = &shared;
     while (!shared.video_out_stop.load() &&
            !(stop_requested && stop_requested->load())) {
       std::vector<uint8_t> msg;
+      shared.vout_iters_total.fetch_add(1);
       {
         std::lock_guard<std::mutex> lock(shared.outq_mu);
         if (shared.outq.empty()) {
@@ -982,16 +1103,23 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
         }
       }
       if (msg.empty()) {
+        ++vout_empty;
         Sleep(1);
         continue;
       }
 
       shared.video_writing.store(true);
-      // Prefer inject while dragging — don't grab IO until inject finishes a burst.
-      while ((g_ptr_buttons.load() & 1) != 0 && g_inject_active.load()) {
-        Sleep(0);
-      }
+      // Prefer inject while dragging — but never spin-wait on g_inject_active: the
+      // inject loop keeps that flag true almost continuously during a drag, so a
+      // spin here starves video-out and collapses the drag frame rate (Win7 stutter,
+      // Win10 cursor/window desync). Just take io_mu; the per-chunk yield below already
+      // hands IO back to inject between TLS records, keeping input latency low.
+      ++vout_iters;
+      const double vout_q0 = qpc_ms();
+      const DWORD vout_t0 = GetTickCount();
       std::unique_lock<std::mutex> lock(shared.io_mu);
+      vout_lock_ms += GetTickCount() - vout_t0;
+      vout_qlock_ms += qpc_ms() - vout_q0;
       yield_ctx.lock = &lock;
       bool any_authed = false;
       bool any_sent = false;
@@ -1002,6 +1130,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
         }
         any_authed = true;
         if (!socket_writable(tls::tls_get_socket(c.tls), 0)) {
+          ++vout_nw;
           // During drag, forcing keyframes just floods Win7 with full-desk JPEG.
           if ((g_ptr_buttons.load() & 1) == 0) {
             c.need_keyframe = true;
@@ -1011,12 +1140,16 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
         }
         all_blocked = false;
         const bool big = msg.size() >= 16u * 1024u;
+        const DWORD vout_w0 = GetTickCount();
+        const double vout_q1 = qpc_ms();
         const bool ok =
             big ? mux_write_yield(c.tls, kChannelVideo, msg.data(),
                                   static_cast<uint32_t>(msg.size()), video_write_yield,
                                   &yield_ctx)
                 : mux_write(c.tls, kChannelVideo, msg.data(),
                             static_cast<uint32_t>(msg.size()));
+        vout_write_ms += GetTickCount() - vout_w0;
+        vout_qwrite_ms += qpc_ms() - vout_q1;
         if (!ok) {
           close_client(&c, mutex);
           continue;
@@ -1026,6 +1159,27 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
       yield_ctx.lock = nullptr;
       lock.unlock();
       shared.video_writing.store(false);
+      ++vout_msgs;
+      if (vout_backlog == 0) {
+        vout_backlog = static_cast<unsigned>(msg.size());
+      }
+      const DWORD vout_now = GetTickCount();
+      if (vout_now - vout_last >= 1000) {
+        logf("vout diag: msgs=%u empty=%u iters=%u qlock=%.1f qwrite=%.1f lock_ms=%u write_ms=%u nw=%u last_bytes=%u",
+             vout_msgs, vout_empty, vout_iters, vout_qlock_ms, vout_qwrite_ms,
+             static_cast<unsigned>(vout_lock_ms),
+             static_cast<unsigned>(vout_write_ms), vout_nw, vout_backlog);
+        vout_msgs = 0;
+        vout_empty = 0;
+        vout_iters = 0;
+        vout_qlock_ms = 0.0;
+        vout_qwrite_ms = 0.0;
+        vout_lock_ms = 0;
+        vout_write_ms = 0;
+        vout_nw = 0;
+        vout_last = vout_now;
+      }
+      vout_backlog = 0;
       if (!any_authed) {
         std::lock_guard<std::mutex> qlock(shared.outq_mu);
         shared.outq.clear();
@@ -1069,20 +1223,42 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
     uint32_t sent_rects = 0;
     uint32_t ticks_sent = 0;
     bool have_prev = false;
+    double qpc_cap_ms = 0.0;
+    double qpc_loop_ms = 0.0;
+    unsigned enc_iters = 0;
+    unsigned enc_empty = 0;
+    // GDI drag region capture: anchor the dragged window once on LMB-down, then
+    // BitBlt only the moving window + wake each tick (a full-screen GDI blit is
+    // ~47ms on VMware SVGA and starves video-out / collapses the drag frame rate).
+    bool gdi_drag_anchor_valid = false;
+    bool gdi_drag_full_pending = true;
+    bool force_kf_pending = true;
+    bool was_drag_mode = false;
+    bool cap_was_dxgi = true;
+    int gdi_drag_win_x = 0;
+    int gdi_drag_win_y = 0;
+    int gdi_drag_win_w = 0;
+    int gdi_drag_win_h = 0;
+    int gdi_drag_prev_win_x = 0;
+    int gdi_drag_prev_win_y = 0;
+    int gdi_drag_anchor_mx = 0;
+    int gdi_drag_anchor_my = 0;
+    int gdi_drag_full_countdown = 0;
+    // Live HWND of the dragged window (set on anchor; re-queried every region tick so
+    // the capture region always covers the window at its true position).
+    HWND gdi_drag_hwnd = nullptr;
+    int desk_w = 0;
+    int desk_h = 0;
     DWORD last_send_ms = 0;
     DWORD last_stat_ms = GetTickCount();
     DWORD last_attach_scrub_ms = GetTickCount();
     constexpr DWORD kStatIntervalMs = 1000;
     constexpr DWORD kAttachScrubMs = 2000;
-    bool logged_rec_fail = false;
 
     while (!shared.encode_stop.load() &&
            !(stop_requested && stop_requested->load())) {
       if (!shared.session_active.load()) {
         if (cap_begun) {
-          session_recorder_reset();
-          logged_rec_fail = false;
-          logf("session-record: stopped (artifacts under debug\\)");
           if (cap) {
             cap->end();
           }
@@ -1093,6 +1269,13 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
           aero_shake_restore(&shake_guard);
           have_prev = false;
           prev.clear();
+          gdi_drag_anchor_valid = false;
+          gdi_drag_full_pending = true;
+          force_kf_pending = true;
+          was_drag_mode = false;
+          gdi_drag_full_countdown = 0;
+          gdi_drag_prev_win_x = 0;
+          gdi_drag_prev_win_y = 0;
           media_log_set_mirror_stderr(true);
           logf("all viewers gone - capture stopped");
         }
@@ -1132,6 +1315,8 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
       }
 
       const DWORD loop_now = GetTickCount();
+      shared.enc_iters_total.fetch_add(1);
+      const double qpc_iter0 = qpc_ms();
       if (cap->using_mirror() && loop_now - last_attach_scrub_ms >= kAttachScrubMs) {
         last_attach_scrub_ms = loop_now;
         rdm_scrub_foreign_attach_registry();
@@ -1160,52 +1345,165 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
       // DXGI drag: never force_full_pixels — that clears MoveRects (lab copy=0).
       const bool force_validate =
           cap->provides_dirties() && validate > 0 && !(cap->using_dxgi() && drag_mode);
-      const bool force_full = !have_prev || (any_kf && !drag_mode);
+      // force_kf_pending is produced locally (session start / DXGI->GDI fallback) so a real
+      // full-desk keyframe ships even while dragging; the old any_kf gate only worked outside drag.
+      const bool force_full = !have_prev || force_kf_pending || (any_kf && !drag_mode);
 
       int w = 0;
       int h = 0;
+      const double qpc_cap0 = qpc_ms();
       const DWORD cap0 = GetTickCount();
       mirror_dirties.clear();
       mirror_moves.clear();
-      if (!cap->capture(&frame, &w, &h, &mirror_dirties, &mirror_moves, force_validate)) {
-        Sleep(5);
-        continue;
+
+      // --- GDI drag region capture ---
+      bool gdi_region = false;
+      int greg_x = 0;
+      int greg_y = 0;
+      int greg_w = 0;
+      int greg_h = 0;
+      // Window position sampled this tick; committed to gdi_drag_prev_win_* only
+      // when the batch actually ships (the diff is against the last SENT frame).
+      int gdi_tick_win_x = 0;
+      int gdi_tick_win_y = 0;
+      bool gdi_tick_win_valid = false;
+      const bool gdi_backend = !cap->provides_dirties();
+      const bool use_region = gdi_backend && drag_mode && !force_validate && !force_full;
+      if (use_region) {
+        if (!was_drag_mode || gdi_drag_full_pending || !gdi_drag_anchor_valid) {
+          // Full capture this tick; the window anchor comes from WindowFromPoint below.
+          gdi_drag_full_pending = false;
+          if (!cap->capture(&frame, &w, &h, &mirror_dirties, &mirror_moves, false)) {
+            Sleep(5);
+            continue;
+          }
+          desk_w = w;
+          desk_h = h;
+        } else {
+          const int mx = g_ptr_x.load();
+          const int my = g_ptr_y.load();
+          // Pointer motion since the last region tick: the window keeps moving
+          // while the ~30-50ms BitBlt is in flight, so the region must extend
+          // ahead of the motion or the leading edge lands outside the region.
+          const int pdx = mx - gdi_drag_anchor_mx;
+          const int pdy = my - gdi_drag_anchor_my;
+          int wx = gdi_drag_win_x + (mx - gdi_drag_anchor_mx);
+          int wy = gdi_drag_win_y + (my - gdi_drag_anchor_my);
+          // Prefer the live window rect: the pointer-delta estimate runs ahead of the
+          // real window when injected input lags, so the union region must track the
+          // true old/new positions to wipe the exposed background behind the window.
+          RECT live{};
+          if (gdi_drag_hwnd && IsWindow(gdi_drag_hwnd) && GetWindowRect(gdi_drag_hwnd, &live) &&
+              live.right > live.left && live.bottom > live.top) {
+            wx = live.left;
+            wy = live.top;
+            gdi_drag_win_w = live.right - live.left;
+            gdi_drag_win_h = live.bottom - live.top;
+            gdi_drag_anchor_mx = mx;
+            gdi_drag_anchor_my = my;
+          }
+          gdi_tick_win_x = wx;
+          gdi_tick_win_y = wy;
+          gdi_tick_win_valid = true;
+          // Union of the window at the last SENT position and the current rect,
+          // plus a motion lookahead: the background exposed at the old position
+          // must be captured, otherwise ghost trails of the dragged window stay
+          // on the viewer (capture_region only writes pixels inside the region).
+          constexpr int kRegionMargin = 64;
+          const int look_x = pdx > 0 ? 2 * pdx : -2 * pdx;
+          const int look_y = pdy > 0 ? 2 * pdy : -2 * pdy;
+          int rx0 = (wx < gdi_drag_prev_win_x ? wx : gdi_drag_prev_win_x) - kRegionMargin;
+          int ry0 = (wy < gdi_drag_prev_win_y ? wy : gdi_drag_prev_win_y) - kRegionMargin;
+          int rx1 = (wx + gdi_drag_win_w > gdi_drag_prev_win_x + gdi_drag_win_w
+                         ? wx + gdi_drag_win_w
+                         : gdi_drag_prev_win_x + gdi_drag_win_w) +
+                    kRegionMargin;
+          int ry1 = (wy + gdi_drag_win_h > gdi_drag_prev_win_y + gdi_drag_win_h
+                         ? wy + gdi_drag_win_h
+                         : gdi_drag_prev_win_y + gdi_drag_win_h) +
+                    kRegionMargin;
+          if (pdx < 0) {
+            rx0 -= look_x;
+          } else {
+            rx1 += look_x;
+          }
+          if (pdy < 0) {
+            ry0 -= look_y;
+          } else {
+            ry1 += look_y;
+          }
+          greg_x = rx0;
+          greg_y = ry0;
+          greg_w = rx1 - rx0;
+          greg_h = ry1 - ry0;
+          if (greg_x < 0) {
+            greg_w += greg_x;
+            greg_x = 0;
+          }
+          if (greg_y < 0) {
+            greg_h += greg_y;
+            greg_y = 0;
+          }
+          if (greg_x + greg_w > desk_w) {
+            greg_w = desk_w - greg_x;
+          }
+          if (greg_y + greg_h > desk_h) {
+            greg_h = desk_h - greg_y;
+          }
+          if (greg_w > 0 && greg_h > 0 &&
+              cap->capture_gdi_region(&frame, greg_x, greg_y, greg_w, greg_h)) {
+            gdi_region = true;
+          } else {
+            if (!cap->capture(&frame, &w, &h, &mirror_dirties, &mirror_moves, false)) {
+              Sleep(5);
+              continue;
+            }
+            desk_w = w;
+            desk_h = h;
+          }
+        }
+      } else {
+        if (!cap->capture(&frame, &w, &h, &mirror_dirties, &mirror_moves, force_validate)) {
+          Sleep(5);
+          continue;
+        }
+        desk_w = w;
+        desk_h = h;
+      }
+      if (gdi_region) {
+        w = desk_w;
+        h = desk_h;
       }
       const DWORD cap_ms = GetTickCount() - cap0;
+      qpc_cap_ms += qpc_ms() - qpc_cap0;
+
+      // DXGI -> GDI fallback (VMware DDA black-frame quirk): the client may still
+      // hold the black keyframe. Force a real full-desk keyframe so the viewer's
+      // desktop matches the host instead of showing only incremental rects.
+      if (cap_was_dxgi && !cap->using_dxgi()) {
+        cap_was_dxgi = false;
+        g_any_need_keyframe.store(true);
+        force_kf_pending = true;
+        have_prev = false;
+        prev.clear();
+        gdi_drag_anchor_valid = false;
+        gdi_drag_full_pending = true;
+        was_drag_mode = false;
+        gdi_drag_full_countdown = 0;
+        logf("capture backend dxgi->gdi: forcing full keyframe");
+      } else if (!cap_was_dxgi && cap->using_dxgi()) {
+        cap_was_dxgi = true;
+      }
 
       // Always pump capture (esp. DXGI) even when outq is full — skipping AcquireNextFrame
       // coalesces MoveRects into a full DirtyRect (lab: copy=0 + 1MB zlib).
       if (outq_full) {
-        const size_t frame_bytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 4u;
-        if (frame.size() == frame_bytes && !frame.empty()) {
-          if (!have_prev || prev.size() != frame_bytes) {
-            prev.assign(frame_bytes, 0);
-          }
-          prev = frame;
-          have_prev = true;
-        }
+        // Pump capture while the out queue is full, but do NOT advance prev: the
+        // next sent batch must diff against the last SENT frame. Advancing prev
+        // here meant window-move regions between sent frames were never covered,
+        // leaving ghost trails on the viewer during drag.
         Sleep(1);
         continue;
-      }
-
-      if (!session_recorder_active() && session_recorder_enabled() && w > 0 && h > 0) {
-        SessionRecorderInfo ri{};
-        if (session_recorder_begin(w, h, &ri)) {
-          logf("session-record: started version=%s %ux%u->%ux%u %s", ROAD_DESK_VERSION_STRING,
-               static_cast<unsigned>(w), static_cast<unsigned>(h),
-               static_cast<unsigned>(w & ~1), static_cast<unsigned>(h & ~1), ri.video_path.c_str());
-          logged_rec_fail = false;
-        } else if (!logged_rec_fail) {
-          logged_rec_fail = true;
-          logf("session-record: unavailable this session (MF/AVI) version=%s",
-               ROAD_DESK_VERSION_STRING);
-        }
-      }
-      if (session_recorder_active() && !frame.empty()) {
-        // Win7: skip AVI encode while dragging — competes with video JPEG on a weak VM.
-        if (!(!modern_lossy && drag_mode)) {
-          session_recorder_push_bgra(frame.data(), w, h);
-        }
       }
 
       const size_t frame_bytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 4u;
@@ -1233,14 +1531,118 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
         }
       }
 
-      if (cap->provides_dirties() && !force_validate && !force_full) {
+      // Drag: always full-frame diff. DXGI (VMware DDA) and Mirror report
+      // incomplete dirty sets while a window is moving (one 256px strip / partial
+      // rects), so relying on them leaves ghost trails of the old window position.
+      if (cap->provides_dirties() && !force_validate && !force_full && !drag_mode) {
         for (const CaptureDirty& d : mirror_dirties) {
           dirties.push_back(DirtyRect{d.x, d.y, d.w, d.h});
+        }
+      } else if (gdi_region) {
+        collect_dirty_rects_region(frame.data(), prev.data(), w, greg_x, greg_y, greg_w, greg_h,
+                                   &dirties);
+        // Escape detection: changes near the region border mean the window (or
+        // another window) may have moved outside it — force a full capture next
+        // tick so nothing goes stale.
+        constexpr int kEscapeMargin = 24;
+        for (const DirtyRect& r : dirties) {
+          if (r.x - greg_x < kEscapeMargin || greg_x + greg_w - (r.x + r.w) < kEscapeMargin ||
+              r.y - greg_y < kEscapeMargin || greg_y + greg_h - (r.y + r.h) < kEscapeMargin) {
+            gdi_drag_full_pending = true;
+            break;
+          }
         }
       } else {
         collect_dirty_rects(frame.data(), have_prev && !force_full ? prev.data() : nullptr, w, h,
                             force_full, &dirties);
       }
+
+      // GDI drag: on full ticks, anchor the dragged window from the *real* window
+      // under the pointer (WindowFromPoint + GetWindowRect). The dirty AABB on the
+      // LMB-down tick can cover only part of the window (e.g. just the title bar),
+      // which leaves the rest outside the capture region and shows ghost trails.
+      // Fall back to the AABB only when the window lookup is not plausible.
+      if (use_region && !gdi_region) {
+        const int mx = g_ptr_x.load();
+        const int my = g_ptr_y.load();
+        bool anchored = false;
+        POINT pt{};
+        pt.x = mx;
+        pt.y = my;
+        if (HWND hwnd = WindowFromPoint(pt)) {
+          HWND root = GetAncestor(hwnd, GA_ROOT);
+          RECT wr{};
+          if (root && IsWindow(root) && GetWindowRect(root, &wr)) {
+            const int rw = wr.right - wr.left;
+            const int rh = wr.bottom - wr.top;
+            // Sanity: a plausible draggable window that contains the pointer and is
+            // not (nearly) the whole desktop.
+            if (rw > 0 && rh > 0 && mx >= wr.left && mx < wr.right && my >= wr.top &&
+                my < wr.bottom &&
+                static_cast<int64_t>(rw) * rh * 2 < static_cast<int64_t>(desk_w) * desk_h) {
+              gdi_drag_win_x = wr.left;
+              gdi_drag_win_y = wr.top;
+              gdi_drag_win_w = rw;
+              gdi_drag_win_h = rh;
+              gdi_drag_anchor_mx = mx;
+              gdi_drag_anchor_my = my;
+              gdi_drag_anchor_valid = true;
+              gdi_tick_win_x = wr.left;
+              gdi_tick_win_y = wr.top;
+              gdi_tick_win_valid = true;
+              gdi_drag_hwnd = root;
+              gdi_drag_full_countdown = 24;
+              anchored = true;
+              logf("gdi drag anchor: window %dx%d@%d,%d ptr=%d,%d", rw, rh, wr.left, wr.top,
+                   mx, my);
+            }
+          }
+        }
+        if (!anchored) {
+          int x0 = w;
+          int y0 = h;
+          int x1 = 0;
+          int y1 = 0;
+          for (const DirtyRect& r : dirties) {
+            if (r.x < x0) {
+              x0 = r.x;
+            }
+            if (r.y < y0) {
+              y0 = r.y;
+            }
+            if (r.x + r.w > x1) {
+              x1 = r.x + r.w;
+            }
+            if (r.y + r.h > y1) {
+              y1 = r.y + r.h;
+            }
+          }
+          // Sanity: only anchor when the diff is a small window, not a full-screen
+          // sweep (e.g. restore-from-maximized animation).
+          const bool sane =
+              x1 > x0 && y1 > y0 &&
+              static_cast<int64_t>(x1 - x0) * (y1 - y0) * 2 < static_cast<int64_t>(w) * h;
+          if (sane) {
+            gdi_drag_win_x = x0;
+            gdi_drag_win_y = y0;
+            gdi_drag_win_w = x1 - x0;
+            gdi_drag_win_h = y1 - y0;
+            gdi_drag_anchor_mx = mx;
+            gdi_drag_anchor_my = my;
+            gdi_drag_anchor_valid = true;
+            gdi_tick_win_x = x0;
+            gdi_tick_win_y = y0;
+            gdi_tick_win_valid = true;
+            gdi_drag_hwnd = nullptr;
+            gdi_drag_full_countdown = 24;
+            anchored = true;
+            logf("gdi drag anchor fallback(aabb): %dx%d@%d,%d", x1 - x0, y1 - y0, x0, y0);
+          }
+        }
+      } else if (use_region && gdi_region && --gdi_drag_full_countdown <= 0) {
+        gdi_drag_full_pending = true;
+      }
+      was_drag_mode = drag_mode;
 
       // Win7/Mirror: no pixel CopyRect (flooded IO or capped to useless). Dirties only.
 
@@ -1249,6 +1651,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
       }
 
       if (dirties.empty() && copies.empty()) {
+        ++enc_empty;
         continue;
       }
 
@@ -1357,6 +1760,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
         continue;
       }
 
+      bool shipped = false;
       {
         std::lock_guard<std::mutex> lock(shared.outq_mu);
         const size_t max_b = (g_ptr_buttons.load() & 1) ? 1u : kMaxBatches;
@@ -1367,13 +1771,22 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
         }
         if (!tick_batch.msgs.empty()) {
           shared.outq.push_back(std::move(tick_batch));
+          shipped = true;
         }
+      }
+      if (shipped && use_region && gdi_tick_win_valid) {
+        // The shipped diff is against the last SENT frame, so the region anchor
+        // must track the last sent window position; dropped ticks (outq full)
+        // must not advance it or the next union misses the window's old spot.
+        gdi_drag_prev_win_x = gdi_tick_win_x;
+        gdi_drag_prev_win_y = gdi_tick_win_y;
       }
 
       g_video_ptr_x.store(g_ptr_x.load());
       g_video_ptr_y.store(g_ptr_y.load());
       g_video_ptr_have.store(true);
-      if (full_keyframe || any_kf) {
+      force_kf_pending = false;
+      if (full_keyframe) {
         g_any_need_keyframe.store(false);
         // Per-client flags were never cleared (lab Win7: force_full every tick → 220KB JPEG storm).
         g_clear_client_keyframes.store(true);
@@ -1389,6 +1802,8 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
       last_send_ms = GetTickCount();
       ++ticks_sent;
 
+      ++enc_iters;
+      qpc_loop_ms += qpc_ms() - qpc_iter0;
       if (ticks_sent == 1 || last_send_ms - last_stat_ms >= kStatIntervalMs) {
         last_stat_ms = last_send_ms;
         size_t outq_n = 0;
@@ -1397,17 +1812,30 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
           outq_n = shared.outq.size();
         }
         const uint32_t di = shared.dropped_interval.exchange(0);
-        logf("tick=%u batch=%u(from %u) copy=%u moves_in=%u dirty_in=%u wire=%u zlib=%u jpeg=%u "
-             "h264=%u cap_ms=%u outq=%u drop=%u drop_total=%u",
+        logf("tick=%u batch=%u(from %u) kf=%u copy=%u moves_in=%u dirty_in=%u wire=%u zlib=%u jpeg=%u "
+             "h264=%u cap_ms=%u qcap=%.1f qloop=%.1f iters=%u empty=%u enc_ms=%u raw=%u rect=%ux%u@%u,%u greg=%s outq=%u drop=%u drop_total=%u",
              ticks_sent, static_cast<unsigned>(dirties.size() + copies.size()), before_collapse,
-             copy_this, moves_in, dirties_in, static_cast<unsigned>(wire_this), zlib_this,
-             jpeg_this, h264_this, cap_ms, static_cast<unsigned>(outq_n), di,
+             full_keyframe ? 1u : 0u, copy_this, moves_in, dirties_in,
+             static_cast<unsigned>(wire_this), zlib_this,
+             jpeg_this, h264_this, cap_ms, qpc_cap_ms, qpc_loop_ms, enc_iters, enc_empty,
+             enc_this, static_cast<unsigned>(raw_this),
+             dirties.empty() ? 0u : static_cast<unsigned>(dirties[0].w),
+             dirties.empty() ? 0u : static_cast<unsigned>(dirties[0].h),
+             dirties.empty() ? 0 : dirties[0].x, dirties.empty() ? 0 : dirties[0].y,
+             (gdi_region ? (std::to_string(greg_w) + "x" + std::to_string(greg_h) + "@" +
+                            std::to_string(greg_x) + "," + std::to_string(greg_y))
+                         : std::string("full"))
+                 .c_str(),
+             static_cast<unsigned>(outq_n), di,
              shared.dropped_ticks.load());
+        qpc_cap_ms = 0.0;
+        qpc_loop_ms = 0.0;
+        enc_iters = 0;
+        enc_empty = 0;
       }
     }
 
     if (cap_begun) {
-      session_recorder_reset();
       if (cap) {
         cap->end();
       }
@@ -1435,11 +1863,36 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
   logf("shared-control serve (max_clients=%u modern_lossy=%d inject+video-out+encode)",
        static_cast<unsigned>(kMaxClients), modern_lossy ? 1 : 0);
 
+  std::thread watchdog_thr([&] {
+    uint64_t last_e = 0;
+    uint64_t last_v = 0;
+    uint64_t last_m = 0;
+    while (!(stop_requested && stop_requested->load())) {
+      Sleep(2000);
+      const uint64_t e = shared.enc_iters_total.load();
+      const uint64_t v = shared.vout_iters_total.load();
+      const uint64_t m = shared.main_iters_total.load();
+      logf("wd: enc=%llu(+%llu) vout=%llu(+%llu) main=%llu(+%llu) outq=%llu drop=%u",
+           static_cast<unsigned long long>(e),
+           static_cast<unsigned long long>(e - last_e),
+           static_cast<unsigned long long>(v),
+           static_cast<unsigned long long>(v - last_v),
+           static_cast<unsigned long long>(m),
+           static_cast<unsigned long long>(m - last_m),
+           static_cast<unsigned long long>(shared.outq.size()),
+           shared.dropped_ticks.load());
+      last_e = e;
+      last_v = v;
+      last_m = m;
+    }
+  });
+
   DWORD last_cursor_ms = 0;
   DWORD last_alive_ms = GetTickCount();
   bool logged_io_alive = false;
 
   while (!(stop_requested && stop_requested->load()) && listen_sock != INVALID_SOCKET) {
+    shared.main_iters_total.fetch_add(1);
     const bool dragging = (g_ptr_buttons.load() & 1) != 0;
 
     g_inject_active.store(true);
@@ -1450,6 +1903,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
         fanout_host_clipboard(&shared.clients, &shared_xfer_id, psk, mutex);
       }
     }
+    flush_pending_input();
     g_inject_active.store(false);
 
     unsigned authed = 0;
@@ -1478,7 +1932,9 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
     }
     timeval tv{};
     tv.tv_sec = 0;
-    tv.tv_usec = (authed == 0) ? 50000 : (dragging ? 0 : 2000);
+    // Dragging: 1ms poll keeps input latency low without letting the inject loop
+    // busy-spin (select 0) monopolize a weak VM core and starve video-out.
+    tv.tv_usec = (authed == 0) ? 50000 : (dragging ? 1000 : 2000);
     const int sel = select(0, &rfds, nullptr, nullptr, &tv);
     if (sel < 0) {
       const int err = WSAGetLastError();
@@ -1519,6 +1975,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
       std::lock_guard<std::mutex> lock(shared.io_mu);
       drain_all_clients(&shared.clients, psk, mutex);
     }
+    flush_pending_input();
     g_inject_active.store(false);
 
     const DWORD loop_now = GetTickCount();
@@ -1563,6 +2020,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
         g_any_need_keyframe.store(true);
       }
     }
+    flush_pending_input();
     g_inject_active.store(false);
 
     if (!logged_io_alive && GetTickCount() - last_alive_ms >= 1000) {
@@ -1579,6 +2037,9 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
   }
   if (video_out_thr.joinable()) {
     video_out_thr.join();
+  }
+  if (watchdog_thr.joinable()) {
+    watchdog_thr.join();
   }
 
   {

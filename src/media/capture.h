@@ -33,6 +33,11 @@ class DesktopCapture {
 
   bool capture(std::vector<uint8_t>* bgra_top_down, int* width, int* height);
 
+  // BitBlt only (x,y,rw,rh) of the primary desktop into an existing full-frame
+  // buffer (pixels outside the rect are left untouched). Used by the GDI drag
+  // path so a moving window is captured without a full-screen blit per tick.
+  bool capture_region(std::vector<uint8_t>* bgra_top_down, int x, int y, int rw, int rh);
+
  private:
   void release();
   bool ensure(int w, int h);

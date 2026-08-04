@@ -154,6 +154,20 @@ int main(int argc, char** argv) {
     }
   }
 
+  {
+    // Session context matters for Desktop Duplication: a service/session-0 agent
+    // duplicates that session's (black) desktop even when the console shows a UI.
+    DWORD session_id = 0;
+    ProcessIdToSessionId(GetCurrentProcessId(), &session_id);
+    const DWORD console_sid = WTSGetActiveConsoleSessionId();
+    char line[160];
+    std::snprintf(line, sizeof(line), "session pid=%lu active_console=%lu (%s)",
+                  static_cast<unsigned long>(session_id),
+                  static_cast<unsigned long>(console_sid),
+                  session_id == console_sid ? "console" : "NOT-console");
+    road_desk::agent::log_line(line);
+  }
+
   bool no_gateway = false;
   std::vector<char*> positional;
   for (int i = 1; i < argc; ++i) {

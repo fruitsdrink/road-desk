@@ -45,6 +45,11 @@ class SessionCapture {
                std::vector<CaptureDirty>* dirties, std::vector<CaptureMove>* moves,
                bool force_full_pixels = false);
 
+  // GDI-only: BitBlt a sub-rect into an existing full-frame buffer. Regions
+  // outside stay stale; the caller diffs only the rect. Mirror/DXGI return
+  // false (the loop should keep using full capture for those backends).
+  bool capture_gdi_region(std::vector<uint8_t>* bgra_full, int x, int y, int rw, int rh);
+
  private:
   bool begin_mirror();
   void end_mirror();
@@ -60,6 +65,9 @@ class SessionCapture {
   bool using_dxgi_ = false;
   bool begun_ = false;
   bool have_frame_ = false;
+  // Consecutive all-black DXGI frames; detects VMware SVGA DDA black-frame quirk
+  // and drops to GDI (which shows the real console desktop).
+  unsigned dxgi_black_streak_ = 0;
   char mirror_dev_[128] = {};
   void* mirror_hdc_ = nullptr;  // HDC
   void* screen_dc_ = nullptr;

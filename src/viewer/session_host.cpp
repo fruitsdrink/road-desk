@@ -130,16 +130,30 @@ LRESULT CALLBACK SessionWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
   }
 
   switch (msg) {
-    case WM_MEDIA_RESIZE:
-      // Embedded: do not resize console; floating: optional title update only.
+    case WM_MEDIA_RESIZE: {
+      // Show the version the connected agent reported in the handshake so a
+      // stale gateway-cached version can not be mistaken for the live agent.
+      const std::string agent_ver = self->client_.agent_version();
+      std::wstring ver_suffix;
+      if (!agent_ver.empty()) {
+        wchar_t wv[64] = L"";
+        MultiByteToWideChar(CP_UTF8, 0, agent_ver.c_str(), -1, wv, 64);
+        ver_suffix = L" [agent ";
+        ver_suffix += wv;
+        ver_suffix += L"]";
+      }
       if (self->floating_) {
-        wchar_t title[160];
-        _snwprintf_s(title, _TRUNCATE, L"%s (%dx%d)", self->title_.c_str(),
-                     static_cast<int>(wparam), static_cast<int>(lparam));
+        wchar_t title[192];
+        _snwprintf_s(title, _TRUNCATE, L"%s (%dx%d)%s", self->title_.c_str(),
+                     static_cast<int>(wparam), static_cast<int>(lparam),
+                     ver_suffix.c_str());
         SetWindowTextW(hwnd, title);
       }
+      // Docked tab: ask the console to refresh labels with the agent version.
+      PostMessageW(GetAncestor(hwnd, GA_ROOT), WM_SESSION_META, 0, 0);
       InvalidateRect(hwnd, nullptr, FALSE);
       return 0;
+    }
     case WM_ERASEBKGND:
       return 1;
     case WM_SIZE:
@@ -478,7 +492,10 @@ void SessionHost::paint() {
     bmi.bmiHeader.biPlanes = 1;
     bmi.bmiHeader.biBitCount = 32;
     bmi.bmiHeader.biCompression = BI_RGB;
-    SetStretchBltMode(back_dc_, HALFTONE);
+    // Drag: COLORONCOLOR (fast nearest) keeps cursor/window in sync while HALFTONE
+    // would cost extra ms/frame in software; HALFTONE stays for crisp stills.
+    const bool dragging = (last_ptr_mask_ & 1) != 0;
+    SetStretchBltMode(back_dc_, dragging ? COLORONCOLOR : HALFTONE);
     SetBrushOrgEx(back_dc_, 0, 0, nullptr);
     StretchDIBits(back_dc_, dest.left, dest.top, dest.right - dest.left, dest.bottom - dest.top,
                   0, 0, w, h, bgra.data(), &bmi, DIB_RGB_COLORS, SRCCOPY);

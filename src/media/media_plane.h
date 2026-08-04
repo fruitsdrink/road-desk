@@ -79,6 +79,8 @@ class MediaClient {
   bool start(const MediaClientConfig& config);
   void stop();
   bool connected() const;
+  // Agent version string received in the auth-ok handshake (empty until connected).
+  std::string agent_version() const;
   // Update paint/resize/close notify target (e.g. after reparenting the session HWND).
   void set_notify_hwnd(HWND hwnd);
 

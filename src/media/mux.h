@@ -31,7 +31,7 @@ bool mux_read_idle(road_desk::media::tls::TlsSession* tls, uint8_t* channel_out,
 
 bool control_send_auth(road_desk::media::tls::TlsSession* tls, const std::string& password);
 bool control_send_auth_ok(road_desk::media::tls::TlsSession* tls, uint16_t width,
-                          uint16_t height);
+                          uint16_t height, const std::string& version = std::string());
 bool control_send_auth_fail(road_desk::media::tls::TlsSession* tls, const std::string& reason);
 
 // Parse Auth payload (after type byte already consumed or include type).

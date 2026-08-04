@@ -1,5 +1,6 @@
 #include "mirror_capture.h"
 
+#include "media_log.h"
 #include "mirror_client.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -8,6 +9,50 @@
 #include <windows.h>
 
 #include <cstring>
+
+namespace {
+// Sample-based mostly-black test (<= ~64k sampled pixels, cheap per frame).
+bool frame_mostly_black(const std::vector<uint8_t>& bgra, int w, int h) {
+  const size_t n = static_cast<size_t>(w) * static_cast<size_t>(h);
+  if (n == 0 || bgra.size() < n * 4u) {
+    return false;
+  }
+  const size_t stride = (n > 65536u) ? (n / 65536u) : 1u;
+  size_t nonblack = 0;
+  size_t sampled = 0;
+  for (size_t i = 0; i < n; i += stride) {
+    const uint8_t* p = bgra.data() + i * 4u;
+    if (p[0] > 16 || p[1] > 16 || p[2] > 16) {
+      ++nonblack;
+    }
+    ++sampled;
+  }
+  return sampled > 0 && (nonblack * 200u) < sampled;
+}
+
+void dump_bgra_debug(const char* name, const std::vector<uint8_t>& bgra, int w, int h) {
+  if (w <= 0 || h <= 0 || bgra.size() < static_cast<size_t>(w) * h * 4u) {
+    return;
+  }
+  char dir[MAX_PATH] = {};
+  GetModuleFileNameA(nullptr, dir, MAX_PATH);
+  char* slash = std::strrchr(dir, '\\');
+  if (slash) {
+    *slash = '\0';
+  }
+  std::snprintf(dir + std::strlen(dir), sizeof(dir) - std::strlen(dir), "\\debug");
+  CreateDirectoryA(dir, nullptr);
+  char path[MAX_PATH];
+  std::snprintf(path, sizeof(path), "%s\\%s_%dx%d.bgra", dir, name, w, h);
+  HANDLE f = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS,
+                         FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (f != INVALID_HANDLE_VALUE) {
+    DWORD wrote = 0;
+    WriteFile(f, bgra.data(), static_cast<DWORD>(bgra.size()), &wrote, nullptr);
+    CloseHandle(f);
+  }
+}
+}  // namespace
 
 namespace road_desk::replace {
 
@@ -183,6 +228,33 @@ bool SessionCapture::capture(std::vector<uint8_t>* bgra, int* width, int* height
   }
   if (using_dxgi_) {
     if (dxgi_.capture(bgra, width, height, dirties, moves, force_full_pixels)) {
+      if (!force_full_pixels) {
+        if (frame_mostly_black(*bgra, *width, *height)) {
+          ++dxgi_black_streak_;
+        } else {
+          dxgi_black_streak_ = 0;
+        }
+        // VMware SVGA DDA quirk: DuplicateOutput can silently deliver all-black
+        // frames while the console shows a live desktop. After a sustained black
+        // streak, probe GDI once — if GDI disagrees, drop DXGI for the session
+        // and keep serving the real desktop via GDI.
+        if (dxgi_black_streak_ >= 30 && (dxgi_black_streak_ % 30) == 0) {
+          std::vector<uint8_t> probe;
+          int pw = 0;
+          int ph = 0;
+          if (gdi_.capture(&probe, &pw, &ph) && !frame_mostly_black(probe, pw, ph)) {
+            road_desk::media::media_logf("media-host",
+                        "dxgi black streak=%u -> gdi fallback (DDA black-frame quirk)",
+                        dxgi_black_streak_);
+            dump_bgra_debug("gdi_probe", probe, pw, ph);
+            dxgi_.end();
+            using_dxgi_ = false;
+            const bool gok = gdi_.capture(bgra, width, height);
+            dump_bgra_debug("gdi_after_fallback", *bgra, *width, *height);
+            return gok;
+          }
+        }
+      }
       return true;
     }
     // Mode change / access lost and reinit failed — soft-fall to GDI for the session.
@@ -190,6 +262,14 @@ bool SessionCapture::capture(std::vector<uint8_t>* bgra, int* width, int* height
     using_dxgi_ = false;
   }
   return gdi_.capture(bgra, width, height);
+}
+
+bool SessionCapture::capture_gdi_region(std::vector<uint8_t>* bgra_full, int x, int y, int rw,
+                                            int rh) {
+  if (using_mirror_ || using_dxgi_) {
+    return false;
+  }
+  return gdi_.capture_region(bgra_full, x, y, rw, rh);
 }
 
 bool SessionCapture::capture_mirror(std::vector<uint8_t>* bgra, int* width, int* height,

@@ -75,6 +75,50 @@ bool DesktopCapture::ensure(int w, int h) {
   return true;
 }
 
+bool DesktopCapture::capture_region(std::vector<uint8_t>* bgra_top_down, int x, int y, int rw,
+                                         int rh) {
+  if (!bgra_top_down) {
+    return false;
+  }
+  const int w = GetSystemMetrics(SM_CXSCREEN);
+  const int h = GetSystemMetrics(SM_CYSCREEN);
+  if (!ensure(w, h)) {
+    return false;
+  }
+  if (x < 0) {
+    x = 0;
+  }
+  if (y < 0) {
+    y = 0;
+  }
+  if (x + rw > w) {
+    rw = w - x;
+  }
+  if (y + rh > h) {
+    rh = h - y;
+  }
+  if (rw <= 0 || rh <= 0) {
+    return false;
+  }
+  // SRCCOPY only — keep OS cursor out of framebuffer (Viewer uses soft cursor).
+  if (!BitBlt(static_cast<HDC>(mem_dc_), x, y, rw, rh, static_cast<HDC>(screen_dc_), x, y,
+              SRCCOPY)) {
+    return false;
+  }
+  const size_t bytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 4u;
+  if (bgra_top_down->size() < bytes) {
+    bgra_top_down->resize(bytes);
+  }
+  const uint8_t* src = static_cast<const uint8_t*>(dib_bits_);
+  uint8_t* dst = bgra_top_down->data();
+  for (int row = 0; row < rh; ++row) {
+    std::memcpy(dst + (static_cast<size_t>(y + row) * w + x) * 4u,
+                src + (static_cast<size_t>(y + row) * w + x) * 4u,
+                static_cast<size_t>(rw) * 4u);
+  }
+  return true;
+}
+
 bool DesktopCapture::capture(std::vector<uint8_t>* bgra_top_down, int* width, int* height) {
   if (!bgra_top_down || !width || !height) {
     return false;

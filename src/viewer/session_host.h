@@ -20,6 +20,8 @@ namespace road_desk::viewer {
 constexpr UINT WM_MEDIA_RESIZE = WM_APP + 1;
 // Posted to owner when session HWND is closing (disconnect / user close).
 constexpr UINT WM_SESSION_CLOSED = WM_APP + 2;
+// Posted to the console when session metadata (agent version) is available.
+constexpr UINT WM_SESSION_META = WM_APP + 3;
 
 class SessionHost {
  public:
@@ -40,6 +42,8 @@ class SessionHost {
   void close();
   void clear_closed_handler() { on_closed_ = nullptr; }
   bool connected() const;
+  // Version reported by the connected host agent (empty until connected).
+  std::string agent_version() const { return client_.agent_version(); }
   HWND hwnd() const { return hwnd_; }
   bool floating() const { return floating_; }
   const std::wstring& title() const { return title_; }

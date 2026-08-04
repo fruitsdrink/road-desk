@@ -82,7 +82,7 @@ bool mux_write_yield(road_desk::media::tls::TlsSession* tls, uint8_t channel,
   auto* p = static_cast<const uint8_t*>(payload);
   uint32_t sent = 0;
   // Small chunks so inject can drain between TLS records (cursor/window lag).
-  constexpr uint32_t kYieldEvery = 4u * 1024u;
+  constexpr uint32_t kYieldEvery = 8u * 1024u;
   while (sent < len) {
     if (yield && sent > 0) {
       if (!yield(yield_ctx)) {
@@ -182,12 +182,23 @@ bool control_send_auth(road_desk::media::tls::TlsSession* tls, const std::string
 }
 
 bool control_send_auth_ok(road_desk::media::tls::TlsSession* tls, uint16_t width,
-                          uint16_t height) {
-  uint8_t body[5];
-  body[0] = kCtrlAuthOk;
-  write_u16_le(body + 1, width);
-  write_u16_le(body + 3, height);
-  return mux_write(tls, kChannelControl, body, 5);
+                          uint16_t height, const std::string& version) {
+  std::vector<uint8_t> body;
+  body.reserve(5 + 2 + version.size());
+  body.push_back(kCtrlAuthOk);
+  uint8_t hdr[4];
+  write_u16_le(hdr, width);
+  write_u16_le(hdr + 2, height);
+  body.insert(body.end(), hdr, hdr + 4);
+  const uint16_t vlen =
+      static_cast<uint16_t>(version.size() > 1024 ? 1024 : version.size());
+  uint8_t vb[2];
+  write_u16_le(vb, vlen);
+  body.insert(body.end(), vb, vb + 2);
+  if (vlen > 0) {
+    body.insert(body.end(), version.begin(), version.begin() + vlen);
+  }
+  return mux_write(tls, kChannelControl, body.data(), static_cast<uint32_t>(body.size()));
 }
 
 bool control_send_auth_fail(road_desk::media::tls::TlsSession* tls, const std::string& reason) {
