@@ -1,6 +1,7 @@
 add_executable(viewer WIN32
   main.cpp
   connect_config.cpp
+  gateway_config.cpp
   demo_book.cpp
   address_book.cpp
   session_host.cpp
@@ -18,6 +19,7 @@ target_link_libraries(viewer PRIVATE
   road_desk_session
   comctl32
   winhttp
+  comdlg32
   shell32
 )
 

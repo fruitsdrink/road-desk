@@ -10,11 +10,9 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <shlobj.h>
 #include <winhttp.h>
 
 #pragma comment(lib, "winhttp.lib")
-#pragma comment(lib, "shell32.lib")
 
 namespace road_desk::viewer {
 namespace {
@@ -32,17 +30,6 @@ std::wstring utf8_to_wide(const std::string& s) {
     MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), n);
   }
   return w;
-}
-
-std::string env_str(const char* name) {
-  char* env = nullptr;
-  size_t len = 0;
-  if (_dupenv_s(&env, &len, name) != 0 || !env) {
-    return {};
-  }
-  std::string s(env);
-  free(env);
-  return s;
 }
 
 bool parse_url(const std::string& url, std::wstring* host, INTERNET_PORT* port, bool* https,
@@ -370,54 +357,6 @@ void load_from_demo() {
 }
 
 }  // namespace
-
-DirectoryConfig load_directory_config() {
-  DirectoryConfig c;
-  c.gateway_url = env_str("ROAD_DESK_GATEWAY_URL");
-  c.directory_key = env_str("ROAD_DESK_VIEWER_KEY");
-  if (c.directory_key.empty()) {
-    c.directory_key = env_str("ROAD_DESK_DIRECTORY_KEY");  // legacy
-  }
-  // Optional file: %ProgramData%\RoadDesk\viewer.json
-  if (c.gateway_url.empty() || c.directory_key.empty()) {
-    char prog[MAX_PATH] = {};
-    if (SUCCEEDED(SHGetFolderPathA(nullptr, CSIDL_COMMON_APPDATA, nullptr, SHGFP_TYPE_CURRENT, prog))) {
-      std::string path = std::string(prog) + "\\RoadDesk\\viewer.json";
-      FILE* f = nullptr;
-      if (fopen_s(&f, path.c_str(), "rb") == 0 && f) {
-        std::string json;
-        char buf[512];
-        while (size_t n = fread(buf, 1, sizeof(buf), f)) {
-          json.append(buf, n);
-        }
-        fclose(f);
-        auto get = [&](const char* key) {
-          const std::string needle = std::string("\"") + key + "\"";
-          size_t p = json.find(needle);
-          if (p == std::string::npos) {
-            return std::string();
-          }
-          p = json.find('"', json.find(':', p));
-          size_t end = json.find('"', p + 1);
-          if (p == std::string::npos || end == std::string::npos) {
-            return std::string();
-          }
-          return json.substr(p + 1, end - p - 1);
-        };
-        if (c.gateway_url.empty()) {
-          c.gateway_url = get("gatewayUrl");
-        }
-        if (c.directory_key.empty()) {
-          c.directory_key = get("viewerKey");
-          if (c.directory_key.empty()) {
-            c.directory_key = get("directoryKey");  // legacy
-          }
-        }
-      }
-    }
-  }
-  return c;
-}
 
 bool address_book_load(AddressBookSource source, const DirectoryConfig& dir, std::string* err) {
   if (source == AddressBookSource::kDemo) {

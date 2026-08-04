@@ -1,13 +1,4 @@
-const TOKEN_KEY = 'road_desk_admin_token'
-
-export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY)
-}
-
-export function setToken(token: string | null) {
-  if (token) localStorage.setItem(TOKEN_KEY, token)
-  else localStorage.removeItem(TOKEN_KEY)
-}
+import { getToken, logoutToLogin } from './authStore'
 
 export class ApiError extends Error {
   status: number
@@ -15,6 +6,10 @@ export class ApiError extends Error {
     super(message)
     this.status = status
   }
+}
+
+function handleUnauthorized(status: number) {
+  if (status === 401) logoutToLogin()
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -28,8 +23,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (res.status === 204) return undefined as T
   const text = await res.text()
   const data = text ? JSON.parse(text) : null
+  if (res.status === 401) {
+    // Login itself returns 401 for bad password — don't treat as expired session.
+    if (path !== '/v1/admin/login' && path !== '/v1/viewer/login') handleUnauthorized(401)
+    throw new ApiError(401, data?.error || '未授权')
+  }
   if (!res.ok) {
-    throw new ApiError(res.status, data?.error || res.statusText)
+    throw new ApiError(res.status, data?.error || res.statusText || '请求失败')
   }
   return data as T
 }
@@ -42,7 +42,7 @@ export type Group = {
   isSystem: boolean
 }
 
-export type Tag = { id: number; name: string }
+export type Tag = { id: number; name: string; agentCount: number }
 
 export type Agent = {
   agentId: string
@@ -59,9 +59,39 @@ export type Agent = {
   online: boolean
 }
 
+export type Department = {
+  id: number
+  name: string
+  sortOrder: number
+  isSystem: boolean
+  userCount: number
+  createdAt: string
+}
+
+export type UserRole = 'admin' | 'viewer'
+
+export type User = {
+  id: number
+  username: string
+  role: UserRole
+  departmentId: number
+  departmentName: string
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export type LoginResult = {
+  token: string
+  role: UserRole
+  username: string
+  departmentId: number
+  userId: number
+}
+
 export const api = {
   login: (username: string, password: string) =>
-    request<{ token: string }>('/v1/admin/login', {
+    request<LoginResult>('/v1/admin/login', {
       method: 'POST',
       body: JSON.stringify({ username, password }),
     }),
@@ -81,17 +111,52 @@ export const api = {
   patchAgent: (id: string, body: Partial<{ displayName: string; groupId: number; tagIds: number[] }>) =>
     request<Agent>(`/v1/admin/agents/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   deleteAgent: (id: string) => request<void>(`/v1/admin/agents/${id}`, { method: 'DELETE' }),
+  departments: () => request<Department[]>('/v1/admin/departments'),
+  createDepartment: (body: { name: string; sortOrder?: number }) =>
+    request<Department>('/v1/admin/departments', { method: 'POST', body: JSON.stringify(body) }),
+  patchDepartment: (id: number, body: Partial<{ name: string; sortOrder: number }>) =>
+    request<Department>(`/v1/admin/departments/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  deleteDepartment: (id: number) =>
+    request<void>(`/v1/admin/departments/${id}`, { method: 'DELETE' }),
+  users: () => request<User[]>('/v1/admin/users'),
+  createUser: (body: {
+    username: string
+    password: string
+    role: UserRole
+    departmentId: number
+    enabled?: boolean
+  }) => request<User>('/v1/admin/users', { method: 'POST', body: JSON.stringify(body) }),
+  patchUser: (
+    id: number,
+    body: Partial<{ password: string; role: UserRole; departmentId: number; enabled: boolean }>,
+  ) => request<User>(`/v1/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  deleteUser: (id: number) => request<void>(`/v1/admin/users/${id}`, { method: 'DELETE' }),
   downloadSecret: async (kind: 'agent-psk' | 'viewer-psk') => {
     const token = getToken()
     const res = await fetch(`/v1/admin/secrets/${kind}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
-    if (!res.ok) throw new ApiError(res.status, 'download failed')
+    if (res.status === 401) {
+      handleUnauthorized(401)
+      throw new ApiError(401, '未授权')
+    }
+    if (!res.ok) {
+      let msg = '下载失败'
+      try {
+        const data = await res.json()
+        if (data?.error) msg = data.error
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(res.status, msg)
+    }
     const blob = await res.blob()
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = kind === 'agent-psk' ? 'agent-control.psk' : 'viewer.psk'
+    document.body.appendChild(a)
     a.click()
-    URL.revokeObjectURL(a.href)
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000)
   },
 }

@@ -81,16 +81,22 @@ pnpm dev     # http://127.0.0.1:5173 ，API 代理到 :8743
 
 ## Viewer 配网关
 
-环境变量（或 `%ProgramData%\RoadDesk\viewer.json`）：
+启动控制台模式且未配置时，会弹出 **Viewer 登录** 对话框：
+
+1. **帐号登录**：管理端创建的 `viewer`（操作员）用户 → `POST /v1/viewer/login` 取 JWT 拉目录
+2. **或导入 Viewer PSK**：管理端下载的 `viewer.psk`（选文件或粘贴）
+
+成功后写入 `%ProgramData%\RoadDesk\viewer.json`（`gatewayUrl`、`viewerKey`、可选 `username`）。目录拉取失败会再次弹出登录框。
+
+也可不经弹窗，直接用环境变量：
 
 - `ROAD_DESK_GATEWAY_URL=http://<gateway>:8743`
-- `ROAD_DESK_VIEWER_KEY=<viewer.psk 内容>`
-
-`viewer.json` 字段：`gatewayUrl`、`viewerKey`。
+- `ROAD_DESK_VIEWER_KEY=<viewer.psk 或 JWT>`
+- `ROAD_DESK_VIEWER_USER=<用户名>`（可选）
 
 仍需媒体面：`ROAD_DESK_PSK`、TLS fingerprint 或 `ROAD_DESK_TLS_INSECURE=1`。
 
-未配置网关或加 `--demo-book` 时使用内置演示树。
+取消登录、未配置网关或加 `--demo-book` 时使用内置演示树。
 
 ## 验收清单（冒烟）
 
@@ -112,9 +118,17 @@ pwsh -File scripts/smoke.ps1
 
 ```
 POST /v1/agents/register|heartbeat     # Agent-PSK
-POST /v1/admin/login
+POST /v1/admin/login                   # 仅 role=admin
+POST /v1/viewer/login                  # 仅 role=viewer
 GET/POST/PATCH/DELETE /v1/admin/groups|tags|agents...
+GET/POST/PATCH/DELETE /v1/admin/departments|users...
 GET /v1/admin/secrets/agent-psk|viewer-psk
-GET /v1/directory/tree|agents          # Viewer-PSK
+GET /v1/directory/tree|agents          # Viewer-PSK 或 viewer/admin JWT
 GET /healthz
 ```
+
+## 部门与用户
+
+- 用户必须归属某个部门；系统预置部门「系统管理」。
+- 角色：`admin` 可登录管理端；`viewer` 仅可通过 `POST /v1/viewer/login` 获取 JWT 访问目录（Viewer 仍可用 `viewer.psk`）。
+- 管理端导航：编目 / 部门 / 用户。

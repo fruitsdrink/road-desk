@@ -113,18 +113,25 @@ func ensureJWTSecret(ctx context.Context, pool *pgxpool.Pool) error {
 
 func ensureAdmin(ctx context.Context, pool *pgxpool.Pool) error {
 	var n int
-	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM admins`).Scan(&n); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE role='admin'`).Scan(&n); err != nil {
 		return err
 	}
 	if n > 0 {
 		return nil
+	}
+	var deptID int64
+	if err := pool.QueryRow(ctx, `
+		SELECT id FROM departments WHERE name='系统管理' LIMIT 1`).Scan(&deptID); err != nil {
+		return fmt.Errorf("system department: %w", err)
 	}
 	pass := randomPassword(16)
 	hash, err := bcrypt.GenerateFromPassword([]byte(pass), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
-	_, err = pool.Exec(ctx, `INSERT INTO admins(username, password_hash) VALUES ($1,$2)`, "admin", string(hash))
+	_, err = pool.Exec(ctx, `
+		INSERT INTO users(username, password_hash, role, department_id)
+		VALUES ($1,$2,'admin',$3)`, "admin", string(hash), deptID)
 	if err != nil {
 		return err
 	}

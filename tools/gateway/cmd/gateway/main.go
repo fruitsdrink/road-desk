@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 	"github.com/fruitsdrink/road-desk/tools/gateway/internal/bootstrap"
 	"github.com/fruitsdrink/road-desk/tools/gateway/internal/config"
 	"github.com/fruitsdrink/road-desk/tools/gateway/internal/db"
+	"github.com/fruitsdrink/road-desk/tools/gateway/internal/listenhint"
 	"github.com/fruitsdrink/road-desk/tools/gateway/internal/store"
 )
 
@@ -49,6 +51,11 @@ func main() {
 		WebDir:  cfg.WebDir,
 	}
 
+	ln, err := net.Listen("tcp", cfg.ListenAddr)
+	if err != nil {
+		log.Fatalf("listen %s: %s", cfg.ListenAddr, listenhint.Format(cfg.ListenAddr, err))
+	}
+
 	httpSrv := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           srv.Handler(),
@@ -57,8 +64,8 @@ func main() {
 
 	go func() {
 		log.Printf("road-desk gateway listening on %s", cfg.ListenAddr)
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("listen: %v", err)
+		if err := httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("serve: %v", err)
 		}
 	}()
 

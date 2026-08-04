@@ -14,8 +14,8 @@ constexpr wchar_t kSessionClass[] = L"RoadDeskSessionHost";
 SessionHost* g_kb_target = nullptr;
 HHOOK g_kb_hook = nullptr;
 
-// Upscale: integer zoom only (fractional upscale turns ClearType text to mush).
-// Downscale: fractional nearest-neighbor to fit the client (embedded or floating).
+// Aspect-preserving fit: scale (up or down) so the frame fills the client as much
+// as possible. Letterbox only when client and framebuffer aspect ratios differ.
 bool fit_rect(int cw, int ch, int fb_w, int fb_h, RECT* out, bool /*fit_workspace*/) {
   if (cw <= 0 || ch <= 0 || fb_w <= 0 || fb_h <= 0 || !out) {
     return false;
@@ -23,80 +23,25 @@ bool fit_rect(int cw, int ch, int fb_w, int fb_h, RECT* out, bool /*fit_workspac
   const double sx = static_cast<double>(cw) / fb_w;
   const double sy = static_cast<double>(ch) / fb_h;
   const double s = (sx < sy) ? sx : sy;
-  int dw = 0;
-  int dh = 0;
-  if (s >= 1.0) {
-    // Largest integer scale that still fits — sharp pixels, may letterbox.
-    int si = static_cast<int>(s);
-    if (si < 1) {
-      si = 1;
-    }
-    dw = fb_w * si;
-    dh = fb_h * si;
-  } else {
-    dw = static_cast<int>(fb_w * s + 0.5);
-    dh = static_cast<int>(fb_h * s + 0.5);
-    if (dw < 1) {
-      dw = 1;
-    }
-    if (dh < 1) {
-      dh = 1;
-    }
+  int dw = static_cast<int>(fb_w * s + 0.5);
+  int dh = static_cast<int>(fb_h * s + 0.5);
+  if (dw < 1) {
+    dw = 1;
+  }
+  if (dh < 1) {
+    dh = 1;
+  }
+  if (dw > cw) {
+    dw = cw;
+  }
+  if (dh > ch) {
+    dh = ch;
   }
   out->left = (cw - dw) / 2;
   out->top = (ch - dh) / 2;
   out->right = out->left + dw;
   out->bottom = out->top + dh;
   return true;
-}
-
-void scale_nearest_bgra(const uint8_t* src, int sw, int sh, uint8_t* dst, int dw, int dh) {
-  if (!src || !dst || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) {
-    return;
-  }
-  if (dw == sw && dh == sh) {
-    memcpy(dst, src, static_cast<size_t>(sw) * sh * 4);
-    return;
-  }
-  if (dw % sw == 0 && dh % sh == 0) {
-    const int mx = dw / sw;
-    const int my = dh / sh;
-    for (int y = 0; y < sh; ++y) {
-      const uint8_t* srow = src + static_cast<size_t>(y) * sw * 4;
-      for (int row = 0; row < my; ++row) {
-        uint8_t* drow = dst + static_cast<size_t>(y * my + row) * dw * 4;
-        if (mx == 1) {
-          memcpy(drow, srow, static_cast<size_t>(sw) * 4);
-        } else {
-          for (int x = 0; x < sw; ++x) {
-            const uint8_t* p = srow + static_cast<size_t>(x) * 4;
-            for (int col = 0; col < mx; ++col) {
-              uint8_t* q = drow + static_cast<size_t>(x * mx + col) * 4;
-              q[0] = p[0];
-              q[1] = p[1];
-              q[2] = p[2];
-              q[3] = p[3];
-            }
-          }
-        }
-      }
-    }
-    return;
-  }
-  for (int y = 0; y < dh; ++y) {
-    const int sy = y * sh / dh;
-    const uint8_t* srow = src + static_cast<size_t>(sy) * sw * 4;
-    uint8_t* drow = dst + static_cast<size_t>(y) * dw * 4;
-    for (int x = 0; x < dw; ++x) {
-      const int sx = x * sw / dw;
-      const uint8_t* p = srow + static_cast<size_t>(sx) * 4;
-      uint8_t* q = drow + static_cast<size_t>(x) * 4;
-      q[0] = p[0];
-      q[1] = p[1];
-      q[2] = p[2];
-      q[3] = p[3];
-    }
-  }
 }
 
 bool client_point_in_letterbox(HWND hwnd, LPARAM lparam, int fb_w, int fb_h,
@@ -508,27 +453,19 @@ void SessionHost::paint() {
   RECT dest{};
   if (w > 0 && h > 0 && fit_rect(cw, ch, w, h, &dest, !floating_) &&
       bgra.size() >= static_cast<size_t>(w) * h * 4) {
-    const int dw = dest.right - dest.left;
-    const int dh = dest.bottom - dest.top;
-    const uint8_t* bits = bgra.data();
-    int bits_w = w;
-    int bits_h = h;
-    if (dw != w || dh != h) {
-      scale_bgra_.resize(static_cast<size_t>(dw) * dh * 4);
-      scale_nearest_bgra(bgra.data(), w, h, scale_bgra_.data(), dw, dh);
-      bits = scale_bgra_.data();
-      bits_w = dw;
-      bits_h = dh;
-    }
+    // Same path as UltraVNC / our spike_viewer: GDI HALFTONE stretch.
+    // CPU nearest-neighbor made ClearType look muddy at fractional scales.
     BITMAPINFO bmi{};
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = bits_w;
-    bmi.bmiHeader.biHeight = -bits_h;
+    bmi.bmiHeader.biWidth = w;
+    bmi.bmiHeader.biHeight = -h;
     bmi.bmiHeader.biPlanes = 1;
     bmi.bmiHeader.biBitCount = 32;
     bmi.bmiHeader.biCompression = BI_RGB;
-    SetDIBitsToDevice(back_dc_, dest.left, dest.top, bits_w, bits_h, 0, 0, 0, bits_h, bits,
-                      &bmi, DIB_RGB_COLORS);
+    SetStretchBltMode(back_dc_, HALFTONE);
+    SetBrushOrgEx(back_dc_, 0, 0, nullptr);
+    StretchDIBits(back_dc_, dest.left, dest.top, dest.right - dest.left, dest.bottom - dest.top,
+                  0, 0, w, h, bgra.data(), &bmi, DIB_RGB_COLORS, SRCCOPY);
   } else {
     const wchar_t* msg = L"Connecting / waiting for framebuffer…";
     SetBkMode(back_dc_, TRANSPARENT);

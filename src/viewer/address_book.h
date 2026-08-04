@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gateway_config.h"
+
 #include <string>
 #include <vector>
 
@@ -21,13 +23,6 @@ struct BookNode {
 };
 
 enum class AddressBookSource { kDemo, kGateway };
-
-struct DirectoryConfig {
-  std::string gateway_url;
-  std::string directory_key;
-};
-
-DirectoryConfig load_directory_config();
 
 // Load demo tree or fetch gateway directory. Returns false on gateway failure.
 bool address_book_load(AddressBookSource source, const DirectoryConfig& dir, std::string* err);

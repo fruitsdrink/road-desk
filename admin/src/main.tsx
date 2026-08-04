@@ -12,16 +12,23 @@ import {
 import { useStore } from '@tanstack/react-store'
 import { ConfigProvider } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
+import { AdminLayout } from './components/AdminLayout'
 import { authStore } from './lib/authStore'
 import { LoginPage } from './pages/LoginPage'
 import { CatalogPage } from './pages/CatalogPage'
+import { DepartmentsPage } from './pages/DepartmentsPage'
+import { UsersPage } from './pages/UsersPage'
 import './styles.css'
 
 const queryClient = new QueryClient()
 
 function AuthGate() {
   useStore(authStore)
-  return <Outlet />
+  return (
+    <div className="h-full">
+      <Outlet />
+    </div>
+  )
 }
 
 const rootRoute = createRootRoute({
@@ -34,19 +41,40 @@ const loginRoute = createRoute({
   component: LoginPage,
 })
 
-const indexRoute = createRoute({
+const appRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/',
+  id: 'app',
   beforeLoad: () => {
     if (!authStore.state.token) {
       throw redirect({ to: '/login' })
     }
   },
+  component: AdminLayout,
+})
+
+const indexRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/',
   component: CatalogPage,
 })
 
+const departmentsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/departments',
+  component: DepartmentsPage,
+})
+
+const usersRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/users',
+  component: UsersPage,
+})
+
 const router = createRouter({
-  routeTree: rootRoute.addChildren([loginRoute, indexRoute]),
+  routeTree: rootRoute.addChildren([
+    loginRoute,
+    appRoute.addChildren([indexRoute, departmentsRoute, usersRoute]),
+  ]),
 })
 
 declare module '@tanstack/react-router' {

@@ -3,6 +3,8 @@ import { useNavigate } from '@tanstack/react-router'
 import { api } from '@/lib/api'
 import { loginWithToken } from '@/lib/authStore'
 
+const devPassword = import.meta.env.DEV ? (import.meta.env.VITE_DEV_ADMIN_PASSWORD ?? '') : ''
+
 export function LoginPage() {
   const navigate = useNavigate()
   const [form] = Form.useForm()
@@ -11,7 +13,7 @@ export function LoginPage() {
     <div className="min-h-full flex items-center justify-center p-6">
       <Card className="w-full max-w-md shadow-md" title="Road Desk 管理端">
         <Typography.Paragraph type="secondary">
-          使用网关首次启动时日志中的管理员账号登录。
+          仅管理员可登录管理端；操作员请使用 Viewer。
         </Typography.Paragraph>
         <Form
           form={form}
@@ -28,10 +30,15 @@ export function LoginPage() {
           }}
         >
           <Form.Item name="username" label="用户名" rules={[{ required: true }]} initialValue="admin">
-            <Input autoFocus />
+            <Input autoFocus={!devPassword} />
           </Form.Item>
-          <Form.Item name="password" label="口令" rules={[{ required: true }]}>
-            <Input.Password />
+          <Form.Item
+            name="password"
+            label="口令"
+            rules={[{ required: true }]}
+            initialValue={devPassword}
+          >
+            <Input.Password autoFocus={!!devPassword} />
           </Form.Item>
           <Button type="primary" htmlType="submit" block>
             登录

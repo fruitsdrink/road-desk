@@ -2,6 +2,7 @@
 #include "auth.h"
 #include "connect_config.h"
 #include "console_window.h"
+#include "gateway_config.h"
 #include "media_log.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -109,14 +110,34 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_cmd)
   if (!direct) {
     std::string err;
     road_desk::viewer::DirectoryConfig dir = road_desk::viewer::load_directory_config();
+    if (!force_demo && (dir.gateway_url.empty() || dir.directory_key.empty())) {
+      viewer_boot("gateway_prompt");
+      if (road_desk::viewer::prompt_directory_config(&dir)) {
+        if (!road_desk::viewer::save_directory_config(dir)) {
+          std::fprintf(stderr, "warning: failed to save viewer.json\n");
+        }
+        viewer_boot("gateway_configured");
+      } else {
+        viewer_boot("gateway_prompt_cancelled");
+      }
+    }
     const bool want_gateway = !force_demo && !dir.gateway_url.empty() && !dir.directory_key.empty();
     if (want_gateway) {
       if (!road_desk::viewer::address_book_load(road_desk::viewer::AddressBookSource::kGateway, dir,
                                                &err)) {
         viewer_boot("gateway_directory_fail");
-        std::fprintf(stderr, "gateway directory failed: %s — falling back to demo book\n",
-                     err.c_str());
-        road_desk::viewer::address_book_load(road_desk::viewer::AddressBookSource::kDemo, {}, nullptr);
+        std::fprintf(stderr, "gateway directory failed: %s — re-prompt\n", err.c_str());
+        if (road_desk::viewer::prompt_directory_config(&dir) &&
+            road_desk::viewer::address_book_load(road_desk::viewer::AddressBookSource::kGateway, dir,
+                                                 &err)) {
+          road_desk::viewer::save_directory_config(dir);
+          viewer_boot("gateway_directory_ok");
+        } else {
+          std::fprintf(stderr, "gateway directory failed: %s — falling back to demo book\n",
+                       err.c_str());
+          road_desk::viewer::address_book_load(road_desk::viewer::AddressBookSource::kDemo, {},
+                                               nullptr);
+        }
       } else {
         viewer_boot("gateway_directory_ok");
       }

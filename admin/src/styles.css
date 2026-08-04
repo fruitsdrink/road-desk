@@ -7,9 +7,88 @@ body,
 #root {
   height: 100%;
   margin: 0;
+  overflow: hidden;
 }
 
 body {
   font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   background: linear-gradient(160deg, #e8eef5 0%, #f5f7fa 45%, #eef2f6 100%);
+}
+
+/* Column resize handle for antd Table + react-resizable */
+.react-resizable {
+  position: relative;
+  background-clip: padding-box;
+}
+
+.react-resizable-handle {
+  position: absolute;
+  right: -5px;
+  bottom: 0;
+  z-index: 1;
+  width: 10px;
+  height: 100%;
+  cursor: col-resize;
+  background: transparent;
+}
+
+.react-resizable-handle::after {
+  content: "";
+  position: absolute;
+  top: 20%;
+  right: 4px;
+  width: 1px;
+  height: 60%;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.react-resizable-handle:hover::after {
+  background: #1677ff;
+}
+
+/* Fill viewport: table body grows, pagination sticks to bottom */
+.admin-table-fill {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-table-fill .ant-spin-nested-loading,
+.admin-table-fill .ant-spin-container {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-table-fill .ant-table {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-table-fill .ant-table-container {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-table-fill .ant-table-header {
+  flex-shrink: 0;
+}
+
+.admin-table-fill .ant-table-body {
+  /* flex child scroll area: grow to fill, don't push pagination down */
+  flex: 1 1 0 !important;
+  height: auto !important;
+  max-height: none !important;
+  overflow: auto !important;
+}
+
+.admin-table-fill .ant-table-pagination {
+  flex-shrink: 0;
+  margin: 12px 0 0 !important;
 }

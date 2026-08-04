@@ -82,7 +82,6 @@ class SessionHost {
   int back_w_ = 0;
   int back_h_ = 0;
   bool tracking_leave_ = false;
-  std::vector<uint8_t> scale_bgra_;
 };
 
 }  // namespace road_desk::viewer

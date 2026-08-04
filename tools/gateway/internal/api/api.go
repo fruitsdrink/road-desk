@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/fruitsdrink/road-desk/tools/gateway/internal/auth"
 	"github.com/fruitsdrink/road-desk/tools/gateway/internal/bootstrap"
@@ -32,6 +33,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/agents/heartbeat", s.agentHeartbeat)
 
 	mux.HandleFunc("POST /v1/admin/login", s.adminLogin)
+	mux.HandleFunc("POST /v1/viewer/login", s.viewerLogin)
+
 	mux.HandleFunc("GET /v1/admin/groups", s.requireAdmin(s.listGroups))
 	mux.HandleFunc("POST /v1/admin/groups", s.requireAdmin(s.createGroup))
 	mux.HandleFunc("PATCH /v1/admin/groups/{id}", s.requireAdmin(s.patchGroup))
@@ -46,8 +49,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/admin/agents/{id}", s.requireAdmin(s.deleteAgent))
 	mux.HandleFunc("GET /v1/admin/secrets/agent-psk", s.requireAdmin(s.downloadAgentPSK))
 	mux.HandleFunc("GET /v1/admin/secrets/viewer-psk", s.requireAdmin(s.downloadViewerPSK))
-	// Legacy alias
 	mux.HandleFunc("GET /v1/admin/secrets/directory-psk", s.requireAdmin(s.downloadViewerPSK))
+
+	mux.HandleFunc("GET /v1/admin/departments", s.requireAdmin(s.listDepartments))
+	mux.HandleFunc("POST /v1/admin/departments", s.requireAdmin(s.createDepartment))
+	mux.HandleFunc("PATCH /v1/admin/departments/{id}", s.requireAdmin(s.patchDepartment))
+	mux.HandleFunc("DELETE /v1/admin/departments/{id}", s.requireAdmin(s.deleteDepartment))
+	mux.HandleFunc("GET /v1/admin/users", s.requireAdmin(s.listUsers))
+	mux.HandleFunc("POST /v1/admin/users", s.requireAdmin(s.createUser))
+	mux.HandleFunc("PATCH /v1/admin/users/{id}", s.requireAdmin(s.patchUser))
+	mux.HandleFunc("DELETE /v1/admin/users/{id}", s.requireAdmin(s.deleteUser))
 
 	mux.HandleFunc("GET /v1/directory/tree", s.requireViewer(s.directoryTree))
 	mux.HandleFunc("GET /v1/directory/agents", s.requireViewer(s.listAgents))
@@ -71,7 +82,7 @@ type agentBody struct {
 
 func (s *Server) agentRegister(w http.ResponseWriter, r *http.Request) {
 	if !s.Auth.CheckAgentPSK(r.Context(), r) {
-		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		writeErr(w, http.StatusUnauthorized, "未授权")
 		return
 	}
 	var body agentBody
@@ -80,7 +91,7 @@ func (s *Server) agentRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.AgentID == "" || body.MediaPort <= 0 {
-		writeErr(w, http.StatusBadRequest, "agentId and mediaPort required")
+		writeErr(w, http.StatusBadRequest, "需要 agentId 与 mediaPort")
 		return
 	}
 	a, err := s.Store.UpsertRegister(r.Context(), body.AgentID, body.Hostname, body.Version, body.MediaPort, body.IPv4s, body.PreferredIPv4)
@@ -93,7 +104,7 @@ func (s *Server) agentRegister(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if !s.Auth.CheckAgentPSK(r.Context(), r) {
-		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		writeErr(w, http.StatusUnauthorized, "未授权")
 		return
 	}
 	var body agentBody
@@ -102,7 +113,7 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.AgentID == "" || body.MediaPort <= 0 {
-		writeErr(w, http.StatusBadRequest, "agentId and mediaPort required")
+		writeErr(w, http.StatusBadRequest, "需要 agentId 与 mediaPort")
 		return
 	}
 	a, err := s.Store.Heartbeat(r.Context(), body.AgentID, body.Hostname, body.Version, body.MediaPort, body.IPv4s, body.PreferredIPv4)
@@ -114,6 +125,14 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminLogin(w http.ResponseWriter, r *http.Request) {
+	s.login(w, r, auth.RoleAdmin)
+}
+
+func (s *Server) viewerLogin(w http.ResponseWriter, r *http.Request) {
+	s.login(w, r, auth.RoleViewer)
+}
+
+func (s *Server) login(w http.ResponseWriter, r *http.Request, requireRole string) {
 	var body struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -122,12 +141,18 @@ func (s *Server) adminLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	tok, err := s.Auth.Login(r.Context(), body.Username, body.Password)
+	tok, claims, err := s.Auth.Login(r.Context(), body.Username, body.Password, requireRole)
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"token": tok})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"token":          tok,
+		"role":           claims.Role,
+		"username":       claims.Username,
+		"departmentId":   claims.DepartmentID,
+		"userId":         claims.UserID,
+	})
 }
 
 type handlerFunc func(http.ResponseWriter, *http.Request)
@@ -135,7 +160,7 @@ type handlerFunc func(http.ResponseWriter, *http.Request)
 func (s *Server) requireAdmin(next handlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if _, err := s.Auth.ParseAdmin(r); err != nil {
-			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			writeErr(w, http.StatusUnauthorized, "未授权")
 			return
 		}
 		next(w, r)
@@ -144,8 +169,8 @@ func (s *Server) requireAdmin(next handlerFunc) http.HandlerFunc {
 
 func (s *Server) requireViewer(next handlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !s.Auth.CheckViewerPSK(r.Context(), r) {
-			writeErr(w, http.StatusUnauthorized, "unauthorized")
+		if !s.Auth.CheckViewerAccess(r.Context(), r) {
+			writeErr(w, http.StatusUnauthorized, "未授权")
 			return
 		}
 		next(w, r)
@@ -168,7 +193,7 @@ func (s *Server) createGroup(w http.ResponseWriter, r *http.Request) {
 		SortOrder int    `json:"sortOrder"`
 	}
 	if err := decodeJSON(r, &body); err != nil || strings.TrimSpace(body.Name) == "" {
-		writeErr(w, http.StatusBadRequest, "name required")
+		writeErr(w, http.StatusBadRequest, "名称不能为空")
 		return
 	}
 	g, err := s.Store.CreateGroup(r.Context(), body.ParentID, strings.TrimSpace(body.Name), body.SortOrder)
@@ -182,7 +207,7 @@ func (s *Server) createGroup(w http.ResponseWriter, r *http.Request) {
 func (s *Server) patchGroup(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "bad id")
+		writeErr(w, http.StatusBadRequest, "无效的 ID")
 		return
 	}
 	var body struct {
@@ -205,7 +230,7 @@ func (s *Server) patchGroup(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deleteGroup(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "bad id")
+		writeErr(w, http.StatusBadRequest, "无效的 ID")
 		return
 	}
 	if err := s.Store.DeleteGroup(r.Context(), id); err != nil {
@@ -229,7 +254,7 @@ func (s *Server) createTag(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 	}
 	if err := decodeJSON(r, &body); err != nil || strings.TrimSpace(body.Name) == "" {
-		writeErr(w, http.StatusBadRequest, "name required")
+		writeErr(w, http.StatusBadRequest, "名称不能为空")
 		return
 	}
 	t, err := s.Store.CreateTag(r.Context(), strings.TrimSpace(body.Name))
@@ -243,14 +268,14 @@ func (s *Server) createTag(w http.ResponseWriter, r *http.Request) {
 func (s *Server) patchTag(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "bad id")
+		writeErr(w, http.StatusBadRequest, "无效的 ID")
 		return
 	}
 	var body struct {
 		Name string `json:"name"`
 	}
 	if err := decodeJSON(r, &body); err != nil || strings.TrimSpace(body.Name) == "" {
-		writeErr(w, http.StatusBadRequest, "name required")
+		writeErr(w, http.StatusBadRequest, "名称不能为空")
 		return
 	}
 	t, err := s.Store.UpdateTag(r.Context(), id, strings.TrimSpace(body.Name))
@@ -264,7 +289,7 @@ func (s *Server) patchTag(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deleteTag(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "bad id")
+		writeErr(w, http.StatusBadRequest, "无效的 ID")
 		return
 	}
 	if err := s.Store.DeleteTag(r.Context(), id); err != nil {
@@ -287,7 +312,7 @@ func (s *Server) getAgent(w http.ResponseWriter, r *http.Request) {
 	a, err := s.Store.GetAgent(r.Context(), r.PathValue("id"))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeErr(w, http.StatusNotFound, "not found")
+			writeErr(w, http.StatusNotFound, "未找到")
 			return
 		}
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -309,7 +334,7 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request) {
 	a, err := s.Store.UpdateAgent(r.Context(), r.PathValue("id"), body.DisplayName, body.GroupID, body.TagIDs)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeErr(w, http.StatusNotFound, "not found")
+			writeErr(w, http.StatusNotFound, "未找到")
 			return
 		}
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -321,13 +346,195 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
 	if err := s.Store.DeleteAgent(r.Context(), r.PathValue("id")); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeErr(w, http.StatusNotFound, "not found")
+			writeErr(w, http.StatusNotFound, "未找到")
 			return
 		}
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) listDepartments(w http.ResponseWriter, r *http.Request) {
+	ds, err := s.Store.ListDepartments(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, ds)
+}
+
+func (s *Server) createDepartment(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name      string `json:"name"`
+		SortOrder int    `json:"sortOrder"`
+	}
+	if err := decodeJSON(r, &body); err != nil || strings.TrimSpace(body.Name) == "" {
+		writeErr(w, http.StatusBadRequest, "名称不能为空")
+		return
+	}
+	d, err := s.Store.CreateDepartment(r.Context(), strings.TrimSpace(body.Name), body.SortOrder)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, d)
+}
+
+func (s *Server) patchDepartment(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "无效的 ID")
+		return
+	}
+	var body struct {
+		Name      *string `json:"name"`
+		SortOrder *int    `json:"sortOrder"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if body.Name != nil {
+		trimmed := strings.TrimSpace(*body.Name)
+		body.Name = &trimmed
+		if trimmed == "" {
+			writeErr(w, http.StatusBadRequest, "名称不能为空")
+			return
+		}
+	}
+	d, err := s.Store.UpdateDepartment(r.Context(), id, body.Name, body.SortOrder)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, d)
+}
+
+func (s *Server) deleteDepartment(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "无效的 ID")
+		return
+	}
+	if err := s.Store.DeleteDepartment(r.Context(), id); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
+	us, err := s.Store.ListUsers(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, us)
+}
+
+func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Username     string `json:"username"`
+		Password     string `json:"password"`
+		Role         string `json:"role"`
+		DepartmentID int64  `json:"departmentId"`
+		Enabled      *bool  `json:"enabled"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	username := strings.TrimSpace(body.Username)
+	if username == "" || body.Password == "" {
+		writeErr(w, http.StatusBadRequest, "请填写用户名和口令")
+		return
+	}
+	if body.DepartmentID <= 0 {
+		writeErr(w, http.StatusBadRequest, "请选择部门")
+		return
+	}
+	role := strings.TrimSpace(body.Role)
+	if role == "" {
+		role = auth.RoleViewer
+	}
+	enabled := true
+	if body.Enabled != nil {
+		enabled = *body.Enabled
+	}
+	hash, err := hashPassword(body.Password)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	u, err := s.Store.CreateUser(r.Context(), username, hash, role, body.DepartmentID, enabled)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, u)
+}
+
+func (s *Server) patchUser(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "无效的 ID")
+		return
+	}
+	var body struct {
+		Password     *string `json:"password"`
+		Role         *string `json:"role"`
+		DepartmentID *int64  `json:"departmentId"`
+		Enabled      *bool   `json:"enabled"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var hash *string
+	if body.Password != nil {
+		if *body.Password == "" {
+			writeErr(w, http.StatusBadRequest, "口令不能为空")
+			return
+		}
+		h, err := hashPassword(*body.Password)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		hash = &h
+	}
+	if body.Role != nil {
+		trimmed := strings.TrimSpace(*body.Role)
+		body.Role = &trimmed
+	}
+	u, err := s.Store.UpdateUser(r.Context(), id, hash, body.Role, body.DepartmentID, body.Enabled)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, u)
+}
+
+func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "无效的 ID")
+		return
+	}
+	if err := s.Store.DeleteUser(r.Context(), id); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func hashPassword(password string) (string, error) {
+	b, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 func (s *Server) downloadAgentPSK(w http.ResponseWriter, r *http.Request) {
@@ -444,5 +651,26 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 func writeErr(w http.ResponseWriter, code int, msg string) {
-	writeJSON(w, code, map[string]string{"error": msg})
+	writeJSON(w, code, map[string]string{"error": friendlyErr(msg)})
 }
+
+// friendlyErr maps common English / Postgres messages to Chinese UI copy.
+func friendlyErr(msg string) string {
+	switch {
+	case msg == "":
+		return "请求失败"
+	case strings.Contains(msg, "users_username_key") || strings.Contains(msg, "duplicate key") && strings.Contains(msg, "username"):
+		return "用户名已存在"
+	case strings.Contains(msg, "departments_name_key") || (strings.Contains(msg, "duplicate key") && strings.Contains(msg, "departments")):
+		return "部门名称已存在"
+	case strings.Contains(msg, "tags_name_key") || (strings.Contains(msg, "duplicate key") && strings.Contains(msg, "tags")):
+		return "标签名称已存在"
+	case strings.Contains(msg, "groups_root_name"):
+		return "同级分组名称已存在"
+	case strings.Contains(msg, "foreign key") && strings.Contains(msg, "department"):
+		return "部门不存在"
+	default:
+		return msg
+	}
+}
+

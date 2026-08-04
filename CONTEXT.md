@@ -73,7 +73,7 @@ _Avoid_: Windows 登录账号（除非明确对接 AD）, 系统用户
 _Avoid_: 后台（过泛）, 控制台（易与被控端控制台桌面混淆）
 
 **被控端目录**:
-可供操作员检索并发起远控的被控端清单。一期：中心机 **Go 网关 + Docker Postgres** 维护站级分组树与标签；Host Agent 注册/心跳；Viewer 用 `viewer.psk` 拉取真目录并直连媒体。未配网关或 `--demo-book` 时仍可用内置高速演示树。见 `docs/gateway.md`。
+可供操作员检索并发起远控的被控端清单。一期：中心机 **Go 网关 + Docker Postgres** 维护站级分组树与标签；Host Agent 注册/心跳；Viewer 用操作员帐号登录或 `viewer.psk` 拉取真目录并直连媒体。未配网关或 `--demo-book` 时仍可用内置高速演示树。见 `docs/gateway.md`。
 _Avoid_: 资产管理系统（除非明确做资产树）, 通讯录（可作别名但易偏人际）
 
 **直连**:

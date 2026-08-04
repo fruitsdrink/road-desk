@@ -23,8 +23,9 @@ type Group struct {
 }
 
 type Tag struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	AgentCount int64  `json:"agentCount"`
 }
 
 type Agent struct {
@@ -100,26 +101,31 @@ func (s *Store) DeleteGroup(ctx context.Context, id int64) error {
 		return err
 	}
 	if isSystem {
-		return errors.New("cannot delete system group")
+		return errors.New("不能删除系统分组")
 	}
 	if err := s.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM groups WHERE parent_id=$1`, id).Scan(&n); err != nil {
 		return err
 	}
 	if n > 0 {
-		return errors.New("group has children")
+		return errors.New("分组下仍有子分组")
 	}
 	if err := s.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM agents WHERE group_id=$1`, id).Scan(&n); err != nil {
 		return err
 	}
 	if n > 0 {
-		return errors.New("group has agents")
+		return errors.New("分组下仍有 Agent")
 	}
 	_, err = s.Pool.Exec(ctx, `DELETE FROM groups WHERE id=$1`, id)
 	return err
 }
 
 func (s *Store) ListTags(ctx context.Context) ([]Tag, error) {
-	rows, err := s.Pool.Query(ctx, `SELECT id, name FROM tags ORDER BY name`)
+	rows, err := s.Pool.Query(ctx, `
+		SELECT t.id, t.name, COUNT(at.agent_id)::bigint
+		FROM tags t
+		LEFT JOIN agent_tags at ON at.tag_id = t.id
+		GROUP BY t.id, t.name
+		ORDER BY t.name`)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +133,7 @@ func (s *Store) ListTags(ctx context.Context) ([]Tag, error) {
 	var out []Tag
 	for rows.Next() {
 		var t Tag
-		if err := rows.Scan(&t.ID, &t.Name); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.AgentCount); err != nil {
 			return nil, err
 		}
 		out = append(out, t)
@@ -145,7 +151,10 @@ func (s *Store) CreateTag(ctx context.Context, name string) (Tag, error) {
 func (s *Store) UpdateTag(ctx context.Context, id int64, name string) (Tag, error) {
 	var t Tag
 	err := s.Pool.QueryRow(ctx, `
-		UPDATE tags SET name=$2 WHERE id=$1 RETURNING id, name`, id, name).Scan(&t.ID, &t.Name)
+		UPDATE tags SET name=$2 WHERE id=$1
+		RETURNING id, name,
+			(SELECT COUNT(*)::bigint FROM agent_tags WHERE tag_id=$1)`, id, name).
+		Scan(&t.ID, &t.Name, &t.AgentCount)
 	return t, err
 }
 
@@ -358,8 +367,205 @@ func (s *Store) DeleteAgent(ctx context.Context, id string) error {
 		return err
 	}
 	if a.Online {
-		return errors.New("cannot delete online agent")
+		return errors.New("不能删除在线 Agent")
 	}
 	_, err = s.Pool.Exec(ctx, `DELETE FROM agents WHERE agent_id=$1`, id)
+	return err
+}
+
+type Department struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	SortOrder int       `json:"sortOrder"`
+	IsSystem  bool      `json:"isSystem"`
+	UserCount int64     `json:"userCount"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type User struct {
+	ID             int64     `json:"id"`
+	Username       string    `json:"username"`
+	Role           string    `json:"role"`
+	DepartmentID   int64     `json:"departmentId"`
+	DepartmentName string    `json:"departmentName"`
+	Enabled        bool      `json:"enabled"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+}
+
+func (s *Store) ListDepartments(ctx context.Context) ([]Department, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT d.id, d.name, d.sort_order, d.is_system, d.created_at,
+			COUNT(u.id)::bigint
+		FROM departments d
+		LEFT JOIN users u ON u.department_id = d.id
+		GROUP BY d.id
+		ORDER BY d.sort_order, d.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Department
+	for rows.Next() {
+		var d Department
+		if err := rows.Scan(&d.ID, &d.Name, &d.SortOrder, &d.IsSystem, &d.CreatedAt, &d.UserCount); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CreateDepartment(ctx context.Context, name string, sortOrder int) (Department, error) {
+	var d Department
+	err := s.Pool.QueryRow(ctx, `
+		INSERT INTO departments(name, sort_order) VALUES ($1,$2)
+		RETURNING id, name, sort_order, is_system, created_at`, name, sortOrder).
+		Scan(&d.ID, &d.Name, &d.SortOrder, &d.IsSystem, &d.CreatedAt)
+	d.UserCount = 0
+	return d, err
+}
+
+func (s *Store) UpdateDepartment(ctx context.Context, id int64, name *string, sortOrder *int) (Department, error) {
+	var d Department
+	err := s.Pool.QueryRow(ctx, `
+		UPDATE departments SET
+			name = COALESCE($2, name),
+			sort_order = COALESCE($3, sort_order)
+		WHERE id=$1
+		RETURNING id, name, sort_order, is_system, created_at`, id, name, sortOrder).
+		Scan(&d.ID, &d.Name, &d.SortOrder, &d.IsSystem, &d.CreatedAt)
+	if err != nil {
+		return d, err
+	}
+	_ = s.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE department_id=$1`, id).Scan(&d.UserCount)
+	return d, nil
+}
+
+func (s *Store) DeleteDepartment(ctx context.Context, id int64) error {
+	var isSystem bool
+	var n int
+	err := s.Pool.QueryRow(ctx, `SELECT is_system FROM departments WHERE id=$1`, id).Scan(&isSystem)
+	if err != nil {
+		return err
+	}
+	if isSystem {
+		return errors.New("不能删除系统部门")
+	}
+	if err := s.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE department_id=$1`, id).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return errors.New("部门下仍有用户")
+	}
+	_, err = s.Pool.Exec(ctx, `DELETE FROM departments WHERE id=$1`, id)
+	return err
+}
+
+func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT u.id, u.username, u.role, u.department_id, d.name, u.enabled, u.created_at, u.updated_at
+		FROM users u
+		JOIN departments d ON d.id = u.department_id
+		ORDER BY u.username`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.DepartmentID, &u.DepartmentName,
+			&u.Enabled, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetUser(ctx context.Context, id int64) (User, error) {
+	var u User
+	err := s.Pool.QueryRow(ctx, `
+		SELECT u.id, u.username, u.role, u.department_id, d.name, u.enabled, u.created_at, u.updated_at
+		FROM users u
+		JOIN departments d ON d.id = u.department_id
+		WHERE u.id=$1`, id).
+		Scan(&u.ID, &u.Username, &u.Role, &u.DepartmentID, &u.DepartmentName,
+			&u.Enabled, &u.CreatedAt, &u.UpdatedAt)
+	return u, err
+}
+
+func (s *Store) CreateUser(ctx context.Context, username, passwordHash, role string, departmentID int64, enabled bool) (User, error) {
+	if role != "admin" && role != "viewer" {
+		return User{}, errors.New("角色必须是管理员或操作员")
+	}
+	var id int64
+	err := s.Pool.QueryRow(ctx, `
+		INSERT INTO users(username, password_hash, role, department_id, enabled)
+		VALUES ($1,$2,$3,$4,$5)
+		RETURNING id`, username, passwordHash, role, departmentID, enabled).Scan(&id)
+	if err != nil {
+		return User{}, err
+	}
+	return s.GetUser(ctx, id)
+}
+
+func (s *Store) UpdateUser(ctx context.Context, id int64, passwordHash *string, role *string, departmentID *int64, enabled *bool) (User, error) {
+	cur, err := s.GetUser(ctx, id)
+	if err != nil {
+		return User{}, err
+	}
+	newRole := cur.Role
+	if role != nil {
+		if *role != "admin" && *role != "viewer" {
+			return User{}, errors.New("角色必须是管理员或操作员")
+		}
+		newRole = *role
+	}
+	newEnabled := cur.Enabled
+	if enabled != nil {
+		newEnabled = *enabled
+	}
+	if cur.Role == "admin" && (newRole != "admin" || !newEnabled) {
+		var n int
+		if err := s.Pool.QueryRow(ctx, `
+			SELECT COUNT(*) FROM users WHERE role='admin' AND enabled AND id<>$1`, id).Scan(&n); err != nil {
+			return User{}, err
+		}
+		if n == 0 {
+			return User{}, errors.New("不能停用或降级最后一位启用的管理员")
+		}
+	}
+	_, err = s.Pool.Exec(ctx, `
+		UPDATE users SET
+			password_hash = COALESCE($2, password_hash),
+			role = COALESCE($3, role),
+			department_id = COALESCE($4, department_id),
+			enabled = COALESCE($5, enabled),
+			updated_at = NOW()
+		WHERE id=$1`, id, passwordHash, role, departmentID, enabled)
+	if err != nil {
+		return User{}, err
+	}
+	return s.GetUser(ctx, id)
+}
+
+func (s *Store) DeleteUser(ctx context.Context, id int64) error {
+	cur, err := s.GetUser(ctx, id)
+	if err != nil {
+		return err
+	}
+	if cur.Role == "admin" && cur.Enabled {
+		var n int
+		if err := s.Pool.QueryRow(ctx, `
+			SELECT COUNT(*) FROM users WHERE role='admin' AND enabled AND id<>$1`, id).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			return errors.New("不能删除最后一位启用的管理员")
+		}
+	}
+	_, err = s.Pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, id)
 	return err
 }
