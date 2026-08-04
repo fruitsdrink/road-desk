@@ -3,6 +3,7 @@ add_executable(host-agent
   log.cpp
   gateway_config.cpp
   gateway_client.cpp
+  host-agent.manifest
 )
 
 target_include_directories(host-agent PRIVATE
@@ -18,6 +19,8 @@ target_link_libraries(host-agent PRIVATE
   ole32
   comdlg32
   shell32
+  gdiplus
+  comctl32
 )
 
 set_target_properties(host-agent PROPERTIES OUTPUT_NAME "host-agent")

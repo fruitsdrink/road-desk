@@ -1,0 +1,1361 @@
+{
+  "version": "2.15",
+  "children": [
+    {
+      "type": "note",
+      "id": "noteBrief",
+      "x": 40,
+      "y": -100,
+      "width": 880,
+      "height": 120,
+      "content": "Host Agent · 网关配置窗（顶栏型）\n\n对照 docs/ui-design-system.md §3.3「标准配置窗」与 §4.1 A / §4.2。\n客户区 420 宽；顶栏 72；水平内边距 28；编辑高 28；主/次按钮 100×30。\n文案：Road Desk / 被控端网关配置；浏览…（勿用「选文件…」）。\n实现目标：src/agent/gateway_config.cpp — 与 Viewer 登录同源色板/字体/DPI。"
+    },
+    {
+      "type": "text",
+      "id": "lblDefault",
+      "x": 40,
+      "y": 48,
+      "fill": "$rd.color.text.secondary",
+      "content": "A · 首次配置（420×360）",
+      "fontFamily": "Segoe UI",
+      "fontSize": 14,
+      "fontWeight": "600"
+    },
+    {
+      "type": "frame",
+      "id": "dlgDefault",
+      "x": 40,
+      "y": 80,
+      "name": "Agent Gateway / Default",
+      "clip": true,
+      "width": 420,
+      "height": 360,
+      "fill": "$rd.color.surface.app",
+      "effect": {
+        "type": "shadow",
+        "shadowType": "outer",
+        "color": "#161E2E22",
+        "offset": { "x": 0, "y": 8 },
+        "blur": 24
+      },
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "hdrA",
+          "name": "Brand Header",
+          "width": "fill_container",
+          "height": 72,
+          "fill": "$rd.color.brand.bg",
+          "padding": [0, 28],
+          "gap": 4,
+          "layout": "vertical",
+          "justifyContent": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "hdrATitle",
+              "name": "Brand Title",
+              "fill": "$rd.color.brand.fg",
+              "content": "Road Desk",
+              "fontFamily": "Segoe UI",
+              "fontSize": 21,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "hdrASub",
+              "name": "Brand Subtitle",
+              "fill": "$rd.color.brand.fgMuted",
+              "content": "被控端网关配置",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "bodyA",
+          "name": "Form Body",
+          "width": "fill_container",
+          "height": "fill_container",
+          "fill": "$rd.color.surface.app",
+          "layout": "vertical",
+          "padding": [20, 28, 0, 28],
+          "gap": 12,
+          "children": [
+            {
+              "type": "frame",
+              "id": "hostFieldA",
+              "name": "Host Field",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "hostLblA",
+                  "name": "Host Label",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "网关 IP / 主机",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                },
+                {
+                  "type": "frame",
+                  "id": "hostEditA",
+                  "name": "Host Edit",
+                  "width": "fill_container",
+                  "height": 28,
+                  "fill": "$rd.color.surface.panel",
+                  "cornerRadius": 0,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "$rd.color.border.subtle"
+                  },
+                  "padding": [0, 10],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "hostValA",
+                      "name": "Host Value",
+                      "fill": "$rd.color.text.primary",
+                      "content": "127.0.0.1",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 13
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "portFieldA",
+              "name": "Port Field",
+              "width": 120,
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "portLblA",
+                  "name": "Port Label",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "端口",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                },
+                {
+                  "type": "frame",
+                  "id": "portEditA",
+                  "name": "Port Edit",
+                  "width": "fill_container",
+                  "height": 28,
+                  "fill": "$rd.color.surface.panel",
+                  "cornerRadius": 0,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "$rd.color.border.subtle"
+                  },
+                  "padding": [0, 10],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "portValA",
+                      "name": "Port Value",
+                      "fill": "$rd.color.text.primary",
+                      "content": "8743",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 13
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "pskFieldA",
+              "name": "PSK Field",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "pskLblA",
+                  "name": "PSK Label",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "Agent PSK",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                },
+                {
+                  "type": "frame",
+                  "id": "pskRowA",
+                  "name": "PSK Row",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "pskEditA",
+                      "name": "PSK Edit",
+                      "width": "fill_container",
+                      "height": 28,
+                      "fill": "$rd.color.surface.panel",
+                      "cornerRadius": 0,
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1,
+                        "fill": "$rd.color.border.subtle"
+                      },
+                      "padding": [0, 10],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pskValA",
+                          "name": "PSK Placeholder",
+                          "fill": "$rd.color.text.muted",
+                          "content": "粘贴或浏览导入…",
+                          "fontFamily": "Segoe UI",
+                          "fontSize": 13
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "browseA",
+                      "name": "Browse Button",
+                      "width": 88,
+                      "height": 28,
+                      "fill": "$rd.color.surface.panel",
+                      "cornerRadius": 0,
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1,
+                        "fill": "$rd.color.border.subtle"
+                      },
+                      "gap": 6,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "browseIconA",
+                          "name": "Browse Icon",
+                          "width": 14,
+                          "height": 14,
+                          "library": "lucide",
+                          "icon": "folder",
+                          "fill": "$rd.color.text.primary"
+                        },
+                        {
+                          "type": "text",
+                          "id": "browseTA",
+                          "name": "Browse Label",
+                          "fill": "$rd.color.text.primary",
+                          "content": "浏览…",
+                          "fontFamily": "Segoe UI",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "statusA",
+              "name": "Status Spacer",
+              "width": "fill_container",
+              "height": 18
+            },
+            {
+              "type": "frame",
+              "id": "spacerA",
+              "name": "Flex Spacer",
+              "width": "fill_container",
+              "height": "fill_container"
+            },
+            {
+              "type": "rectangle",
+              "id": "divA",
+              "name": "Footer Divider",
+              "width": "fill_container",
+              "height": 1,
+              "fill": "$rd.color.border.subtle"
+            },
+            {
+              "type": "frame",
+              "id": "footerA",
+              "name": "Footer Actions",
+              "width": "fill_container",
+              "height": 48,
+              "gap": 12,
+              "justifyContent": "end",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "cancelA",
+                  "name": "Cancel Button",
+                  "width": 100,
+                  "height": 30,
+                  "fill": "$rd.color.surface.panel",
+                  "cornerRadius": 0,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "$rd.color.border.subtle"
+                  },
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "cancelTA",
+                      "name": "Cancel Label",
+                      "fill": "$rd.color.text.primary",
+                      "content": "取消",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "okA",
+                  "name": "OK Button",
+                  "width": 100,
+                  "height": 30,
+                  "fill": "$rd.color.accent",
+                  "cornerRadius": 0,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "okTA",
+                      "name": "OK Label",
+                      "fill": "#FFFFFF",
+                      "content": "确定",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "lblPsk",
+      "x": 500,
+      "y": 48,
+      "fill": "$rd.color.text.secondary",
+      "content": "B · 已导入 PSK",
+      "fontFamily": "Segoe UI",
+      "fontSize": 14,
+      "fontWeight": "600"
+    },
+    {
+      "type": "frame",
+      "id": "dlgPsk",
+      "x": 500,
+      "y": 80,
+      "name": "Agent Gateway / PSK Imported",
+      "clip": true,
+      "width": 420,
+      "height": 360,
+      "fill": "$rd.color.surface.app",
+      "effect": {
+        "type": "shadow",
+        "shadowType": "outer",
+        "color": "#161E2E22",
+        "offset": { "x": 0, "y": 8 },
+        "blur": 24
+      },
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "hdrB",
+          "name": "Brand Header",
+          "width": "fill_container",
+          "height": 72,
+          "fill": "$rd.color.brand.bg",
+          "padding": [0, 28],
+          "gap": 4,
+          "layout": "vertical",
+          "justifyContent": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "hdrBTitle",
+              "name": "Brand Title",
+              "fill": "$rd.color.brand.fg",
+              "content": "Road Desk",
+              "fontFamily": "Segoe UI",
+              "fontSize": 21,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "hdrBSub",
+              "name": "Brand Subtitle",
+              "fill": "$rd.color.brand.fgMuted",
+              "content": "被控端网关配置",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "bodyB",
+          "name": "Form Body",
+          "width": "fill_container",
+          "height": "fill_container",
+          "fill": "$rd.color.surface.app",
+          "layout": "vertical",
+          "padding": [20, 28, 0, 28],
+          "gap": 12,
+          "children": [
+            {
+              "type": "frame",
+              "id": "hostFieldB",
+              "name": "Host Field",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "hostLblB",
+                  "name": "Host Label",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "网关 IP / 主机",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                },
+                {
+                  "type": "frame",
+                  "id": "hostEditB",
+                  "name": "Host Edit",
+                  "width": "fill_container",
+                  "height": 28,
+                  "fill": "$rd.color.surface.panel",
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "$rd.color.border.subtle"
+                  },
+                  "padding": [0, 10],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "hostValB",
+                      "name": "Host Value",
+                      "fill": "$rd.color.text.primary",
+                      "content": "192.168.1.10",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 13
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "portFieldB",
+              "name": "Port Field",
+              "width": 120,
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "portLblB",
+                  "name": "Port Label",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "端口",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                },
+                {
+                  "type": "frame",
+                  "id": "portEditB",
+                  "name": "Port Edit",
+                  "width": "fill_container",
+                  "height": 28,
+                  "fill": "$rd.color.surface.panel",
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "$rd.color.border.subtle"
+                  },
+                  "padding": [0, 10],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "portValB",
+                      "name": "Port Value",
+                      "fill": "$rd.color.text.primary",
+                      "content": "8743",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 13
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "pskFieldB",
+              "name": "PSK Field",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "pskLblB",
+                  "name": "PSK Label",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "Agent PSK",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                },
+                {
+                  "type": "frame",
+                  "id": "pskRowB",
+                  "name": "PSK Row",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "pskEditB",
+                      "name": "PSK Edit",
+                      "width": "fill_container",
+                      "height": 28,
+                      "fill": "$rd.color.surface.panel",
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1,
+                        "fill": "$rd.color.border.subtle"
+                      },
+                      "padding": [0, 10],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pskValB",
+                          "name": "PSK Value",
+                          "fill": "$rd.color.text.primary",
+                          "content": "••••••••••••••••••••",
+                          "fontFamily": "Segoe UI",
+                          "fontSize": 13
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "browseB",
+                      "name": "Browse Button",
+                      "width": 88,
+                      "height": 28,
+                      "fill": "$rd.color.surface.panel",
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1,
+                        "fill": "$rd.color.border.subtle"
+                      },
+                      "gap": 6,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "browseIconB",
+                          "name": "Browse Icon",
+                          "width": 14,
+                          "height": 14,
+                          "library": "lucide",
+                          "icon": "folder",
+                          "fill": "$rd.color.text.primary"
+                        },
+                        {
+                          "type": "text",
+                          "id": "browseTB",
+                          "name": "Browse Label",
+                          "fill": "$rd.color.text.primary",
+                          "content": "浏览…",
+                          "fontFamily": "Segoe UI",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "statusB",
+              "name": "Success Status",
+              "width": "fill_container",
+              "height": 18,
+              "gap": 6,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "okIconB",
+                  "name": "Success Icon",
+                  "width": 14,
+                  "height": 14,
+                  "library": "lucide",
+                  "icon": "circle-check",
+                  "fill": "$rd.color.success"
+                },
+                {
+                  "type": "text",
+                  "id": "statusTB",
+                  "name": "Success Text",
+                  "fill": "$rd.color.success",
+                  "content": "已从文件导入 Agent PSK",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "spacerB",
+              "name": "Flex Spacer",
+              "width": "fill_container",
+              "height": "fill_container"
+            },
+            {
+              "type": "rectangle",
+              "id": "divB",
+              "name": "Footer Divider",
+              "width": "fill_container",
+              "height": 1,
+              "fill": "$rd.color.border.subtle"
+            },
+            {
+              "type": "frame",
+              "id": "footerB",
+              "name": "Footer Actions",
+              "width": "fill_container",
+              "height": 48,
+              "gap": 12,
+              "justifyContent": "end",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "cancelB",
+                  "name": "Cancel Button",
+                  "width": 100,
+                  "height": 30,
+                  "fill": "$rd.color.surface.panel",
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "$rd.color.border.subtle"
+                  },
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "cancelTB",
+                      "name": "Cancel Label",
+                      "fill": "$rd.color.text.primary",
+                      "content": "取消",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "okB",
+                  "name": "OK Button",
+                  "width": 100,
+                  "height": 30,
+                  "fill": "$rd.color.accent",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "okTB",
+                      "name": "OK Label",
+                      "fill": "#FFFFFF",
+                      "content": "确定",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "lblErr",
+      "x": 960,
+      "y": 48,
+      "fill": "$rd.color.text.secondary",
+      "content": "C · 校验失败",
+      "fontFamily": "Segoe UI",
+      "fontSize": 14,
+      "fontWeight": "600"
+    },
+    {
+      "type": "frame",
+      "id": "dlgErr",
+      "x": 960,
+      "y": 80,
+      "name": "Agent Gateway / Validation Error",
+      "clip": true,
+      "width": 420,
+      "height": 360,
+      "fill": "$rd.color.surface.app",
+      "effect": {
+        "type": "shadow",
+        "shadowType": "outer",
+        "color": "#161E2E22",
+        "offset": { "x": 0, "y": 8 },
+        "blur": 24
+      },
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "hdrC",
+          "name": "Brand Header",
+          "width": "fill_container",
+          "height": 72,
+          "fill": "$rd.color.brand.bg",
+          "padding": [0, 28],
+          "gap": 4,
+          "layout": "vertical",
+          "justifyContent": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "hdrCTitle",
+              "name": "Brand Title",
+              "fill": "$rd.color.brand.fg",
+              "content": "Road Desk",
+              "fontFamily": "Segoe UI",
+              "fontSize": 21,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "hdrCSub",
+              "name": "Brand Subtitle",
+              "fill": "$rd.color.brand.fgMuted",
+              "content": "被控端网关配置",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "bodyC",
+          "name": "Form Body",
+          "width": "fill_container",
+          "height": "fill_container",
+          "fill": "$rd.color.surface.app",
+          "layout": "vertical",
+          "padding": [20, 28, 0, 28],
+          "gap": 12,
+          "children": [
+            {
+              "type": "frame",
+              "id": "hostFieldC",
+              "name": "Host Field",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "hostLblC",
+                  "name": "Host Label",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "网关 IP / 主机",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                },
+                {
+                  "type": "frame",
+                  "id": "hostEditC",
+                  "name": "Host Edit Focus",
+                  "width": "fill_container",
+                  "height": 28,
+                  "fill": "$rd.color.surface.panel",
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "$rd.color.accent"
+                  },
+                  "padding": [0, 10],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "hostValC",
+                      "name": "Host Value Empty",
+                      "fill": "$rd.color.text.muted",
+                      "content": " ",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 13
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "portFieldC",
+              "name": "Port Field",
+              "width": 120,
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "portLblC",
+                  "name": "Port Label",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "端口",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                },
+                {
+                  "type": "frame",
+                  "id": "portEditC",
+                  "name": "Port Edit",
+                  "width": "fill_container",
+                  "height": 28,
+                  "fill": "$rd.color.surface.panel",
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "$rd.color.border.subtle"
+                  },
+                  "padding": [0, 10],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "portValC",
+                      "name": "Port Value",
+                      "fill": "$rd.color.text.primary",
+                      "content": "8743",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 13
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "pskFieldC",
+              "name": "PSK Field",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "pskLblC",
+                  "name": "PSK Label",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "Agent PSK",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                },
+                {
+                  "type": "frame",
+                  "id": "pskRowC",
+                  "name": "PSK Row",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "pskEditC",
+                      "name": "PSK Edit Error",
+                      "width": "fill_container",
+                      "height": 28,
+                      "fill": "$rd.color.surface.panel",
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1,
+                        "fill": "$rd.color.danger"
+                      },
+                      "padding": [0, 10],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pskValC",
+                          "name": "PSK Empty",
+                          "fill": "$rd.color.text.muted",
+                          "content": " ",
+                          "fontFamily": "Segoe UI",
+                          "fontSize": 13
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "browseC",
+                      "name": "Browse Button",
+                      "width": 88,
+                      "height": 28,
+                      "fill": "$rd.color.surface.panel",
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1,
+                        "fill": "$rd.color.border.subtle"
+                      },
+                      "gap": 6,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "browseIconC",
+                          "name": "Browse Icon",
+                          "width": 14,
+                          "height": 14,
+                          "library": "lucide",
+                          "icon": "folder",
+                          "fill": "$rd.color.text.primary"
+                        },
+                        {
+                          "type": "text",
+                          "id": "browseTC",
+                          "name": "Browse Label",
+                          "fill": "$rd.color.text.primary",
+                          "content": "浏览…",
+                          "fontFamily": "Segoe UI",
+                          "fontSize": 12,
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "statusC",
+              "name": "Error Status",
+              "width": "fill_container",
+              "height": 18,
+              "gap": 6,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "errIconC",
+                  "name": "Error Icon",
+                  "width": 14,
+                  "height": 14,
+                  "library": "lucide",
+                  "icon": "circle-alert",
+                  "fill": "$rd.color.danger"
+                },
+                {
+                  "type": "text",
+                  "id": "statusTC",
+                  "name": "Error Text",
+                  "fill": "$rd.color.danger",
+                  "content": "请填写网关地址、端口与 Agent PSK",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "spacerC",
+              "name": "Flex Spacer",
+              "width": "fill_container",
+              "height": "fill_container"
+            },
+            {
+              "type": "rectangle",
+              "id": "divC",
+              "name": "Footer Divider",
+              "width": "fill_container",
+              "height": 1,
+              "fill": "$rd.color.border.subtle"
+            },
+            {
+              "type": "frame",
+              "id": "footerC",
+              "name": "Footer Actions",
+              "width": "fill_container",
+              "height": 48,
+              "gap": 12,
+              "justifyContent": "end",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "cancelC",
+                  "name": "Cancel Button",
+                  "width": 100,
+                  "height": 30,
+                  "fill": "$rd.color.surface.panel",
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "$rd.color.border.subtle"
+                  },
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "cancelTC",
+                      "name": "Cancel Label",
+                      "fill": "$rd.color.text.primary",
+                      "content": "取消",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "okC",
+                  "name": "OK Button",
+                  "width": 100,
+                  "height": 30,
+                  "fill": "$rd.color.accent",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "okTC",
+                      "name": "OK Label",
+                      "fill": "#FFFFFF",
+                      "content": "确定",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "lblSpec",
+      "x": 40,
+      "y": 480,
+      "fill": "$rd.color.text.secondary",
+      "content": "规格摘要 · Token 对照",
+      "fontFamily": "Segoe UI",
+      "fontSize": 14,
+      "fontWeight": "600"
+    },
+    {
+      "type": "frame",
+      "id": "specCard",
+      "x": 40,
+      "y": 512,
+      "name": "Spec Summary",
+      "width": 880,
+      "layout": "vertical",
+      "gap": 12,
+      "padding": 20,
+      "fill": "$rd.color.surface.panel",
+      "stroke": {
+        "align": "inside",
+        "thickness": 1,
+        "fill": "$rd.color.border.subtle"
+      },
+      "children": [
+        {
+          "type": "frame",
+          "id": "specRow1",
+          "name": "Spec Row Layout",
+          "width": "fill_container",
+          "gap": 24,
+          "children": [
+            {
+              "type": "frame",
+              "id": "specCol1",
+              "name": "Layout Spec",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "specCol1T",
+                  "fill": "$rd.color.text.primary",
+                  "content": "布局",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 13,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "specCol1B",
+                  "fill": "$rd.color.text.secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "客户区 420×360 · 顶栏 72 · 水平边距 28 · 内容顶距 20 · 字段间距 12 · 标签→编辑 6 · 底栏高 48",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "specCol2",
+              "name": "Control Spec",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "specCol2T",
+                  "fill": "$rd.color.text.primary",
+                  "content": "控件",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 13,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "specCol2B",
+                  "fill": "$rd.color.text.secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "EDIT 高 28 · 端口宽 120 · 浏览… 88×28 · 取消/确定 100×30 · 圆角 0（系统控件）",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "specRow2",
+          "name": "Spec Row Copy",
+          "width": "fill_container",
+          "gap": 24,
+          "children": [
+            {
+              "type": "frame",
+              "id": "specCol3",
+              "name": "Copy Spec",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "specCol3T",
+                  "fill": "$rd.color.text.primary",
+                  "content": "文案",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 13,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "specCol3B",
+                  "fill": "$rd.color.text.secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "窗标题 Road Desk — 网关配置 · 顶栏 Road Desk / 被控端网关配置 · 字段：网关 IP / 主机、端口、Agent PSK",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "specCol4",
+              "name": "Diff Spec",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "specCol4T",
+                  "fill": "$rd.color.text.primary",
+                  "content": "相对现状",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 13,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "specCol4B",
+                  "fill": "$rd.color.text.secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "现状为系统灰窗+「选文件…」。本稿加品牌顶栏、surface.app、统一浏览…、行内成功/错误（可替代 MessageBox 短提示）。",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "swatches",
+          "name": "Color Swatches",
+          "width": "fill_container",
+          "gap": 8,
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "sw1",
+              "width": 28,
+              "height": 28,
+              "fill": "$rd.color.brand.bg",
+              "cornerRadius": 2
+            },
+            {
+              "type": "frame",
+              "id": "sw2",
+              "width": 28,
+              "height": 28,
+              "fill": "$rd.color.surface.app",
+              "cornerRadius": 2,
+              "stroke": {
+                "align": "inside",
+                "thickness": 1,
+                "fill": "$rd.color.border.subtle"
+              }
+            },
+            {
+              "type": "frame",
+              "id": "sw3",
+              "width": 28,
+              "height": 28,
+              "fill": "$rd.color.accent",
+              "cornerRadius": 2
+            },
+            {
+              "type": "frame",
+              "id": "sw4",
+              "width": 28,
+              "height": 28,
+              "fill": "$rd.color.success",
+              "cornerRadius": 2
+            },
+            {
+              "type": "frame",
+              "id": "sw5",
+              "width": 28,
+              "height": 28,
+              "fill": "$rd.color.danger",
+              "cornerRadius": 2
+            },
+            {
+              "type": "text",
+              "id": "swLbl",
+              "fill": "$rd.color.text.muted",
+              "content": "brand.bg · surface.app · accent · success · danger",
+              "fontFamily": "Segoe UI",
+              "fontSize": 11
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "note",
+      "id": "noteImpl",
+      "x": 40,
+      "y": 720,
+      "width": 880,
+      "height": 130,
+      "content": "实现要点（src/agent/gateway_config.cpp）\n\n1. WM_ERASEBKGND / 自绘：顶栏 FillRect brand.bg；客户区 surface.app；禁止 COLOR_WINDOW 作主背景\n2. 全部控件 WM_SETFONT（Segoe UI 栈）；坐标经 rd_dip；编辑高 28、按钮 100×30\n3. 「选文件…」→「浏览…」；可选行内 status（success/danger）替代仅 MessageBox\n4. 确定 BS_DEFPUSHBUTTON；取消在左、确定在右；底部分隔线 border.subtle\n5. 验收：100% / 125% / 150% 无裁切；与 Viewer 登录色板一致"
+    }
+  ],
+  "themes": {
+    "mode": ["light"]
+  },
+  "variables": {
+    "rd.color.brand.bg": { "type": "color", "value": "#161E2E" },
+    "rd.color.brand.fg": { "type": "color", "value": "#FFFFFF" },
+    "rd.color.brand.fgMuted": { "type": "color", "value": "#A0B0C8" },
+    "rd.color.surface.app": { "type": "color", "value": "#F6F8FB" },
+    "rd.color.surface.panel": { "type": "color", "value": "#FFFFFF" },
+    "rd.color.surface.chrome": { "type": "color", "value": "#ECF0F5" },
+    "rd.color.text.primary": { "type": "color", "value": "#1C222E" },
+    "rd.color.text.secondary": { "type": "color", "value": "#586272" },
+    "rd.color.text.muted": { "type": "color", "value": "#8C96A4" },
+    "rd.color.border.subtle": { "type": "color", "value": "#DCE2EA" },
+    "rd.color.border.strong": { "type": "color", "value": "#B4BECC" },
+    "rd.color.accent": { "type": "color", "value": "#2F6BA8" },
+    "rd.color.success": { "type": "color", "value": "#2E7D5A" },
+    "rd.color.danger": { "type": "color", "value": "#B03C3C" },
+    "rd.size.cfgW": { "type": "number", "value": 420 },
+    "rd.size.cfgH": { "type": "number", "value": 360 },
+    "rd.size.headerH": { "type": "number", "value": 72 },
+    "rd.size.editH": { "type": "number", "value": 28 },
+    "rd.size.btnW": { "type": "number", "value": 100 },
+    "rd.size.btnH": { "type": "number", "value": 30 },
+    "rd.space.padX": { "type": "number", "value": 28 },
+    "rd.space.fieldGap": { "type": "number", "value": 12 }
+  }
+}
