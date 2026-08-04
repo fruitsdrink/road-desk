@@ -53,7 +53,12 @@ func (s *Service) Login(ctx context.Context, username, password, requireRole str
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
 		return "", Claims{}, errors.New("用户名或密码错误")
 	}
-	if requireRole != "" && c.Role != requireRole {
+	// Viewer console: admin and operator (viewer) both allowed.
+	if requireRole == RoleViewer {
+		if c.Role != RoleViewer && c.Role != RoleAdmin {
+			return "", Claims{}, errors.New("该账号无权使用 Viewer")
+		}
+	} else if requireRole != "" && c.Role != requireRole {
 		if requireRole == RoleAdmin {
 			return "", Claims{}, errors.New("该账号不是管理员，请使用 Viewer 登录")
 		}

@@ -984,7 +984,7 @@ bool register_console_classes(HINSTANCE instance) {
 
 }  // namespace
 
-int run_console(HINSTANCE instance, int show_cmd, const ConnectDefaults& connect) {
+int run_console(HINSTANCE instance, int /*show_cmd*/, const ConnectDefaults& connect) {
   INITCOMMONCONTROLSEX icc{sizeof(icc),
                            ICC_TREEVIEW_CLASSES | ICC_LISTVIEW_CLASSES | ICC_BAR_CLASSES};
   InitCommonControlsEx(&icc);
@@ -999,13 +999,25 @@ int run_console(HINSTANCE instance, int show_cmd, const ConnectDefaults& connect
   g_console = &state;
 
   HMENU menu = build_placeholder_menu();
-  HWND hwnd =
-      CreateWindowExW(0, kConsoleClass, L"Road Desk Viewer", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
-                      CW_USEDEFAULT, 1100, 720, nullptr, menu, instance, &state);
+  constexpr int kConsoleW = 1100;
+  constexpr int kConsoleH = 720;
+  HWND hwnd = CreateWindowExW(0, kConsoleClass, L"Road Desk Viewer", WS_OVERLAPPEDWINDOW, 0, 0,
+                              kConsoleW, kConsoleH, nullptr, menu, instance, &state);
   if (!hwnd) {
     return 1;
   }
-  ShowWindow(hwnd, show_cmd);
+  // Center on the monitor work area. Do not pass WinMain's show_cmd (often SW_SHOWDEFAULT):
+  // Explorer STARTUPINFO would otherwise place the window at the cascade top-left.
+  RECT rc{};
+  GetWindowRect(hwnd, &rc);
+  RECT wa{};
+  SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
+  const int win_w = rc.right - rc.left;
+  const int win_h = rc.bottom - rc.top;
+  SetWindowPos(hwnd, nullptr, wa.left + (wa.right - wa.left - win_w) / 2,
+               wa.top + (wa.bottom - wa.top - win_h) / 2, 0, 0,
+               SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+  ShowWindow(hwnd, SW_SHOW);
   UpdateWindow(hwnd);
   SessionHost::install_keyboard_hook(instance);
 

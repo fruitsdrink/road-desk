@@ -83,20 +83,20 @@ pnpm dev     # http://127.0.0.1:5173 ，API 代理到 :8743
 
 启动控制台模式且未配置时，会弹出 **Viewer 登录** 对话框：
 
-1. **帐号登录**：管理端创建的 `viewer`（操作员）用户 → `POST /v1/viewer/login` 取 JWT 拉目录
+1. **帐号登录**：管理端的 `admin`（管理员）或 `viewer`（操作员）→ `POST /v1/viewer/login` 取 JWT 拉目录
 2. **或导入 Viewer PSK**：管理端下载的 `viewer.psk`（选文件或粘贴）
 
-成功后写入 `%ProgramData%\RoadDesk\viewer.json`（`gatewayUrl`、`viewerKey`、可选 `username`）。目录拉取失败会再次弹出登录框。
+每次冷启动都会弹出登录框（JWT 仅本次进程有效，不落盘）。若曾导入过 Viewer PSK，会写入 `%ProgramData%\RoadDesk\viewer.json` 的 `viewerPsk`（另存 `gatewayUrl`、可选 `username`），下次可跳过重新选文件。勾选「记住密码」时另存 `rememberPassword` + `password`，下次预填密码框；取消勾选则清除落盘密码。目录拉取失败会再次弹出登录框。
 
 也可不经弹窗，直接用环境变量：
 
 - `ROAD_DESK_GATEWAY_URL=http://<gateway>:8743`
-- `ROAD_DESK_VIEWER_KEY=<viewer.psk 或 JWT>`
+- `ROAD_DESK_VIEWER_KEY=<viewer.psk 或 JWT>`（设置后跳过登录框）
 - `ROAD_DESK_VIEWER_USER=<用户名>`（可选）
 
 仍需媒体面：`ROAD_DESK_PSK`、TLS fingerprint 或 `ROAD_DESK_TLS_INSECURE=1`。
 
-取消登录、未配置网关或加 `--demo-book` 时使用内置演示树。
+取消登录则退出。未配置网关或加 `--demo-book` 时使用内置演示树。
 
 ## 验收清单（冒烟）
 

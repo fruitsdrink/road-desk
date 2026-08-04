@@ -119,6 +119,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_cmd)
         viewer_boot("gateway_configured");
       } else {
         viewer_boot("gateway_prompt_cancelled");
+        road_desk::media::media_log_close();
+        return 1;
       }
     }
     const bool want_gateway = !force_demo && !dir.gateway_url.empty() && !dir.directory_key.empty();
@@ -133,17 +135,21 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_cmd)
           road_desk::viewer::save_directory_config(dir);
           viewer_boot("gateway_directory_ok");
         } else {
-          std::fprintf(stderr, "gateway directory failed: %s — falling back to demo book\n",
-                       err.c_str());
-          road_desk::viewer::address_book_load(road_desk::viewer::AddressBookSource::kDemo, {},
-                                               nullptr);
+          viewer_boot("gateway_directory_cancelled");
+          std::fprintf(stderr, "gateway directory failed: %s — exiting\n", err.c_str());
+          road_desk::media::media_log_close();
+          return 1;
         }
       } else {
         viewer_boot("gateway_directory_ok");
       }
-    } else {
+    } else if (force_demo) {
       road_desk::viewer::address_book_load(road_desk::viewer::AddressBookSource::kDemo, {}, nullptr);
-      viewer_boot(force_demo ? "demo_book_forced" : "demo_book");
+      viewer_boot("demo_book_forced");
+    } else {
+      viewer_boot("gateway_unconfigured");
+      road_desk::media::media_log_close();
+      return 1;
     }
   }
 

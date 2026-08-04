@@ -1,0 +1,14 @@
+---
+description: Road Desk Win32 UI must follow the product design system (Viewer + Agent).
+globs: src/viewer/**/*.{cpp,h},src/agent/**/*.{cpp,h},src/ui/**/*.{cpp,h},**/viewer.manifest,**/host-agent.manifest,docs/ui-design-system.md
+alwaysApply: false
+---
+
+# Win32 UI
+
+Before changing native UI, read `docs/ui-design-system.md` and follow `.cursor/skills/win32-ui/SKILL.md`.
+
+- Viewer and Agent share one palette, fonts, and「浏览…」label; Viewer login uses split auth layout, Agent uses compact top-header config.
+- Use design-doc tokens (`rd.color.*`, `rd.space.*`, `rd.font.*`); do not invent one-off RGB/padding.
+- Scale layout + fonts for system DPI; do not enable Per-Monitor V2 without `WM_DPICHANGED`.
+- Raw Win32 only (no Qt/ImGui for Win7 line). Update the design doc if tokens change.

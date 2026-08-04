@@ -1,0 +1,1150 @@
+{
+  "version": "2.15",
+  "children": [
+    {
+      "type": "note",
+      "id": "noteBrief",
+      "x": 40,
+      "y": -81,
+      "width": 720,
+      "height": 130,
+      "content": "Viewer 登录页 · 管理系统分栏布局\n\n左栏品牌背景图 assets/brand/rd_login_brand.png + 深色蒙层。\n输入框左侧线性图标；密码框右侧 eye 显隐；浏览/登录带图标。\n对照 docs/ui-design-system.md「登录窗布局」。"
+    },
+    {
+      "type": "text",
+      "id": "lblAccount",
+      "x": 40,
+      "y": 168,
+      "fill": "$rd.color.text.secondary",
+      "content": "A · 帐号登录（800×520）",
+      "fontFamily": "Segoe UI",
+      "fontSize": 14,
+      "fontWeight": "600"
+    },
+    {
+      "type": "frame",
+      "id": "dlgAccount",
+      "x": 40,
+      "y": 226,
+      "name": "Login / Split Account",
+      "clip": true,
+      "width": 800,
+      "height": 520,
+      "fill": "$rd.color.surface.panel",
+      "effect": {
+        "type": "shadow",
+        "shadowType": "outer",
+        "color": "#161E2E22",
+        "offset": { "x": 0, "y": 8 },
+        "blur": 24
+      },
+      "layout": "horizontal",
+      "children": [
+        {
+          "type": "frame",
+          "id": "leftBrand",
+          "width": 320,
+          "height": "fill_container",
+          "clip": true,
+          "fill": [
+            { "type": "color", "color": "$rd.color.brand.bg" },
+            {
+              "type": "image",
+              "url": "./rd_login_brand.png",
+              "mode": "fill",
+              "opacity": 0.9
+            },
+            { "type": "color", "color": "#161E2EA0" }
+          ],
+          "layout": "vertical",
+          "gap": 20,
+          "padding": 36,
+          "children": [
+            {
+              "type": "frame",
+              "id": "mark",
+              "width": 48,
+              "height": 48,
+              "fill": "$rd.color.accent",
+              "cornerRadius": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "markT",
+                  "fill": "#FFFFFF",
+                  "content": "RD",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 14,
+                  "fontWeight": "700"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "brandTitles",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "brandName",
+                  "fill": "$rd.color.brand.fg",
+                  "content": "Road Desk",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 21,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "brandSub",
+                  "fill": "$rd.color.brand.fgMuted",
+                  "content": "操作端登录",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 13
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "brandSpacer",
+              "width": "fill_container",
+              "height": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "slogan",
+              "fill": "$rd.color.brand.fgMuted",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "连接目录服务，拉取被控端列表。\n远控画面由操作端直连被控端。",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "rightForm",
+          "width": "fill_container",
+          "height": "fill_container",
+          "fill": "$rd.color.surface.panel",
+          "layout": "vertical",
+          "gap": 16,
+          "padding": [36, 40, 28, 40],
+          "children": [
+            {
+              "type": "frame",
+              "id": "welcome",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "welcomeT",
+                  "fill": "$rd.color.text.primary",
+                  "content": "欢迎登录",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 24,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "welcomeSub",
+                  "fill": "$rd.color.text.muted",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "登录后进入管理台，管理被控端目录与会话。",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "hostRow",
+              "width": "fill_container",
+              "gap": 8,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "hostField",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 6,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "hostLbl",
+                      "fill": "$rd.color.text.secondary",
+                      "content": "网关主机",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 12
+                    },
+                    {
+                      "type": "frame",
+                      "id": "hostEdit",
+                      "width": "fill_container",
+                      "height": 32,
+                      "fill": "$rd.color.surface.panel",
+                      "cornerRadius": 4,
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1,
+                        "fill": "$rd.color.border.subtle"
+                      },
+                      "padding": [0, 10],
+                      "gap": 8,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "hostIcon",
+                          "width": 16,
+                          "height": 16,
+                          "library": "lucide",
+                          "icon": "server",
+                          "fill": "$rd.color.text.muted"
+                        },
+                        {
+                          "type": "text",
+                          "id": "hostVal",
+                          "fill": "$rd.color.text.primary",
+                          "content": "127.0.0.1",
+                          "fontFamily": "Segoe UI",
+                          "fontSize": 13
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "portField",
+                  "width": 100,
+                  "layout": "vertical",
+                  "gap": 6,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "portLbl",
+                      "fill": "$rd.color.text.secondary",
+                      "content": "端口",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 12
+                    },
+                    {
+                      "type": "frame",
+                      "id": "portEdit",
+                      "width": "fill_container",
+                      "height": 32,
+                      "fill": "$rd.color.surface.panel",
+                      "cornerRadius": 4,
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1,
+                        "fill": "$rd.color.border.subtle"
+                      },
+                      "padding": [0, 10],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "portVal",
+                          "fill": "$rd.color.text.primary",
+                          "content": "8743",
+                          "fontFamily": "Segoe UI",
+                          "fontSize": 13
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "userField",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "userLbl",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "用户名",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                },
+                {
+                  "type": "frame",
+                  "id": "userEdit",
+                  "width": "fill_container",
+                  "height": 32,
+                  "fill": "$rd.color.surface.panel",
+                  "cornerRadius": 4,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "$rd.color.border.subtle"
+                  },
+                  "padding": [0, 10],
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "userIcon",
+                      "width": 16,
+                      "height": 16,
+                      "library": "lucide",
+                      "icon": "user",
+                      "fill": "$rd.color.text.muted"
+                    },
+                    {
+                      "type": "text",
+                      "id": "userVal",
+                      "fill": "$rd.color.text.primary",
+                      "content": "operator",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 13
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "passField",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "passLbl",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "密码",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                },
+                {
+                  "type": "frame",
+                  "id": "passRow",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "passEdit",
+                      "width": "fill_container",
+                      "height": 32,
+                      "fill": "$rd.color.surface.panel",
+                      "cornerRadius": 4,
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1,
+                        "fill": "$rd.color.border.subtle"
+                      },
+                      "padding": [0, 10],
+                      "gap": 8,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "passIcon",
+                          "width": 16,
+                          "height": 16,
+                          "library": "lucide",
+                          "icon": "lock",
+                          "fill": "$rd.color.text.muted"
+                        },
+                        {
+                          "type": "text",
+                          "id": "passVal",
+                          "fill": "$rd.color.text.primary",
+                          "content": "••••••••",
+                          "fontFamily": "Segoe UI",
+                          "fontSize": 13
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "eyeBtn",
+                      "width": 32,
+                      "height": 32,
+                      "fill": "$rd.color.surface.panel",
+                      "cornerRadius": 4,
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1,
+                        "fill": "$rd.color.border.subtle"
+                      },
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "eyeIcon",
+                          "width": 16,
+                          "height": 16,
+                          "library": "lucide",
+                          "icon": "eye",
+                          "fill": "$rd.color.text.secondary"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "sep",
+              "width": "fill_container",
+              "height": 20,
+              "gap": 10,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "id": "sepL",
+                  "fill": "$rd.color.border.subtle",
+                  "width": "fill_container",
+                  "height": 1
+                },
+                {
+                  "type": "text",
+                  "id": "sepT",
+                  "fill": "$rd.color.text.muted",
+                  "content": "或导入 Viewer PSK",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                },
+                {
+                  "type": "rectangle",
+                  "id": "sepR",
+                  "fill": "$rd.color.border.subtle",
+                  "width": "fill_container",
+                  "height": 1
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "pskRow",
+              "width": "fill_container",
+              "gap": 8,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "pskEdit",
+                  "width": "fill_container",
+                  "height": 32,
+                  "fill": "$rd.color.surface.panel",
+                  "cornerRadius": 4,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "$rd.color.border.subtle"
+                  },
+                  "padding": [0, 10],
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "pskIcon",
+                      "width": 16,
+                      "height": 16,
+                      "library": "lucide",
+                      "icon": "key",
+                      "fill": "$rd.color.text.muted"
+                    },
+                    {
+                      "type": "text",
+                      "id": "pskCue",
+                      "fill": "$rd.color.text.muted",
+                      "content": "粘贴或选择 viewer.psk",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 13
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "browse",
+                  "width": 110,
+                  "height": 32,
+                  "fill": "$rd.color.surface.chrome",
+                  "cornerRadius": 4,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "$rd.color.border.subtle"
+                  },
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "browseIcon",
+                      "width": 16,
+                      "height": 16,
+                      "library": "lucide",
+                      "icon": "folder",
+                      "fill": "$rd.color.text.primary"
+                    },
+                    {
+                      "type": "text",
+                      "id": "browseT",
+                      "fill": "$rd.color.text.primary",
+                      "content": "浏览…",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 13
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "formSpacer",
+              "width": "fill_container",
+              "height": "fill_container"
+            },
+            {
+              "type": "frame",
+              "id": "actions",
+              "width": "fill_container",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "cancel",
+                  "width": 100,
+                  "height": 36,
+                  "fill": "$rd.color.surface.panel",
+                  "cornerRadius": 4,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "$rd.color.border.subtle"
+                  },
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "cancelIcon",
+                      "width": 16,
+                      "height": 16,
+                      "library": "lucide",
+                      "icon": "x",
+                      "fill": "$rd.color.text.primary"
+                    },
+                    {
+                      "type": "text",
+                      "id": "cancelT",
+                      "fill": "$rd.color.text.primary",
+                      "content": "取消",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ok",
+                  "width": "fill_container",
+                  "height": 36,
+                  "fill": "$rd.color.accent",
+                  "cornerRadius": 4,
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "okIcon",
+                      "width": 16,
+                      "height": 16,
+                      "library": "lucide",
+                      "icon": "log-in",
+                      "fill": "#FFFFFF"
+                    },
+                    {
+                      "type": "text",
+                      "id": "okT",
+                      "fill": "#FFFFFF",
+                      "content": "登录",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "lblPsk",
+      "x": 880,
+      "y": 168,
+      "fill": "$rd.color.text.secondary",
+      "content": "B · 已导入 PSK（800×480）· 密码明文态示意",
+      "fontFamily": "Segoe UI",
+      "fontSize": 14,
+      "fontWeight": "600"
+    },
+    {
+      "type": "frame",
+      "id": "dlgPsk",
+      "x": 880,
+      "y": 226,
+      "name": "Login / Split PSK Saved",
+      "clip": true,
+      "width": 800,
+      "height": 480,
+      "fill": "$rd.color.surface.panel",
+      "effect": {
+        "type": "shadow",
+        "shadowType": "outer",
+        "color": "#161E2E22",
+        "offset": { "x": 0, "y": 8 },
+        "blur": 24
+      },
+      "layout": "horizontal",
+      "children": [
+        {
+          "type": "frame",
+          "id": "leftBrand2",
+          "width": 320,
+          "height": "fill_container",
+          "clip": true,
+          "fill": [
+            { "type": "color", "color": "$rd.color.brand.bg" },
+            {
+              "type": "image",
+              "url": "./rd_login_brand.png",
+              "mode": "fill",
+              "opacity": 0.9
+            },
+            { "type": "color", "color": "#161E2EA0" }
+          ],
+          "layout": "vertical",
+          "gap": 20,
+          "padding": 36,
+          "children": [
+            {
+              "type": "frame",
+              "id": "mark2",
+              "width": 48,
+              "height": 48,
+              "fill": "$rd.color.accent",
+              "cornerRadius": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "mark2T",
+                  "fill": "#FFFFFF",
+                  "content": "RD",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 14,
+                  "fontWeight": "700"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "brandTitles2",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "brandName2",
+                  "fill": "$rd.color.brand.fg",
+                  "content": "Road Desk",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 21,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "brandSub2",
+                  "fill": "$rd.color.brand.fgMuted",
+                  "content": "操作端登录",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 13
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "brandSpacer2",
+              "width": "fill_container",
+              "height": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "slogan2",
+              "fill": "$rd.color.brand.fgMuted",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "连接目录服务，拉取被控端列表。\n远控画面由操作端直连被控端。",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "rightForm2",
+          "width": "fill_container",
+          "height": "fill_container",
+          "fill": "$rd.color.surface.panel",
+          "layout": "vertical",
+          "gap": 16,
+          "padding": [36, 40, 28, 40],
+          "children": [
+            {
+              "type": "frame",
+              "id": "welcome2",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "welcome2T",
+                  "fill": "$rd.color.text.primary",
+                  "content": "欢迎登录",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 24,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "welcome2Sub",
+                  "fill": "$rd.color.text.muted",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "登录后进入管理台，管理被控端目录与会话。",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "pskBanner",
+              "width": "fill_container",
+              "fill": "#E8F5EE",
+              "cornerRadius": 4,
+              "padding": [10, 12],
+              "layout": "vertical",
+              "gap": 2,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "pskBannerT",
+                  "fill": "$rd.color.success",
+                  "content": "已保存 Viewer PSK",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "pskBannerB",
+                  "fill": "$rd.color.text.secondary",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "可直接登录；也可改用操作员帐号。",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 11
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "hostRow2",
+              "width": "fill_container",
+              "gap": 8,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "hostField2",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 6,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "hostLbl2",
+                      "fill": "$rd.color.text.secondary",
+                      "content": "网关主机",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 12
+                    },
+                    {
+                      "type": "frame",
+                      "id": "hostEdit2",
+                      "width": "fill_container",
+                      "height": 32,
+                      "fill": "$rd.color.surface.panel",
+                      "cornerRadius": 4,
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1,
+                        "fill": "$rd.color.border.subtle"
+                      },
+                      "padding": [0, 10],
+                      "gap": 8,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "hostIcon2",
+                          "width": 16,
+                          "height": 16,
+                          "library": "lucide",
+                          "icon": "server",
+                          "fill": "$rd.color.text.muted"
+                        },
+                        {
+                          "type": "text",
+                          "id": "hostVal2",
+                          "fill": "$rd.color.text.primary",
+                          "content": "gateway.road.local",
+                          "fontFamily": "Segoe UI",
+                          "fontSize": 13
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "portField2",
+                  "width": 100,
+                  "layout": "vertical",
+                  "gap": 6,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "portLbl2",
+                      "fill": "$rd.color.text.secondary",
+                      "content": "端口",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 12
+                    },
+                    {
+                      "type": "frame",
+                      "id": "portEdit2",
+                      "width": "fill_container",
+                      "height": 32,
+                      "fill": "$rd.color.surface.panel",
+                      "cornerRadius": 4,
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1,
+                        "fill": "$rd.color.border.subtle"
+                      },
+                      "padding": [0, 10],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "portVal2",
+                          "fill": "$rd.color.text.primary",
+                          "content": "8743",
+                          "fontFamily": "Segoe UI",
+                          "fontSize": 13
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "userField2",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "userLbl2",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "用户名（可选）",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                },
+                {
+                  "type": "frame",
+                  "id": "userEdit2",
+                  "width": "fill_container",
+                  "height": 32,
+                  "fill": "$rd.color.surface.panel",
+                  "cornerRadius": 4,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "$rd.color.border.subtle"
+                  },
+                  "padding": [0, 10],
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "userIcon2",
+                      "width": 16,
+                      "height": 16,
+                      "library": "lucide",
+                      "icon": "user",
+                      "fill": "$rd.color.text.muted"
+                    },
+                    {
+                      "type": "text",
+                      "id": "userVal2",
+                      "fill": "$rd.color.text.primary",
+                      "content": "ops.zhang",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 13
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "passField2",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 6,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "passLbl2",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "密码（可选）",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12
+                },
+                {
+                  "type": "frame",
+                  "id": "passRow2",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "passEdit2",
+                      "width": "fill_container",
+                      "height": 32,
+                      "fill": "$rd.color.surface.panel",
+                      "cornerRadius": 4,
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1,
+                        "fill": "$rd.color.border.subtle"
+                      },
+                      "padding": [0, 10],
+                      "gap": 8,
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "passIcon2",
+                          "width": 16,
+                          "height": 16,
+                          "library": "lucide",
+                          "icon": "lock",
+                          "fill": "$rd.color.text.muted"
+                        },
+                        {
+                          "type": "text",
+                          "id": "passVal2",
+                          "fill": "$rd.color.text.primary",
+                          "content": "shown-password",
+                          "fontFamily": "Segoe UI",
+                          "fontSize": 13
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "eyeBtn2",
+                      "width": 32,
+                      "height": 32,
+                      "fill": "$rd.color.surface.panel",
+                      "cornerRadius": 4,
+                      "stroke": {
+                        "align": "inside",
+                        "thickness": 1,
+                        "fill": "$rd.color.border.subtle"
+                      },
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "eyeIcon2",
+                          "width": 16,
+                          "height": 16,
+                          "library": "lucide",
+                          "icon": "eye-off",
+                          "fill": "$rd.color.accent"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "formSpacer2",
+              "width": "fill_container",
+              "height": "fill_container"
+            },
+            {
+              "type": "frame",
+              "id": "actions2",
+              "width": "fill_container",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "cancel2",
+                  "width": 100,
+                  "height": 36,
+                  "fill": "$rd.color.surface.panel",
+                  "cornerRadius": 4,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "$rd.color.border.subtle"
+                  },
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "cancelIcon2",
+                      "width": 16,
+                      "height": 16,
+                      "library": "lucide",
+                      "icon": "x",
+                      "fill": "$rd.color.text.primary"
+                    },
+                    {
+                      "type": "text",
+                      "id": "cancel2T",
+                      "fill": "$rd.color.text.primary",
+                      "content": "取消",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "ok2",
+                  "width": "fill_container",
+                  "height": 36,
+                  "fill": "$rd.color.accent",
+                  "cornerRadius": 4,
+                  "gap": 6,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "okIcon2",
+                      "width": 16,
+                      "height": 16,
+                      "library": "lucide",
+                      "icon": "log-in",
+                      "fill": "#FFFFFF"
+                    },
+                    {
+                      "type": "text",
+                      "id": "ok2T",
+                      "fill": "#FFFFFF",
+                      "content": "登录",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "note",
+      "id": "noteImpl",
+      "x": 40,
+      "y": 780,
+      "width": 800,
+      "height": 140,
+      "content": "实现（src/viewer/gateway_config.cpp）\n\n1. 左栏 GDI+ 加载 assets/brand/rd_login_brand.png + brand.bg 蒙层\n2. EDIT 子类化绘制前缀图标；EM_SETMARGINS 左 28DIP\n3. 密码旁 eye 自绘按钮：EM_SETPASSWORDCHAR 切换显隐\n4. 浏览… / 登录 自绘 + 线性图标；构建后复制品牌图到 exe 旁"
+    }
+  ],
+  "themes": {
+    "mode": ["light"]
+  },
+  "variables": {
+    "rd.color.brand.bg": { "type": "color", "value": "#161E2E" },
+    "rd.color.brand.fg": { "type": "color", "value": "#FFFFFF" },
+    "rd.color.brand.fgMuted": { "type": "color", "value": "#A0B0C8" },
+    "rd.color.surface.app": { "type": "color", "value": "#F6F8FB" },
+    "rd.color.surface.panel": { "type": "color", "value": "#FFFFFF" },
+    "rd.color.surface.chrome": { "type": "color", "value": "#ECF0F5" },
+    "rd.color.text.primary": { "type": "color", "value": "#1C222E" },
+    "rd.color.text.secondary": { "type": "color", "value": "#586272" },
+    "rd.color.text.muted": { "type": "color", "value": "#8C96A4" },
+    "rd.color.border.subtle": { "type": "color", "value": "#DCE2EA" },
+    "rd.color.border.strong": { "type": "color", "value": "#B4BECC" },
+    "rd.color.accent": { "type": "color", "value": "#2F6BA8" },
+    "rd.color.success": { "type": "color", "value": "#2E7D5A" },
+    "rd.size.loginW": { "type": "number", "value": 800 },
+    "rd.size.loginH": { "type": "number", "value": 520 },
+    "rd.size.leftW": { "type": "number", "value": 320 },
+    "rd.size.editH": { "type": "number", "value": 32 },
+    "rd.size.btnH": { "type": "number", "value": 36 },
+    "rd.space.padFormX": { "type": "number", "value": 40 },
+    "rd.space.padBrand": { "type": "number", "value": 36 }
+  },
+  "fileToken": "2acc4f42-e2e6-433c-a647-d645872b382b"
+}
+
