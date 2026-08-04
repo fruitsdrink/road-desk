@@ -2,6 +2,8 @@
 // Net thread owns TLS after start(); UI queues Input and reads framebuffer.
 
 #include "media_plane.h"
+#include "h264_mf.h"
+#include "jpeg_encode.h"
 #include "media_log.h"
 #include "mux.h"
 #include "mux_clipboard.h"
@@ -591,7 +593,8 @@ bool apply_video_payload(ClientState* st, const std::vector<uint8_t>& payload) {
       need_paint = true;
     }
     LeaveCriticalSection(&st->frame_lock);
-  } else if (codec == kVideoRawBgra || codec == kVideoZlibBgra) {
+  } else if (codec == kVideoRawBgra || codec == kVideoZlibBgra || codec == kVideoJpeg ||
+             codec == kVideoH264) {
     const size_t raw_bytes = static_cast<size_t>(rw) * rh * 4u;
     const uint8_t* wire = payload.data() + kVideoHeaderSize;
     const size_t wire_len = payload.size() - kVideoHeaderSize;
@@ -605,6 +608,20 @@ bool apply_video_payload(ClientState* st, const std::vector<uint8_t>& payload) {
       }
       src = wire;
       ++st->raw_ok;
+    } else if (codec == kVideoJpeg) {
+      if (!decode_jpeg_to_bgra(wire, wire_len, rw, rh, &st->decode_buf)) {
+        ++st->decode_fail;
+        return true;
+      }
+      src = st->decode_buf.data();
+      ++st->zlib_ok;
+    } else if (codec == kVideoH264) {
+      if (!decode_h264_to_bgra(wire, wire_len, rw, rh, &st->decode_buf)) {
+        ++st->decode_fail;
+        return true;
+      }
+      src = st->decode_buf.data();
+      ++st->zlib_ok;
     } else {
       st->decode_buf.resize(raw_bytes);
       mz_ulong out_len = static_cast<mz_ulong>(raw_bytes);
@@ -884,8 +901,13 @@ bool MediaClient::start(const MediaClientConfig& config) {
 
   uint8_t ch = 0;
   std::vector<uint8_t> payload;
-  if (!mux_read(st->tls, &ch, &payload) || ch != kChannelControl || payload.empty()) {
-    logf("no Control reply");
+  DWORD auth_deadline = GetTickCount() + 8000;
+  auto auth_idle = [](void* ctx) -> bool {
+    return GetTickCount() < *static_cast<DWORD*>(ctx);
+  };
+  if (!mux_read_idle(st->tls, &ch, &payload, auth_idle, &auth_deadline) ||
+      ch != kChannelControl || payload.empty()) {
+    logf("no Control reply (auth timeout or disconnect)");
     tls::tls_close(st->tls);
     st->tls = nullptr;
     WSACleanup();

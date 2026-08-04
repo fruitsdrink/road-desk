@@ -150,15 +150,9 @@ LRESULT CALLBACK SessionWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
       return 0;
     case WM_SETCURSOR:
       if (LOWORD(lparam) == HTCLIENT) {
-        // While dragging/clicking, show a local OS cursor so feel stays snappy.
-        // Soft (remote) cursor is for hover only — avoids full-frame repaint every move.
-        const bool pressing = (GetKeyState(VK_LBUTTON) < 0) || (GetKeyState(VK_RBUTTON) < 0) ||
-                              (GetKeyState(VK_MBUTTON) < 0);
-        if (pressing) {
-          SetCursor(LoadCursorW(nullptr, IDC_ARROW));
-        } else {
-          SetCursor(nullptr);
-        }
+        // Always local OS cursor (VNC-style). Host blanks system cursors so the remote
+        // soft-cursor channel is empty — hiding the local cursor on hover left none.
+        SetCursor(LoadCursorW(nullptr, IDC_ARROW));
         return TRUE;
       }
       break;
@@ -214,13 +208,11 @@ LRESULT CALLBACK SessionWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
         self->client_.set_software_cursor_enabled(false);
         return 0;
       }
-      // Local OS cursor while buttons down (drag); soft cursor on hover only.
-      self->client_.set_software_cursor_enabled(mask == 0);
+      // Soft cursor off: Host blanks OS cursors; local WM_SETCURSOR arrow is the only pointer.
+      self->client_.set_software_cursor_enabled(false);
       self->client_.send_pointer(mask, map_mouse_x(hwnd, lparam, fb_w, fb_h, fit_ws),
                                  map_mouse_y(hwnd, lparam, fb_w, fb_h, fit_ws));
-      if (mask == 0) {
-        InvalidateRect(hwnd, nullptr, FALSE);
-      }
+      self->last_ptr_mask_ = mask;
       return 0;
     }
     case WM_KILLFOCUS:

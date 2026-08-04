@@ -1,0 +1,25 @@
+{
+  "out_dir": "build/debug-pull",
+  "agents": [
+    {
+      "id": "win7",
+      "label": "Win7 lab",
+      "host": "192.168.1.10",
+      "media_port": 38471,
+      "debug_port": 38472,
+      "sidecar_port": 17890,
+      "sidecar_token_env": "ROAD_DESK_SIDECAR_TOKEN",
+      "psk_env": "ROAD_DESK_PSK"
+    },
+    {
+      "id": "win10",
+      "label": "Win10 lab",
+      "host": "192.168.1.11",
+      "media_port": 38471,
+      "debug_port": 38472,
+      "sidecar_port": 17890,
+      "sidecar_token_env": "ROAD_DESK_SIDECAR_TOKEN",
+      "psk_env": "ROAD_DESK_PSK"
+    }
+  ]
+}

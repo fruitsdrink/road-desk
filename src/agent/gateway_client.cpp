@@ -256,8 +256,8 @@ bool GatewayClient::post_json(const char* path, const std::string& body) {
 }
 
 void GatewayClient::run() {
-  WSADATA wsa{};
-  WSAStartup(MAKEWORD(2, 2), &wsa);
+  // Do not WSAStartup/WSACleanup here — media plane owns Winsock lifetime.
+  // A mismatched WSACleanup from this thread tears down sockets under serve().
   bool registered = false;
   while (!stop_) {
     const std::string body = build_body();
@@ -278,7 +278,6 @@ void GatewayClient::run() {
       Sleep(1000);
     }
   }
-  WSACleanup();
 }
 
 }  // namespace road_desk::agent

@@ -176,4 +176,8 @@ modern  := !legacy
 - **S1：** `video_encode` 一编多发
 - **S2：** `dxgi_capture`（动态加载 dxgi/d3d11）；modern+auto/`dxgi` → DXGI，失败回退 GDI；`provides_dirties()` 接入 mux
 - 单元测试：`capture_strategy_test`
-- 下一步：真机 Gate（Win10 `capture started dxgi`；Win7 仍 Mirror）→ S3 文档/提权收口
+- 拖动跟手（分支 `temp/drag-smooth-hwnd-video-pipeline`）：
+  - 三线程：inject / video-out / encode；TLS 写出让出锁给注入
+  - Win7/Mirror：真实脏区 + JPEG AABB；无 HWND/像素 CopyRect
+  - Win10/DXGI：MoveRect→CopyRect（若 OS 提供）；拖动优先 JPEG；禁整桌 zlib 风暴
+- 下一步：真机 Gate（Win7 跟手 vs 画面延迟；Win10 `moves_in`/`copy`）→ 弱网 QoS

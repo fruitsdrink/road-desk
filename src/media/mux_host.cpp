@@ -1,11 +1,14 @@
-// Mux media-plane host — TLS Video/Input; capture = Mirror dirties (default) or GDI.
+// Mux media-plane host — TLS Video/Input; capture = Mirror dirties (default) or GDI/DXGI.
 // Ported from spikes/media-replace/src/replace_host.cpp.
-// Single-thread multi-viewer I/O (select + fan-out) to avoid TLS read/write deadlock.
+// Three threads (VNC-style): inject (TLS read/SendInput), video-out (mux_write), encode (capture).
 
 #include "media_plane.h"
 
 #include "auth.h"
+#include "capture_resolve.h"
 #include "cursor_capture.h"
+#include "jpeg_encode.h"
+#include "h264_mf.h"
 #include "media_log.h"
 #include "mirror_capture.h"
 #include "mux.h"
@@ -13,7 +16,10 @@
 #include "mux_file_xfer.h"
 #include "mux_inject.h"
 #include "mux_protocol.h"
+#include "os_version.h"
+#include "product_version.h"
 #include "session_mutex.h"
+#include "session_recorder.h"
 #include "tls_schannel.h"
 #include "video_encode.h"
 
@@ -27,6 +33,7 @@
 #endif
 #include <winsock2.h>
 #include <windows.h>
+#include <objbase.h>
 
 #include <atomic>
 #include <algorithm>
@@ -34,7 +41,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
+#include <exception>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace road_desk::media {
@@ -245,8 +257,40 @@ void collect_dirty_rects(const uint8_t* cur, const uint8_t* prev, int desk_w, in
   coalesce_vertical(out);
 }
 
-void collapse_dirties_for_send(std::vector<DirtyRect>* rects, int desk_w, int desk_h) {
-  if (!rects || rects->size() <= 1 || desk_w <= 0 || desk_h <= 0) {
+void collapse_dirties_for_send(std::vector<DirtyRect>* rects, int desk_w, int desk_h,
+                               bool drag_mode) {
+  if (!rects || rects->empty() || desk_w <= 0 || desk_h <= 0) {
+    return;
+  }
+  if (drag_mode) {
+    // One bbox while dragging: many small tiles + drop → staircase ghosts on Win7.
+    if (rects->size() == 1) {
+      return;
+    }
+    int x0 = desk_w;
+    int y0 = desk_h;
+    int x1 = 0;
+    int y1 = 0;
+    for (const DirtyRect& r : *rects) {
+      if (r.x < x0) {
+        x0 = r.x;
+      }
+      if (r.y < y0) {
+        y0 = r.y;
+      }
+      if (r.x + r.w > x1) {
+        x1 = r.x + r.w;
+      }
+      if (r.y + r.h > y1) {
+        y1 = r.y + r.h;
+      }
+    }
+    if (x1 > x0 && y1 > y0) {
+      rects->assign(1, {x0, y0, x1 - x0, y1 - y0});
+    }
+    return;
+  }
+  if (rects->size() <= 1) {
     return;
   }
   size_t area = 0;
@@ -293,238 +337,6 @@ struct CopyRect {
   int h = 0;
 };
 
-bool rect_pixels_match(const uint8_t* cur, const uint8_t* prev, int desk_w, int dx, int dy,
-                       int sx, int sy, int w, int h) {
-  for (int row = 0; row < h; ++row) {
-    const uint8_t* a = cur + (static_cast<size_t>(dy + row) * desk_w + dx) * 4u;
-    const uint8_t* b = prev + (static_cast<size_t>(sy + row) * desk_w + sx) * 4u;
-    if (std::memcmp(a, b, static_cast<size_t>(w) * 4u) != 0) {
-      return false;
-    }
-  }
-  return true;
-}
-
-// Sparse compare for motion vote (much cheaper than full-tile memcmp).
-bool sample_block_match(const uint8_t* cur, const uint8_t* prev, int desk_w, int dx, int dy,
-                        int sx, int sy, int w, int h) {
-  if (w <= 0 || h <= 0) {
-    return false;
-  }
-  // 3×3 grid of 4-byte pixels.
-  for (int gy = 0; gy < 3; ++gy) {
-    const int oy = (h - 1) * gy / 2;
-    for (int gx = 0; gx < 3; ++gx) {
-      const int ox = (w - 1) * gx / 2;
-      const uint8_t* a = cur + (static_cast<size_t>(dy + oy) * desk_w + dx + ox) * 4u;
-      const uint8_t* b = prev + (static_cast<size_t>(sy + oy) * desk_w + sx + ox) * 4u;
-      if (std::memcmp(a, b, 4) != 0) {
-        return false;
-      }
-    }
-  }
-  return true;
-}
-
-struct MoveDelta {
-  int dx = 0;
-  int dy = 0;
-  bool ok = false;
-};
-
-int g_last_copy_dx = 0;
-int g_last_copy_dy = 0;
-bool g_have_last_copy_delta = false;
-
-MoveDelta estimate_move_delta(const uint8_t* cur, const uint8_t* prev, int desk_w, int desk_h,
-                              const std::vector<DirtyRect>& dirties, int hint_dx, int hint_dy) {
-  MoveDelta out;
-  if (!cur || !prev || dirties.empty()) {
-    return out;
-  }
-
-  struct Sample {
-    int x, y, w, h;
-  };
-  std::vector<Sample> samples;
-  samples.reserve(24);
-  constexpr int kBlock = 64;
-  for (const DirtyRect& r : dirties) {
-    if (!rect_in_desk(desk_w, desk_h, r.x, r.y, r.w, r.h)) {
-      continue;
-    }
-    for (int y = r.y; y + 16 <= r.y + r.h && samples.size() < 24; y += kBlock) {
-      for (int x = r.x; x + 16 <= r.x + r.w && samples.size() < 24; x += kBlock) {
-        const int bw = (std::min)(32, r.x + r.w - x);
-        const int bh = (std::min)(32, r.y + r.h - y);
-        if (bw >= 16 && bh >= 16) {
-          samples.push_back({x, y, bw, bh});
-        }
-      }
-    }
-    if (samples.size() >= 24) {
-      break;
-    }
-  }
-  if (samples.size() < 4) {
-    return out;
-  }
-
-  auto score_at = [&](int mdx, int mdy) -> int {
-    if (mdx > -2 && mdx < 2 && mdy > -2 && mdy < 2) {
-      return 0;
-    }
-    if (mdx > 800 || mdx < -800 || mdy > 800 || mdy < -800) {
-      return 0;
-    }
-    int ok = 0;
-    for (const Sample& s : samples) {
-      const int sx = s.x - mdx;
-      const int sy = s.y - mdy;
-      if (!rect_in_desk(desk_w, desk_h, sx, sy, s.w, s.h)) {
-        continue;
-      }
-      if (sample_block_match(cur, prev, desk_w, s.x, s.y, sx, sy, s.w, s.h)) {
-        ++ok;
-      }
-    }
-    return ok;
-  };
-
-  int best_dx = hint_dx;
-  int best_dy = hint_dy;
-  int best = score_at(hint_dx, hint_dy);
-  const int need = (std::max)(4, static_cast<int>((samples.size() * 3) / 4));
-
-  auto consider = [&](int cx, int cy) {
-    // Coarse then refine around peaks.
-    for (int dy = cy - 40; dy <= cy + 40; dy += 4) {
-      for (int dx = cx - 40; dx <= cx + 40; dx += 4) {
-        const int sc = score_at(dx, dy);
-        if (sc > best) {
-          best = sc;
-          best_dx = dx;
-          best_dy = dy;
-        }
-      }
-    }
-  };
-
-  consider(hint_dx, hint_dy);
-  if (g_have_last_copy_delta) {
-    consider(g_last_copy_dx, g_last_copy_dy);
-  }
-
-  // Refine ±3 around best.
-  int refine_best = best;
-  int refine_dx = best_dx;
-  int refine_dy = best_dy;
-  for (int dy = best_dy - 3; dy <= best_dy + 3; ++dy) {
-    for (int dx = best_dx - 3; dx <= best_dx + 3; ++dx) {
-      const int sc = score_at(dx, dy);
-      if (sc > refine_best) {
-        refine_best = sc;
-        refine_dx = dx;
-        refine_dy = dy;
-      }
-    }
-  }
-
-  if (refine_best >= need) {
-    out.dx = refine_dx;
-    out.dy = refine_dy;
-    out.ok = true;
-    g_last_copy_dx = refine_dx;
-    g_last_copy_dy = refine_dy;
-    g_have_last_copy_delta = true;
-  }
-  return out;
-}
-
-void try_extract_copyrects(const uint8_t* cur, const uint8_t* prev, int desk_w, int desk_h,
-                           int mdx, int mdy, std::vector<DirtyRect>* dirties,
-                           std::vector<CopyRect>* copies) {
-  copies->clear();
-  if (!cur || !prev || !dirties || dirties->empty()) {
-    return;
-  }
-  if (mdx > -2 && mdx < 2 && mdy > -2 && mdy < 2) {
-    return;
-  }
-  if (mdx > 800 || mdx < -800 || mdy > 800 || mdy < -800) {
-    return;
-  }
-
-  // Block scan: union dirties from window drag rarely match as one rect (old∪new).
-  constexpr int kBlock = 64;
-  std::vector<DirtyRect> remain;
-  remain.reserve(dirties->size());
-
-  for (const DirtyRect& r : *dirties) {
-    if (!rect_in_desk(desk_w, desk_h, r.x, r.y, r.w, r.h)) {
-      remain.push_back(r);
-      continue;
-    }
-
-    const int sx0 = r.x - mdx;
-    const int sy0 = r.y - mdy;
-    if (rect_in_desk(desk_w, desk_h, sx0, sy0, r.w, r.h) &&
-        rect_pixels_match(cur, prev, desk_w, r.x, r.y, sx0, sy0, r.w, r.h)) {
-      copies->push_back({sx0, sy0, r.x, r.y, r.w, r.h});
-      continue;
-    }
-
-    bool any_copy = false;
-    for (int y = r.y; y < r.y + r.h; y += kBlock) {
-      const int bh = (std::min)(kBlock, r.y + r.h - y);
-      int run_x = -1;
-      int run_w = 0;
-      auto flush_run = [&]() {
-        if (run_w <= 0) {
-          return;
-        }
-        const int sx = run_x - mdx;
-        const int sy = y - mdy;
-        if (rect_in_desk(desk_w, desk_h, sx, sy, run_w, bh)) {
-          copies->push_back({sx, sy, run_x, y, run_w, bh});
-          any_copy = true;
-        } else {
-          remain.push_back({run_x, y, run_w, bh});
-        }
-        run_x = -1;
-        run_w = 0;
-      };
-      for (int x = r.x; x < r.x + r.w; x += kBlock) {
-        const int bw = (std::min)(kBlock, r.x + r.w - x);
-        const int sx = x - mdx;
-        const int sy = y - mdy;
-        const bool ok = rect_in_desk(desk_w, desk_h, sx, sy, bw, bh) &&
-                        rect_pixels_match(cur, prev, desk_w, x, y, sx, sy, bw, bh);
-        if (ok) {
-          if (run_x < 0) {
-            run_x = x;
-            run_w = bw;
-          } else if (run_x + run_w == x) {
-            run_w += bw;
-          } else {
-            flush_run();
-            run_x = x;
-            run_w = bw;
-          }
-        } else {
-          flush_run();
-          remain.push_back({x, y, bw, bh});
-        }
-      }
-      flush_run();
-    }
-    if (!any_copy && remain.empty()) {
-      remain.push_back(r);
-    }
-  }
-  *dirties = std::move(remain);
-}
-
 bool send_copy_rect(tls::TlsSession* tls, uint32_t frame_id, const CopyRect& r) {
   using namespace road_desk::replace;
   uint8_t body[kCopyRectPayloadSize];
@@ -541,16 +353,96 @@ bool send_copy_rect(tls::TlsSession* tls, uint32_t frame_id, const CopyRect& r) 
 
 uint32_t g_input_pointer = 0;
 uint32_t g_input_key = 0;
-int g_ptr_buttons = 0;
-int g_ptr_buttons_prev = 0;
-int g_ptr_x = 0;
-int g_ptr_y = 0;
-int g_ptr_x_prev = 0;
-int g_ptr_y_prev = 0;
-bool g_ptr_have_prev = false;
-int g_validate_frames = 0;
+std::atomic<int> g_ptr_buttons{0};
+std::atomic<int> g_ptr_buttons_prev{0};
+std::atomic<int> g_ptr_x{0};
+std::atomic<int> g_ptr_y{0};
+std::atomic<int> g_ptr_x_prev{0};
+std::atomic<int> g_ptr_y_prev{0};
+std::atomic<bool> g_ptr_have_prev{false};
+std::atomic<int> g_validate_frames{0};
+std::atomic<bool> g_any_need_keyframe{false};
+// Encode finished a keyframe batch — inject thread clears per-client need_keyframe.
+std::atomic<bool> g_clear_client_keyframes{false};
+// Inject thread is inside drain/SendInput — video-out should yield the IO lock.
+std::atomic<bool> g_inject_active{false};
 uint32_t g_cursor_hash_sent = 0;
-uint32_t g_copyrects_sent = 0;
+std::atomic<uint32_t> g_copyrects_sent{0};
+int g_host_cursor_hide = 0;
+bool g_system_cursors_blanked = false;
+std::atomic<int> g_video_ptr_x{0};
+std::atomic<int> g_video_ptr_y{0};
+std::atomic<bool> g_video_ptr_have{false};
+
+// UltraVNC-style: replace system cursors with a blank cursor for the session so the
+// Host pointer never appears in DXGI/Mirror frames (that was the Win10 "title-bar cursor").
+void blank_system_cursors_for_session() {
+  if (g_system_cursors_blanked) {
+    return;
+  }
+  BYTE and_mask[128];
+  BYTE xor_mask[128];
+  std::memset(and_mask, 0xFF, sizeof(and_mask));
+  std::memset(xor_mask, 0x00, sizeof(xor_mask));
+  HCURSOR blank = CreateCursor(GetModuleHandleW(nullptr), 0, 0, 32, 32, and_mask, xor_mask);
+  if (!blank) {
+    // Fallback: per-thread hide (weaker; may not scrub cursor out of all paths).
+    for (;;) {
+      const int c = ShowCursor(FALSE);
+      ++g_host_cursor_hide;
+      if (c < 0 || g_host_cursor_hide > 64) {
+        break;
+      }
+    }
+    return;
+  }
+  // OCR_* ids (winuser.h OEMRESOURCE). Numeric to avoid OEMRESOURCE include order issues.
+  static const UINT kIds[] = {
+      32512,  // OCR_NORMAL
+      32513,  // OCR_IBEAM
+      32514,  // OCR_WAIT
+      32515,  // OCR_CROSS
+      32516,  // OCR_UP
+      32642,  // OCR_SIZENWSE
+      32643,  // OCR_SIZENESW
+      32644,  // OCR_SIZEWE
+      32645,  // OCR_SIZENS
+      32646,  // OCR_SIZEALL
+      32648,  // OCR_NO
+      32649,  // OCR_HAND
+      32650,  // OCR_APPSTARTING
+  };
+  for (UINT id : kIds) {
+    HCURSOR copy = CopyCursor(blank);
+    if (copy) {
+      SetSystemCursor(copy, id);  // consumes copy
+    }
+  }
+  DestroyCursor(blank);
+  g_system_cursors_blanked = true;
+  logf("host cursor: blanked system cursors for session");
+}
+
+void restore_system_cursors_after_session() {
+  // Always reload OEM cursors — heals crash leftover even if our flag was lost.
+  SystemParametersInfoW(SPI_SETCURSORS, 0, nullptr, SPIF_SENDCHANGE);
+  if (g_system_cursors_blanked) {
+    g_system_cursors_blanked = false;
+    logf("host cursor: restored system cursors");
+  }
+  while (g_host_cursor_hide > 0) {
+    ShowCursor(TRUE);
+    --g_host_cursor_hide;
+  }
+}
+
+void hide_host_cursor_for_session() {
+  blank_system_cursors_for_session();
+}
+
+void restore_host_cursor_after_session() {
+  restore_system_cursors_after_session();
+}
 
 bool send_cursor_shape(tls::TlsSession* tls, const road_desk::replace::CursorShape& c) {
   using namespace road_desk::replace;
@@ -622,24 +514,26 @@ void handle_input(const std::vector<uint8_t>& payload) {
   }
   if (payload[0] == kInputPointer && payload.size() >= kInputPointerSize) {
     ++g_input_pointer;
-    g_ptr_buttons = payload[1];
-    if ((g_ptr_buttons_prev & 1) != (g_ptr_buttons & 1)) {
-      g_validate_frames = 2;
+    const int buttons = payload[1];
+    const int prev_btns = g_ptr_buttons_prev.load();
+    g_ptr_buttons.store(buttons);
+    if ((prev_btns & 1) != (buttons & 1)) {
+      g_validate_frames.store(2);
     }
-    g_ptr_buttons_prev = g_ptr_buttons;
+    g_ptr_buttons_prev.store(buttons);
     const int x = read_u16_le(payload.data() + 2);
     const int y = read_u16_le(payload.data() + 4);
-    if (g_ptr_have_prev) {
-      g_ptr_x_prev = g_ptr_x;
-      g_ptr_y_prev = g_ptr_y;
+    if (g_ptr_have_prev.load()) {
+      g_ptr_x_prev.store(g_ptr_x.load());
+      g_ptr_y_prev.store(g_ptr_y.load());
     } else {
-      g_ptr_x_prev = x;
-      g_ptr_y_prev = y;
-      g_ptr_have_prev = true;
+      g_ptr_x_prev.store(x);
+      g_ptr_y_prev.store(y);
+      g_ptr_have_prev.store(true);
     }
-    g_ptr_x = x;
-    g_ptr_y = y;
-    inject_pointer(payload[1], static_cast<uint16_t>(x), static_cast<uint16_t>(y));
+    g_ptr_x.store(x);
+    g_ptr_y.store(y);
+    inject_pointer(buttons, static_cast<uint16_t>(x), static_cast<uint16_t>(y));
     return;
   }
   if (payload[0] == kInputKey && payload.size() >= kInputKeySize) {
@@ -1016,70 +910,575 @@ bool fanout_host_clipboard(std::vector<ClientConn>* clients, uint32_t* shared_xf
 
 void serve_shared(SOCKET listen_sock, const std::string& psk,
                   road_desk::replace::CaptureMode capture_mode,
+                  road_desk::replace::CaptureStrategy capture_strategy,
                   const std::atomic<bool>* stop_requested, session::SessionMutex* mutex,
                   tls::HostCredentials* creds) {
   using namespace road_desk::replace;
-  std::vector<ClientConn> clients;
-  clients.reserve(kMaxClients);
 
-  SessionCapture cap(capture_mode);
-  bool cap_begun = false;
-  ShakeGuard shake_guard;
+  struct OutBatch {
+    std::vector<std::vector<uint8_t>> msgs;
+  };
+
+  struct SharedIo {
+    std::mutex io_mu;    // clients + all TLS read/write
+    std::mutex outq_mu;  // encode push / video-out pop
+    std::deque<OutBatch> outq;
+    std::vector<ClientConn> clients;
+    std::atomic<bool> session_active{false};
+    std::atomic<bool> encode_stop{false};
+    std::atomic<bool> video_out_stop{false};
+    // Mid large video TLS write — inject may drain/SendInput but must not mux_write.
+    std::atomic<bool> video_writing{false};
+    std::atomic<uint32_t> dropped_ticks{0};
+    std::atomic<uint32_t> dropped_interval{0};
+  };
+
+  SharedIo shared;
+  shared.clients.reserve(kMaxClients);
+  constexpr size_t kMaxBatches = 2;
+  const bool modern_lossy = (capture_strategy == CaptureStrategy::Modern);
   uint32_t shared_xfer_id = 1;
 
-  std::vector<uint8_t> frame;
-  std::vector<uint8_t> prev;
-  std::vector<uint8_t> raw_buf;
-  std::vector<uint8_t> send_buf;
-  std::vector<DirtyRect> dirties;
-  std::vector<CaptureDirty> mirror_dirties;
-  std::vector<CaptureMove> mirror_moves;
-  std::vector<CopyRect> copies;
-  uint32_t frame_id = 0;
-  uint32_t sent_rects = 0;
-  uint32_t dropped_ticks = 0;
-  uint32_t ticks_sent = 0;
-  bool have_prev = false;
-  DWORD last_send_ms = 0;
-  DWORD last_stat_ms = GetTickCount();
-  DWORD last_cursor_ms = 0;
-  DWORD last_attach_scrub_ms = GetTickCount();
-  constexpr DWORD kStatIntervalMs = 1000;
-  constexpr DWORD kAttachScrubMs = 2000;
+  struct VideoWriteYieldCtx {
+    SharedIo* shared = nullptr;
+    std::unique_lock<std::mutex>* lock = nullptr;
+  };
+  auto video_write_yield = [](void* raw) -> bool {
+    auto* ctx = static_cast<VideoWriteYieldCtx*>(raw);
+    if (!ctx || !ctx->lock) {
+      return false;
+    }
+    // Briefly release IO so inject can drain + SendInput between TLS records.
+    ctx->lock->unlock();
+    if (g_inject_active.load() || (g_ptr_buttons.load() & 1) != 0) {
+      Sleep(0);
+    }
+    ctx->lock->lock();
+    return true;
+  };
 
-  logf("shared-control serve (max_clients=%u)", static_cast<unsigned>(kMaxClients));
+  auto video_out_thread_main = [&]() {
+    logf("video-out thread start");
+    VideoWriteYieldCtx yield_ctx{};
+    yield_ctx.shared = &shared;
+    while (!shared.video_out_stop.load() &&
+           !(stop_requested && stop_requested->load())) {
+      std::vector<uint8_t> msg;
+      {
+        std::lock_guard<std::mutex> lock(shared.outq_mu);
+        if (shared.outq.empty()) {
+          // fall through after unlock
+        } else {
+          OutBatch& batch = shared.outq.front();
+          if (batch.msgs.empty()) {
+            shared.outq.pop_front();
+          } else {
+            msg = std::move(batch.msgs.front());
+            batch.msgs.erase(batch.msgs.begin());
+            if (batch.msgs.empty()) {
+              shared.outq.pop_front();
+            }
+          }
+        }
+      }
+      if (msg.empty()) {
+        Sleep(1);
+        continue;
+      }
+
+      shared.video_writing.store(true);
+      // Prefer inject while dragging — don't grab IO until inject finishes a burst.
+      while ((g_ptr_buttons.load() & 1) != 0 && g_inject_active.load()) {
+        Sleep(0);
+      }
+      std::unique_lock<std::mutex> lock(shared.io_mu);
+      yield_ctx.lock = &lock;
+      bool any_authed = false;
+      bool any_sent = false;
+      bool all_blocked = true;
+      for (ClientConn& c : shared.clients) {
+        if (!c.authed || c.dead) {
+          continue;
+        }
+        any_authed = true;
+        if (!socket_writable(tls::tls_get_socket(c.tls), 0)) {
+          // During drag, forcing keyframes just floods Win7 with full-desk JPEG.
+          if ((g_ptr_buttons.load() & 1) == 0) {
+            c.need_keyframe = true;
+            g_any_need_keyframe.store(true);
+          }
+          continue;
+        }
+        all_blocked = false;
+        const bool big = msg.size() >= 16u * 1024u;
+        const bool ok =
+            big ? mux_write_yield(c.tls, kChannelVideo, msg.data(),
+                                  static_cast<uint32_t>(msg.size()), video_write_yield,
+                                  &yield_ctx)
+                : mux_write(c.tls, kChannelVideo, msg.data(),
+                            static_cast<uint32_t>(msg.size()));
+        if (!ok) {
+          close_client(&c, mutex);
+          continue;
+        }
+        any_sent = true;
+      }
+      yield_ctx.lock = nullptr;
+      lock.unlock();
+      shared.video_writing.store(false);
+      if (!any_authed) {
+        std::lock_guard<std::mutex> qlock(shared.outq_mu);
+        shared.outq.clear();
+        continue;
+      }
+      if (!any_sent && all_blocked) {
+        std::lock_guard<std::mutex> qlock(shared.outq_mu);
+        shared.outq.push_front(OutBatch{});
+        shared.outq.front().msgs.push_back(std::move(msg));
+        Sleep(1);
+      }
+      (void)any_sent;
+    }
+    logf("video-out thread end");
+  };
+
+  auto encode_thread_main = [&]() {
+    try {
+    // WIC / MF / DXGI COM objects are created on this thread when capture begins.
+    const HRESULT co_hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool co_uninit = (co_hr == S_OK);
+    if (FAILED(co_hr) && co_hr != RPC_E_CHANGED_MODE) {
+      logf("encode thread: CoInitializeEx failed hr=0x%08lx", static_cast<unsigned long>(co_hr));
+    }
+
+    logf("encode thread start modern_lossy=%d", modern_lossy ? 1 : 0);
+
+    // Construct capture lazily — keeps idle host thin (crash was right after thread start).
+    std::unique_ptr<SessionCapture> cap;
+    bool cap_begun = false;
+    ShakeGuard shake_guard;
+    std::vector<uint8_t> frame;
+    std::vector<uint8_t> prev;
+    std::vector<uint8_t> raw_buf;
+    std::vector<uint8_t> send_buf;
+    std::vector<DirtyRect> dirties;
+    std::vector<CaptureDirty> mirror_dirties;
+    std::vector<CaptureMove> mirror_moves;
+    std::vector<CopyRect> copies;
+    uint32_t frame_id = 0;
+    uint32_t sent_rects = 0;
+    uint32_t ticks_sent = 0;
+    bool have_prev = false;
+    DWORD last_send_ms = 0;
+    DWORD last_stat_ms = GetTickCount();
+    DWORD last_attach_scrub_ms = GetTickCount();
+    constexpr DWORD kStatIntervalMs = 1000;
+    constexpr DWORD kAttachScrubMs = 2000;
+    bool logged_rec_fail = false;
+
+    while (!shared.encode_stop.load() &&
+           !(stop_requested && stop_requested->load())) {
+      if (!shared.session_active.load()) {
+        if (cap_begun) {
+          session_recorder_reset();
+          logged_rec_fail = false;
+          logf("session-record: stopped (artifacts under debug\\)");
+          if (cap) {
+            cap->end();
+          }
+          cap_begun = false;
+          cap.reset();
+          restore_host_cursor_after_session();
+          g_video_ptr_have.store(false);
+          aero_shake_restore(&shake_guard);
+          have_prev = false;
+          prev.clear();
+          media_log_set_mirror_stderr(true);
+          logf("all viewers gone - capture stopped");
+        }
+        Sleep(5);
+        continue;
+      }
+
+      if (!cap) {
+        cap = std::make_unique<SessionCapture>(capture_mode);
+      }
+
+      if (!cap_begun) {
+        if (!cap->begin()) {
+          logf("capture begin failed");
+          Sleep(50);
+          continue;
+        }
+        cap_begun = true;
+        media_log_set_mirror_stderr(false);
+        aero_shake_disable(&shake_guard);
+        hide_host_cursor_for_session();
+        if (cap->using_mirror()) {
+          logf("capture started mirror device=%s", cap->mirror_device());
+        } else if (cap->using_dxgi()) {
+          logf("capture started dxgi");
+        } else {
+          logf("capture started gdi");
+        }
+        g_input_pointer = 0;
+        g_input_key = 0;
+        g_ptr_have_prev.store(false);
+        g_ptr_buttons_prev.store(0);
+        g_validate_frames.store(0);
+        g_copyrects_sent.store(0);
+        g_video_ptr_have.store(false);
+        g_any_need_keyframe.store(true);
+      }
+
+      const DWORD loop_now = GetTickCount();
+      if (cap->using_mirror() && loop_now - last_attach_scrub_ms >= kAttachScrubMs) {
+        last_attach_scrub_ms = loop_now;
+        rdm_scrub_foreign_attach_registry();
+      }
+
+      const DWORD now = GetTickCount();
+      if (last_send_ms != 0 && now - last_send_ms < 8u) {
+        Sleep(1);
+        continue;
+      }
+
+      bool outq_full = false;
+      {
+        std::lock_guard<std::mutex> lock(shared.outq_mu);
+        const size_t max_b = (g_ptr_buttons.load() & 1) ? 1u : kMaxBatches;
+        if (shared.outq.size() >= max_b) {
+          shared.dropped_ticks.fetch_add(1);
+          shared.dropped_interval.fetch_add(1);
+          outq_full = true;
+        }
+      }
+
+      const bool any_kf = g_any_need_keyframe.load();
+      const bool drag_mode = (g_ptr_buttons.load() & 1) != 0;
+      int validate = g_validate_frames.load();
+      // DXGI drag: never force_full_pixels — that clears MoveRects (lab copy=0).
+      const bool force_validate =
+          cap->provides_dirties() && validate > 0 && !(cap->using_dxgi() && drag_mode);
+      const bool force_full = !have_prev || (any_kf && !drag_mode);
+
+      int w = 0;
+      int h = 0;
+      const DWORD cap0 = GetTickCount();
+      mirror_dirties.clear();
+      mirror_moves.clear();
+      if (!cap->capture(&frame, &w, &h, &mirror_dirties, &mirror_moves, force_validate)) {
+        Sleep(5);
+        continue;
+      }
+      const DWORD cap_ms = GetTickCount() - cap0;
+
+      // Always pump capture (esp. DXGI) even when outq is full — skipping AcquireNextFrame
+      // coalesces MoveRects into a full DirtyRect (lab: copy=0 + 1MB zlib).
+      if (outq_full) {
+        const size_t frame_bytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 4u;
+        if (frame.size() == frame_bytes && !frame.empty()) {
+          if (!have_prev || prev.size() != frame_bytes) {
+            prev.assign(frame_bytes, 0);
+          }
+          prev = frame;
+          have_prev = true;
+        }
+        Sleep(1);
+        continue;
+      }
+
+      if (!session_recorder_active() && session_recorder_enabled() && w > 0 && h > 0) {
+        SessionRecorderInfo ri{};
+        if (session_recorder_begin(w, h, &ri)) {
+          logf("session-record: started version=%s %ux%u->%ux%u %s", ROAD_DESK_VERSION_STRING,
+               static_cast<unsigned>(w), static_cast<unsigned>(h),
+               static_cast<unsigned>(w & ~1), static_cast<unsigned>(h & ~1), ri.video_path.c_str());
+          logged_rec_fail = false;
+        } else if (!logged_rec_fail) {
+          logged_rec_fail = true;
+          logf("session-record: unavailable this session (MF/AVI) version=%s",
+               ROAD_DESK_VERSION_STRING);
+        }
+      }
+      if (session_recorder_active() && !frame.empty()) {
+        // Win7: skip AVI encode while dragging — competes with video JPEG on a weak VM.
+        if (!(!modern_lossy && drag_mode)) {
+          session_recorder_push_bgra(frame.data(), w, h);
+        }
+      }
+
+      const size_t frame_bytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 4u;
+      if (frame.size() != frame_bytes || frame.empty()) {
+        Sleep(5);
+        continue;
+      }
+      if (have_prev && prev.size() != frame_bytes) {
+        have_prev = false;
+      }
+      if (!have_prev) {
+        prev.assign(frame_bytes, 0);
+      }
+
+      copies.clear();
+      dirties.clear();
+
+      // DXGI MoveRects always (including drag) — display-path CopyRect like VNC.
+      if (cap->using_dxgi() && !force_validate && !force_full) {
+        for (const CaptureMove& m : mirror_moves) {
+          if (rect_in_desk(w, h, m.sx, m.sy, m.w, m.h) &&
+              rect_in_desk(w, h, m.dx, m.dy, m.w, m.h)) {
+            copies.push_back(CopyRect{m.sx, m.sy, m.dx, m.dy, m.w, m.h});
+          }
+        }
+      }
+
+      if (cap->provides_dirties() && !force_validate && !force_full) {
+        for (const CaptureDirty& d : mirror_dirties) {
+          dirties.push_back(DirtyRect{d.x, d.y, d.w, d.h});
+        }
+      } else {
+        collect_dirty_rects(frame.data(), have_prev && !force_full ? prev.data() : nullptr, w, h,
+                            force_full, &dirties);
+      }
+
+      // Win7/Mirror: no pixel CopyRect (flooded IO or capped to useless). Dirties only.
+
+      if (force_validate && validate > 0) {
+        g_validate_frames.store(validate - 1);
+      }
+
+      if (dirties.empty() && copies.empty()) {
+        continue;
+      }
+
+      const unsigned before_collapse = static_cast<unsigned>(dirties.size() + copies.size());
+      // Mirror drag: collapse to AABB for JPEG strips. DXGI with CopyRects: do not
+      // union dirties into a near-full zlib (that wiped MoveRect gains).
+      collapse_dirties_for_send(&dirties, w, h, drag_mode && copies.empty());
+
+      const bool full_keyframe =
+          dirties.size() == 1 && dirties[0].x == 0 && dirties[0].y == 0 && dirties[0].w == w &&
+          dirties[0].h == h;
+      if (!full_keyframe) {
+        // Legacy drag: keep one AABB JPEG — splitting into many WIC encodes starved Win7 (0.4.2).
+        if (!(!modern_lossy && drag_mode)) {
+          split_rects_for_input_slices(&dirties, 256);
+        }
+      }
+
+      bool batch_ok = true;
+      size_t raw_this = 0;
+      size_t wire_this = 0;
+      DWORD enc_this = 0;
+      unsigned zlib_this = 0;
+      unsigned jpeg_this = 0;
+      unsigned h264_this = 0;
+      unsigned copy_this = 0;
+      const unsigned moves_in = static_cast<unsigned>(mirror_moves.size());
+      const unsigned dirties_in = static_cast<unsigned>(mirror_dirties.size());
+      OutBatch tick_batch;
+
+      for (const CopyRect& cr : copies) {
+        std::vector<uint8_t> body(kCopyRectPayloadSize);
+        body[0] = kVideoCopyRect;
+        write_u32_le(body.data() + 1, frame_id);
+        write_u16_le(body.data() + 5, static_cast<uint16_t>(cr.dx));
+        write_u16_le(body.data() + 7, static_cast<uint16_t>(cr.dy));
+        write_u16_le(body.data() + 9, static_cast<uint16_t>(cr.w));
+        write_u16_le(body.data() + 11, static_cast<uint16_t>(cr.h));
+        write_u16_le(body.data() + 13, static_cast<uint16_t>(cr.sx));
+        write_u16_le(body.data() + 15, static_cast<uint16_t>(cr.sy));
+        tick_batch.msgs.push_back(std::move(body));
+        g_copyrects_sent.fetch_add(1);
+        ++copy_this;
+        ++sent_rects;
+        ++frame_id;
+        wire_this += kCopyRectPayloadSize;
+      }
+
+      const int jpeg_q = drag_mode ? 40 : 78;
+
+      for (const DirtyRect& r : dirties) {
+        if (!rect_in_desk(w, h, r.x, r.y, r.w, r.h)) {
+          have_prev = false;
+          batch_ok = false;
+          break;
+        }
+        const DWORD enc0 = GetTickCount();
+        EncodeRectStats enc{};
+        const size_t area = static_cast<size_t>(r.w) * static_cast<size_t>(r.h);
+        const size_t desk_area = static_cast<size_t>(w) * static_cast<size_t>(h);
+        // After first KF: never ship full-desk zlib (~1MB) — it holds io_mu and starves inject.
+        const bool huge = area * 2u > desk_area;
+        const bool allow_lossy = !full_keyframe || drag_mode || (have_prev && huge);
+        // Drag: JPEG only — H264 encode latency makes Viewer cursor lead the window.
+        const bool try_h264 =
+            modern_lossy && allow_lossy && !drag_mode && area >= static_cast<size_t>(96 * 96);
+        const bool try_jpeg = allow_lossy && area >= static_cast<size_t>(96 * 96);
+        const int q = (drag_mode && huge) ? 32 : jpeg_q;
+        bool ok = false;
+        if (try_h264) {
+          ok = encode_h264_rect(frame_id, w, h, r.x, r.y, r.w, r.h, frame.data(), 72, &raw_buf,
+                                &send_buf, &enc);
+        }
+        if (!ok && try_jpeg) {
+          ok = encode_jpeg_rect(frame_id, w, h, r.x, r.y, r.w, r.h, frame.data(), q, &raw_buf,
+                                &send_buf, &enc);
+        }
+        if (!ok && !(have_prev && huge)) {
+          ok = encode_video_rect(frame_id, w, h, r.x, r.y, r.w, r.h, frame.data(), &raw_buf,
+                                 &send_buf, &enc);
+        }
+        if (!ok) {
+          // Drop this rect rather than block the pipe with megabyte zlib.
+          shared.dropped_ticks.fetch_add(1);
+          shared.dropped_interval.fetch_add(1);
+          continue;
+        }
+        enc_this += GetTickCount() - enc0;
+        raw_this += enc.raw_bytes;
+        wire_this += enc.wire_bytes;
+        if (enc.codec == kVideoZlibBgra) {
+          ++zlib_this;
+        } else if (enc.codec == kVideoJpeg) {
+          ++jpeg_this;
+        } else if (enc.codec == kVideoH264) {
+          ++h264_this;
+        }
+        tick_batch.msgs.push_back(std::vector<uint8_t>(send_buf.begin(), send_buf.end()));
+        ++sent_rects;
+        ++frame_id;
+      }
+
+      if (!batch_ok) {
+        shared.dropped_ticks.fetch_add(1);
+        shared.dropped_interval.fetch_add(1);
+        continue;
+      }
+
+      {
+        std::lock_guard<std::mutex> lock(shared.outq_mu);
+        const size_t max_b = (g_ptr_buttons.load() & 1) ? 1u : kMaxBatches;
+        while (shared.outq.size() >= max_b) {
+          shared.outq.pop_front();
+          shared.dropped_ticks.fetch_add(1);
+          shared.dropped_interval.fetch_add(1);
+        }
+        if (!tick_batch.msgs.empty()) {
+          shared.outq.push_back(std::move(tick_batch));
+        }
+      }
+
+      g_video_ptr_x.store(g_ptr_x.load());
+      g_video_ptr_y.store(g_ptr_y.load());
+      g_video_ptr_have.store(true);
+      if (full_keyframe || any_kf) {
+        g_any_need_keyframe.store(false);
+        // Per-client flags were never cleared (lab Win7: force_full every tick → 220KB JPEG storm).
+        g_clear_client_keyframes.store(true);
+      }
+
+      for (const CopyRect& cr : copies) {
+        copy_rect_to_prev(prev.data(), frame.data(), w, h, DirtyRect{cr.dx, cr.dy, cr.w, cr.h});
+      }
+      for (const DirtyRect& r : dirties) {
+        copy_rect_to_prev(prev.data(), frame.data(), w, h, r);
+      }
+      have_prev = true;
+      last_send_ms = GetTickCount();
+      ++ticks_sent;
+
+      if (ticks_sent == 1 || last_send_ms - last_stat_ms >= kStatIntervalMs) {
+        last_stat_ms = last_send_ms;
+        size_t outq_n = 0;
+        {
+          std::lock_guard<std::mutex> lock(shared.outq_mu);
+          outq_n = shared.outq.size();
+        }
+        const uint32_t di = shared.dropped_interval.exchange(0);
+        logf("tick=%u batch=%u(from %u) copy=%u moves_in=%u dirty_in=%u wire=%u zlib=%u jpeg=%u "
+             "h264=%u cap_ms=%u outq=%u drop=%u drop_total=%u",
+             ticks_sent, static_cast<unsigned>(dirties.size() + copies.size()), before_collapse,
+             copy_this, moves_in, dirties_in, static_cast<unsigned>(wire_this), zlib_this,
+             jpeg_this, h264_this, cap_ms, static_cast<unsigned>(outq_n), di,
+             shared.dropped_ticks.load());
+      }
+    }
+
+    if (cap_begun) {
+      session_recorder_reset();
+      if (cap) {
+        cap->end();
+      }
+      cap.reset();
+      restore_host_cursor_after_session();
+      aero_shake_restore(&shake_guard);
+    }
+    h264_codec_shutdown();
+    media_log_set_mirror_stderr(true);
+    logf("encode thread end ticks=%u rects=%u", ticks_sent, sent_rects);
+    if (co_uninit) {
+      CoUninitialize();
+    }
+    } catch (const std::exception& ex) {
+      restore_host_cursor_after_session();
+      logf("encode thread FATAL exception: %s", ex.what());
+    } catch (...) {
+      restore_host_cursor_after_session();
+      logf("encode thread FATAL unknown exception");
+    }
+  };
+
+  std::thread encode_thr(encode_thread_main);
+  std::thread video_out_thr(video_out_thread_main);
+  logf("shared-control serve (max_clients=%u modern_lossy=%d inject+video-out+encode)",
+       static_cast<unsigned>(kMaxClients), modern_lossy ? 1 : 0);
+
+  DWORD last_cursor_ms = 0;
+  DWORD last_alive_ms = GetTickCount();
+  bool logged_io_alive = false;
 
   while (!(stop_requested && stop_requested->load()) && listen_sock != INVALID_SOCKET) {
+    const bool dragging = (g_ptr_buttons.load() & 1) != 0;
 
-    drain_all_clients(&clients, psk, mutex);
-    fanout_host_clipboard(&clients, &shared_xfer_id, psk, mutex);
+    g_inject_active.store(true);
+    {
+      std::lock_guard<std::mutex> lock(shared.io_mu);
+      drain_all_clients(&shared.clients, psk, mutex);
+      if (!dragging && !shared.video_writing.load()) {
+        fanout_host_clipboard(&shared.clients, &shared_xfer_id, psk, mutex);
+      }
+    }
+    g_inject_active.store(false);
 
-    const unsigned authed = count_authed(clients);
-    if (authed == 0 && cap_begun) {
-      cap.end();
-      cap_begun = false;
-      aero_shake_restore(&shake_guard);
-      have_prev = false;
-      prev.clear();
+    unsigned authed = 0;
+    {
+      std::lock_guard<std::mutex> lock(shared.io_mu);
+      authed = count_authed(shared.clients);
+    }
+    shared.session_active.store(authed > 0);
+    if (authed == 0) {
       release_modifiers();
-      media_log_set_mirror_stderr(true);
-      logf("all viewers gone - capture stopped");
     }
 
     fd_set rfds;
     FD_ZERO(&rfds);
     FD_SET(listen_sock, &rfds);
-    for (const ClientConn& c : clients) {
-      if (c.tls && !c.dead) {
-        const SOCKET s = tls::tls_get_socket(c.tls);
-        if (s != INVALID_SOCKET) {
-          FD_SET(s, &rfds);
+    {
+      std::lock_guard<std::mutex> lock(shared.io_mu);
+      for (const ClientConn& c : shared.clients) {
+        if (c.tls && !c.dead) {
+          const SOCKET s = tls::tls_get_socket(c.tls);
+          if (s != INVALID_SOCKET) {
+            FD_SET(s, &rfds);
+          }
         }
       }
     }
     timeval tv{};
     tv.tv_sec = 0;
-    tv.tv_usec = (authed > 0) ? 2000 : 50000;
+    tv.tv_usec = (authed == 0) ? 50000 : (dragging ? 0 : 2000);
     const int sel = select(0, &rfds, nullptr, nullptr, &tv);
     if (sel < 0) {
       const int err = WSAGetLastError();
@@ -1093,7 +1492,8 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
     if (sel > 0 && FD_ISSET(listen_sock, &rfds)) {
       SOCKET tcp = tls::tcp_accept(listen_sock);
       if (tcp != INVALID_SOCKET) {
-        if (clients.size() >= kMaxClients) {
+        std::lock_guard<std::mutex> lock(shared.io_mu);
+        if (shared.clients.size() >= kMaxClients) {
           logf("reject: max clients (%u)", static_cast<unsigned>(kMaxClients));
           closesocket(tcp);
         } else if (!creds) {
@@ -1105,297 +1505,97 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
           } else {
             ClientConn c;
             c.tls = tls_sess;
-            clients.push_back(std::move(c));
+            shared.clients.push_back(std::move(c));
             logf("TLS up clients=%u/%u - awaiting auth",
-                 static_cast<unsigned>(clients.size()),
+                 static_cast<unsigned>(shared.clients.size()),
                  static_cast<unsigned>(kMaxClients));
           }
         }
       }
     }
 
-    drain_all_clients(&clients, psk, mutex);
-
-    if (count_authed(clients) == 0) {
-      continue;
+    g_inject_active.store(true);
+    {
+      std::lock_guard<std::mutex> lock(shared.io_mu);
+      drain_all_clients(&shared.clients, psk, mutex);
     }
-
-    if (!cap_begun) {
-      if (!cap.begin()) {
-        logf("capture begin failed - drop viewers");
-        for (ClientConn& c : clients) {
-          if (c.authed) {
-            close_client(&c, mutex);
-          }
-        }
-        clients.clear();
-        continue;
-      }
-      cap_begun = true;
-      media_log_set_mirror_stderr(false);
-      aero_shake_disable(&shake_guard);
-      if (cap.using_mirror()) {
-        logf("capture started mirror device=%s", cap.mirror_device());
-      } else if (cap.using_dxgi()) {
-        logf("capture started dxgi");
-      } else {
-        logf("capture started gdi");
-      }
-      g_input_pointer = 0;
-      g_input_key = 0;
-      g_ptr_have_prev = false;
-      g_ptr_buttons_prev = 0;
-      g_validate_frames = 0;
-      g_copyrects_sent = 0;
-      g_have_last_copy_delta = false;
-    }
+    g_inject_active.store(false);
 
     const DWORD loop_now = GetTickCount();
-    if (cap.using_mirror() && loop_now - last_attach_scrub_ms >= kAttachScrubMs) {
-      last_attach_scrub_ms = loop_now;
-      rdm_scrub_foreign_attach_registry();
-    }
-
-    if (loop_now - last_cursor_ms >= 50) {
+    if (!dragging && !shared.video_writing.load() && loop_now - last_cursor_ms >= 50) {
       last_cursor_ms = loop_now;
       CursorShape shape;
-      if (capture_cursor_shape(&shape)) {
-        for (ClientConn& c : clients) {
-          if (!c.authed || c.dead) {
-            continue;
-          }
-          if (!send_cursor_if_changed(c.tls, shape, &c.cursor_hash_sent)) {
-            close_client(&c, mutex);
-          }
-        }
-        clients.erase(std::remove_if(clients.begin(), clients.end(),
-                                     [](const ClientConn& c) { return c.dead || !c.tls; }),
-                      clients.end());
-      }
-    }
-
-    const DWORD now = GetTickCount();
-    const DWORD min_interval_ms = (g_ptr_buttons & 1) ? 4u : 8u;
-    if (last_send_ms != 0 && now - last_send_ms < min_interval_ms) {
-      continue;
-    }
-
-    bool any_writable = false;
-    bool any_kf = false;
-    for (ClientConn& c : clients) {
-      if (!c.authed || c.dead) {
-        continue;
-      }
-      if (c.need_keyframe) {
-        any_kf = true;
-      }
-      const SOCKET s = tls::tls_get_socket(c.tls);
-      if (socket_writable(s, 0)) {
-        any_writable = true;
-      } else {
-        c.need_keyframe = true;
-      }
-    }
-    if (!any_writable) {
-      ++dropped_ticks;
-      continue;
-    }
-
-    int w = 0;
-    int h = 0;
-    const bool force_validate = cap.provides_dirties() && g_validate_frames > 0;
-    const DWORD cap0 = GetTickCount();
-    mirror_dirties.clear();
-    mirror_moves.clear();
-    if (!cap.capture(&frame, &w, &h, &mirror_dirties, &mirror_moves, force_validate)) {
-      Sleep(5);
-      continue;
-    }
-    const DWORD cap_ms = GetTickCount() - cap0;
-
-    const size_t frame_bytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 4u;
-    if (frame.size() != frame_bytes || frame.empty()) {
-      Sleep(5);
-      continue;
-    }
-    if (have_prev && prev.size() != frame_bytes) {
-      have_prev = false;
-    }
-    if (!have_prev) {
-      prev.assign(frame_bytes, 0);
-    }
-
-    const bool force_full = any_kf || !have_prev;
-    copies.clear();
-    if (cap.using_dxgi() && !force_validate && !force_full) {
-      // DXGI MoveRects → protocol CopyRect (cheap window drag path).
-      for (const CaptureMove& m : mirror_moves) {
-        if (rect_in_desk(w, h, m.sx, m.sy, m.w, m.h) &&
-            rect_in_desk(w, h, m.dx, m.dy, m.w, m.h)) {
-          copies.push_back(CopyRect{m.sx, m.sy, m.dx, m.dy, m.w, m.h});
-        }
-      }
-    }
-    if (cap.provides_dirties() && !force_validate && !force_full) {
-      dirties.clear();
-      for (const CaptureDirty& d : mirror_dirties) {
-        dirties.push_back(DirtyRect{d.x, d.y, d.w, d.h});
-      }
-    } else {
-      collect_dirty_rects(frame.data(), have_prev && !force_full ? prev.data() : nullptr, w, h,
-                          force_full, &dirties);
-    }
-    if (force_validate && g_validate_frames > 0) {
-      --g_validate_frames;
-    }
-    if (dirties.empty() && copies.empty()) {
-      continue;
-    }
-
-    // Heuristic CopyRect disabled: false votes on Mirror dirties caused staircase
-    // ghosts / tears (Win7 video). DXGI native MoveRects above remain the only path.
-    if (!(g_ptr_buttons & 1)) {
-      g_have_last_copy_delta = false;
-    }
-
-    const unsigned before_collapse = static_cast<unsigned>(dirties.size() + copies.size());
-    collapse_dirties_for_send(&dirties, w, h);
-
-    const bool full_keyframe =
-        dirties.size() == 1 && dirties[0].x == 0 && dirties[0].y == 0 && dirties[0].w == w &&
-        dirties[0].h == h;
-    if (!full_keyframe) {
-      split_rects_for_input_slices(&dirties, 256);
-    }
-
-    bool batch_ok = true;
-    size_t raw_this = 0;
-    size_t wire_this = 0;
-    DWORD enc_this = 0;
-    DWORD send_this = 0;
-    unsigned zlib_this = 0;
-    unsigned copy_this = 0;
-
-    for (const CopyRect& cr : copies) {
-      drain_all_clients(&clients, psk, mutex);
-      for (ClientConn& c : clients) {
+      shape.hidden = true;
+      shape.hash = 1;
+      std::lock_guard<std::mutex> lock(shared.io_mu);
+      for (ClientConn& c : shared.clients) {
         if (!c.authed || c.dead) {
           continue;
         }
-        if (!socket_writable(tls::tls_get_socket(c.tls), 0)) {
-          c.need_keyframe = true;
-          continue;
-        }
-        if (!send_copy_rect(c.tls, frame_id, cr)) {
+        if (!send_cursor_if_changed(c.tls, shape, &c.cursor_hash_sent)) {
           close_client(&c, mutex);
-          continue;
         }
       }
-      ++g_copyrects_sent;
-      ++copy_this;
-      ++sent_rects;
-      ++frame_id;
-      wire_this += kCopyRectPayloadSize;
+      shared.clients.erase(std::remove_if(shared.clients.begin(), shared.clients.end(),
+                                          [](const ClientConn& c) { return c.dead || !c.tls; }),
+                           shared.clients.end());
     }
 
-    for (const DirtyRect& r : dirties) {
-      if (!rect_in_desk(w, h, r.x, r.y, r.w, r.h)) {
-        have_prev = false;
-        batch_ok = false;
-        break;
-      }
-      drain_all_clients(&clients, psk, mutex);
-      // Encode once, fan-out the same compressed body to all writable clients.
-      const DWORD enc0 = GetTickCount();
-      EncodeRectStats enc{};
-      if (!encode_video_rect(frame_id, w, h, r.x, r.y, r.w, r.h, frame.data(), &raw_buf, &send_buf,
-                             &enc)) {
-        have_prev = false;
-        batch_ok = false;
-        break;
-      }
-      const DWORD enc_ms = GetTickCount() - enc0;
-      bool any_sent = false;
-      for (ClientConn& c : clients) {
-        if (!c.authed || c.dead) {
-          continue;
-        }
-        if (!socket_writable(tls::tls_get_socket(c.tls), 0)) {
-          c.need_keyframe = true;
-          continue;
-        }
-        const DWORD s0 = GetTickCount();
-        if (!mux_write(c.tls, kChannelVideo, send_buf.data(), enc.wire_bytes)) {
-          close_client(&c, mutex);
-          continue;
-        }
-        const DWORD send_ms = GetTickCount() - s0;
-        if (!any_sent) {
-          raw_this += enc.raw_bytes;
-          wire_this += enc.wire_bytes;
-          enc_this += enc_ms;
-          send_this += send_ms;
-          if (enc.codec == kVideoZlibBgra) {
-            ++zlib_this;
-          }
-          any_sent = true;
-        } else {
-          wire_this += enc.wire_bytes;
-          send_this += send_ms;
+    g_inject_active.store(true);
+    {
+      std::lock_guard<std::mutex> lock(shared.io_mu);
+      drain_all_clients(&shared.clients, psk, mutex);
+      shared.clients.erase(std::remove_if(shared.clients.begin(), shared.clients.end(),
+                                          [](const ClientConn& c) { return c.dead || !c.tls; }),
+                           shared.clients.end());
+      if (g_clear_client_keyframes.exchange(false)) {
+        for (ClientConn& c : shared.clients) {
+          c.need_keyframe = false;
         }
       }
-      if (any_sent) {
-        ++sent_rects;
-        ++frame_id;
+      bool any_kf = false;
+      for (ClientConn& c : shared.clients) {
+        if (c.authed && !c.dead && c.need_keyframe) {
+          any_kf = true;
+        }
+      }
+      if (any_kf) {
+        g_any_need_keyframe.store(true);
       }
     }
+    g_inject_active.store(false);
 
-    clients.erase(std::remove_if(clients.begin(), clients.end(),
-                                 [](const ClientConn& c) { return c.dead || !c.tls; }),
-                  clients.end());
-
-    if (!batch_ok) {
-      ++dropped_ticks;
-      continue;
-    }
-
-    for (ClientConn& c : clients) {
-      if (c.authed && !c.dead) {
-        c.need_keyframe = false;
-      }
-    }
-
-    for (const CopyRect& cr : copies) {
-      copy_rect_to_prev(prev.data(), frame.data(), w, h, DirtyRect{cr.dx, cr.dy, cr.w, cr.h});
-    }
-    for (const DirtyRect& r : dirties) {
-      copy_rect_to_prev(prev.data(), frame.data(), w, h, r);
-    }
-    have_prev = true;
-    last_send_ms = GetTickCount();
-    ++ticks_sent;
-
-    if (ticks_sent == 1 || last_send_ms - last_stat_ms >= kStatIntervalMs) {
-      last_stat_ms = last_send_ms;
-      logf("tick=%u viewers=%u batch=%u(from %u) copy=%u wire=%u zlib=%u cap_ms=%u drop=%u",
-           ticks_sent, count_authed(clients),
-           static_cast<unsigned>(dirties.size() + copies.size()), before_collapse, copy_this,
-           static_cast<unsigned>(wire_this), zlib_this, cap_ms, dropped_ticks);
+    if (!logged_io_alive && GetTickCount() - last_alive_ms >= 1000) {
+      logged_io_alive = true;
+      logf("inject thread alive (video-out+encode concurrent)");
     }
   }
 
-  for (ClientConn& c : clients) {
-    close_client(&c, mutex);
+  shared.encode_stop.store(true);
+  shared.video_out_stop.store(true);
+  shared.session_active.store(false);
+  if (encode_thr.joinable()) {
+    encode_thr.join();
   }
-  clients.clear();
-  if (cap_begun) {
-    cap.end();
+  if (video_out_thr.joinable()) {
+    video_out_thr.join();
   }
-  aero_shake_restore(&shake_guard);
+
+  {
+    std::lock_guard<std::mutex> lock(shared.io_mu);
+    for (ClientConn& c : shared.clients) {
+      close_client(&c, mutex);
+    }
+    shared.clients.clear();
+  }
+  {
+    std::lock_guard<std::mutex> lock(shared.outq_mu);
+    shared.outq.clear();
+  }
   release_modifiers();
-  media_log_set_mirror_stderr(true);
-  logf("shared-control serve end ticks=%u rects=%u", ticks_sent, sent_rects);
+  logf("shared-control serve end");
 }
+
 
 }  // namespace
 
@@ -1411,6 +1611,7 @@ struct MediaPlane::Impl {
   std::string fingerprint;
   session::SessionMutex* session_mutex = nullptr;
   road_desk::replace::CaptureMode capture_mode = road_desk::replace::CaptureMode::Auto;
+  road_desk::replace::CaptureStrategy capture_strategy = road_desk::replace::CaptureStrategy::Legacy;
 
   void cleanup_listen() {
     if (listen_sock != INVALID_SOCKET) {
@@ -1454,6 +1655,9 @@ bool MediaPlane::listen(const MediaPlaneConfig& config) {
   media_log_open("host-agent.log");
   impl_->log_opened = !already;
   logf("boot media-plane mux host");
+
+  // Heal invisible pointer left by a prior host crash (SetSystemCursor blank).
+  restore_host_cursor_after_session();
 
   road_desk::replace::release_modifiers();
 
@@ -1513,6 +1717,7 @@ bool MediaPlane::listen(const MediaPlaneConfig& config) {
       free(e);
     }
     impl_->capture_mode = resolved.effective;
+    impl_->capture_strategy = resolved.strategy;
     if (!resolved.os.ok) {
       logf("WARN os_version_failed strategy=legacy (conservative)");
     }
@@ -1580,7 +1785,8 @@ bool MediaPlane::listen(const MediaPlaneConfig& config) {
 
   impl_->bound_port = config.listen_port;
   impl_->running = true;
-  logf("listening TCP+TLS port %d (private mux, not RFB)", config.listen_port);
+  logf("listening TCP+TLS port %d (private mux, not RFB) version=%s built=%s %s",
+       config.listen_port, ROAD_DESK_VERSION_STRING, ROAD_DESK_BUILD_DATE, ROAD_DESK_BUILD_TIME);
   return true;
 }
 
@@ -1590,8 +1796,8 @@ void MediaPlane::serve() {
   }
 
   logf("serve: shared-control multi-viewer");
-  serve_shared(impl_->listen_sock, impl_->password, impl_->capture_mode, &impl_->stop_requested,
-               impl_->session_mutex, &impl_->tls_creds);
+  serve_shared(impl_->listen_sock, impl_->password, impl_->capture_mode, impl_->capture_strategy,
+               &impl_->stop_requested, impl_->session_mutex, &impl_->tls_creds);
 
   road_desk::replace::release_modifiers();
   impl_->cleanup_listen();

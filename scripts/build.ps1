@@ -13,7 +13,9 @@ if (-not (Test-Path $cmake)) { $cmake = "cmake" }
 
 $productOpts = @(
     "-DROAD_DESK_WITH_MEDIA=ON",
-    "-DROAD_DESK_STATIC_CRT=OFF"
+    # Static CRT: lab Win7/Win10 often ship older MSVCP140 than VS 2022/2026 /MD needs
+    # (host AV in MSVCP140.dll right after log start). Matches self-contained deploy to C:\rd.
+    "-DROAD_DESK_STATIC_CRT=ON"
 )
 
 cmd /c "`"$bt\Common7\Tools\VsDevCmd.bat`" -arch=amd64 -host_arch=amd64 -no_logo && `"$cmake`" -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release $($productOpts -join ' ') && `"$cmake`" --build build"

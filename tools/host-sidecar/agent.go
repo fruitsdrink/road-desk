@@ -183,7 +183,17 @@ func killByImageName(image string) error {
 	}
 	msg := string(out)
 	// "not found" is success for our purposes.
+	// Chinese Windows emits GBK ("没有找到进程"); Go may see mojibake — also treat
+	// taskkill exit 128 as "image not running" (documented on Win7+).
 	if containsFold(msg, "not found") || containsFold(msg, "没有找到") {
+		return nil
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() == 128 {
+		return nil
+	}
+	// If the image is already gone, ignore locale-specific taskkill text.
+	if !processImageRunning(image) {
 		return nil
 	}
 	return fmt.Errorf("taskkill %s: %v (%s)", image, err, trimSpace(msg))

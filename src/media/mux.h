@@ -13,6 +13,12 @@ namespace road_desk::replace {
 bool mux_write(road_desk::media::tls::TlsSession* tls, uint8_t channel,
                const void* payload, uint32_t len);
 
+// Like mux_write, but calls yield(ctx) between TLS record chunks so another thread
+// can briefly take the IO lock (e.g. inject drain/SendInput) during large video frames.
+using MuxYieldFn = bool (*)(void* ctx);
+bool mux_write_yield(road_desk::media::tls::TlsSession* tls, uint8_t channel,
+                     const void* payload, uint32_t len, MuxYieldFn yield, void* yield_ctx);
+
 // Reads one full frame. Returns false on disconnect / error / oversized.
 bool mux_read(road_desk::media::tls::TlsSession* tls, uint8_t* channel_out,
               std::vector<uint8_t>* payload_out);

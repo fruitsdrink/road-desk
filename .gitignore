@@ -32,3 +32,5 @@ Thumbs.db
 *.pem
 *.key
 .dev/
+.cursor/debug-agents.json
+build/debug-pull/

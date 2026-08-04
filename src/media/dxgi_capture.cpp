@@ -393,10 +393,14 @@ bool DxgiCapture::capture(std::vector<uint8_t>* bgra, int* width, int* height,
           continue;
         }
         if (d.x == 0 && d.y == 0 && d.w == width_ && d.h == height_) {
-          need_full = true;
-          pending_dirties.clear();
-          pending_moves.clear();
-          break;
+          // Full dirty alone → keyframe. If MoveRects exist, keep them (VNC-style) and
+          // skip adding the full rect so CopyRect is not discarded.
+          if (pending_moves.empty()) {
+            need_full = true;
+            pending_dirties.clear();
+            break;
+          }
+          continue;
         }
         pending_dirties.push_back(d);
       }

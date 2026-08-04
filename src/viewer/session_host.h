@@ -82,6 +82,7 @@ class SessionHost {
   int back_w_ = 0;
   int back_h_ = 0;
   bool tracking_leave_ = false;
+  int last_ptr_mask_ = -1;
 
   // Cached desktop (no cursor); refreshed when MediaClient framebuffer_epoch changes.
   std::vector<uint8_t> desk_bgra_;

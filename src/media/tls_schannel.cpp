@@ -665,10 +665,37 @@ SOCKET tcp_connect(const char* host, int port) {
     }
     std::memcpy(&addr.sin_addr, he->h_addr_list[0], sizeof(addr.sin_addr));
   }
-  if (connect(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
-    closesocket(s);
-    return INVALID_SOCKET;
+  // Non-blocking connect + select so Viewer UI thread cannot sit forever when Host is down.
+  u_long nonblock = 1;
+  ioctlsocket(s, FIONBIO, &nonblock);
+  const int cr = connect(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+  if (cr == SOCKET_ERROR) {
+    const int err = WSAGetLastError();
+    if (err != WSAEWOULDBLOCK && err != WSAEINPROGRESS) {
+      closesocket(s);
+      return INVALID_SOCKET;
+    }
+    fd_set wfds;
+    FD_ZERO(&wfds);
+    FD_SET(s, &wfds);
+    timeval tv{};
+    tv.tv_sec = 5;
+    tv.tv_usec = 0;
+    const int sel = select(0, nullptr, &wfds, nullptr, &tv);
+    if (sel <= 0) {
+      closesocket(s);
+      return INVALID_SOCKET;
+    }
+    int so_err = 0;
+    int so_len = sizeof(so_err);
+    if (getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&so_err), &so_len) != 0 ||
+        so_err != 0) {
+      closesocket(s);
+      return INVALID_SOCKET;
+    }
   }
+  u_long block = 0;
+  ioctlsocket(s, FIONBIO, &block);
   BOOL one = TRUE;
   setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&one), sizeof(one));
   return s;

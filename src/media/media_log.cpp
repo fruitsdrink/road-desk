@@ -7,6 +7,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <io.h>
+#include <share.h>
 
 namespace road_desk::media {
 namespace {
@@ -14,14 +16,50 @@ namespace {
 FILE* g_fp = nullptr;
 char g_path[MAX_PATH] = {};
 CRITICAL_SECTION g_cs;
-bool g_cs_ready = false;
+// Pure Win32 init — avoid std::call_once (MSVCP140 AV on some lab hosts right after log start).
+INIT_ONCE g_cs_once = INIT_ONCE_STATIC_INIT;
 bool g_mirror_stderr = true;
 
+BOOL CALLBACK init_cs_once(PINIT_ONCE, PVOID, PVOID*) {
+  InitializeCriticalSection(&g_cs);
+  return TRUE;
+}
+
 void ensure_cs() {
-  if (!g_cs_ready) {
-    InitializeCriticalSection(&g_cs);
-    g_cs_ready = true;
+  InitOnceExecuteOnce(&g_cs_once, init_cs_once, nullptr, nullptr);
+}
+
+// Elevated/task/service launches often leave CRT stderr/stdout as a stale handle.
+bool crt_stream_safe(FILE* f) {
+  if (!f) {
+    return false;
   }
+  const int fd = _fileno(f);
+  if (fd < 0) {
+    return false;
+  }
+  const intptr_t os = _get_osfhandle(fd);
+  if (os < 0) {
+    return false;
+  }
+  const HANDLE h = reinterpret_cast<HANDLE>(os);
+  if (!h || h == INVALID_HANDLE_VALUE) {
+    return false;
+  }
+  SetLastError(0);
+  const DWORD ty = GetFileType(h);
+  if (ty == FILE_TYPE_UNKNOWN && GetLastError() != NO_ERROR) {
+    return false;
+  }
+  return ty == FILE_TYPE_CHAR || ty == FILE_TYPE_PIPE || ty == FILE_TYPE_DISK;
+}
+
+void mirror_stderr_line(const char* tag, const char* line) {
+  if (!crt_stream_safe(stderr)) {
+    return;
+  }
+  std::fprintf(stderr, "[%s] %s\n", tag && tag[0] ? tag : "log", line ? line : "");
+  std::fflush(stderr);
 }
 
 void exe_dir(char* out, size_t out_len) {
@@ -73,7 +111,6 @@ bool media_log_open(const char* filename) {
   char want[MAX_PATH] = {};
   std::snprintf(want, sizeof(want), "%s\\%s", dir, filename);
 
-  // Same file already open (agent/viewer opened before media plane) — keep it.
   if (g_fp && g_path[0] && _stricmp(g_path, want) == 0) {
     LeaveCriticalSection(&g_cs);
     return true;
@@ -85,9 +122,12 @@ bool media_log_open(const char* filename) {
   }
   std::snprintf(g_path, sizeof(g_path), "%s", want);
 
-  if (fopen_s(&g_fp, g_path, "wb") != 0 || !g_fp) {
+  g_fp = _fsopen(g_path, "wb", _SH_DENYWR);
+  if (!g_fp) {
     g_fp = nullptr;
-    std::fprintf(stderr, "[log] open failed path=%s (stderr only)\n", g_path);
+    char fail[512];
+    std::snprintf(fail, sizeof(fail), "open failed path=%s (file log unavailable)", g_path);
+    mirror_stderr_line("log", fail);
     LeaveCriticalSection(&g_cs);
     return false;
   }
@@ -96,7 +136,6 @@ bool media_log_open(const char* filename) {
   std::fprintf(g_fp, "%s === log start (overwrite) path=%s pid=%lu ===\n", ts, g_path,
                static_cast<unsigned long>(GetCurrentProcessId()));
   std::fflush(g_fp);
-  std::fprintf(stderr, "[log] writing %s (overwrite each start)\n", g_path);
   LeaveCriticalSection(&g_cs);
   return true;
 }
@@ -110,9 +149,7 @@ bool media_log_is_open() {
 }
 
 void media_log_close() {
-  if (!g_cs_ready) {
-    return;
-  }
+  ensure_cs();
   EnterCriticalSection(&g_cs);
   if (g_fp) {
     char ts[64];
@@ -145,8 +182,9 @@ void media_logf(const char* tag, const char* fmt, ...) {
 
   const char* t = tag && tag[0] ? tag : "log";
   EnterCriticalSection(&g_cs);
-  if (g_mirror_stderr || !g_fp) {
+  if ((g_mirror_stderr || !g_fp) && crt_stream_safe(stderr)) {
     std::fprintf(stderr, "[%s] %s\n", t, line);
+    std::fflush(stderr);
   }
   if (g_fp) {
     std::fprintf(g_fp, "%s [%s] %s\n", ts, t, line);

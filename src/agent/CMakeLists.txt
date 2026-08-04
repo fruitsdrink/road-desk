@@ -3,6 +3,7 @@ add_executable(host-agent
   log.cpp
   gateway_config.cpp
   gateway_client.cpp
+  debug_http.cpp
   host-agent.manifest
 )
 
@@ -28,7 +29,7 @@ set_target_properties(host-agent PROPERTIES OUTPUT_NAME "host-agent")
 # Mirror Attach.ToDesktop scrub needs HKLM write — always elevate via UAC.
 if(MSVC)
   target_link_options(host-agent PRIVATE
-    "/MANIFESTUAC:level='requireAdministrator' uiAccess='false'"
+      "/MANIFESTUAC:level='requireAdministrator' uiAccess='false'"
   )
   # Keep a full manifest beside sources for documentation / alternate toolchains.
   configure_file(

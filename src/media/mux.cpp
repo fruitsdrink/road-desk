@@ -62,6 +62,11 @@ uint32_t read_u32_le(const uint8_t* p) {
 
 bool mux_write(road_desk::media::tls::TlsSession* tls, uint8_t channel, const void* payload,
                uint32_t len) {
+  return mux_write_yield(tls, channel, payload, len, nullptr, nullptr);
+}
+
+bool mux_write_yield(road_desk::media::tls::TlsSession* tls, uint8_t channel,
+                     const void* payload, uint32_t len, MuxYieldFn yield, void* yield_ctx) {
   if (!tls || len > kMaxPayloadLen) {
     return false;
   }
@@ -74,7 +79,23 @@ bool mux_write(road_desk::media::tls::TlsSession* tls, uint8_t channel, const vo
   if (len == 0) {
     return true;
   }
-  return tls_write_full(tls, payload, static_cast<int>(len));
+  auto* p = static_cast<const uint8_t*>(payload);
+  uint32_t sent = 0;
+  // Small chunks so inject can drain between TLS records (cursor/window lag).
+  constexpr uint32_t kYieldEvery = 4u * 1024u;
+  while (sent < len) {
+    if (yield && sent > 0) {
+      if (!yield(yield_ctx)) {
+        return false;
+      }
+    }
+    const uint32_t chunk = (len - sent > kYieldEvery) ? kYieldEvery : (len - sent);
+    if (!tls_write_full(tls, p + sent, static_cast<int>(chunk))) {
+      return false;
+    }
+    sent += chunk;
+  }
+  return true;
 }
 
 bool mux_read(road_desk::media::tls::TlsSession* tls, uint8_t* channel_out,

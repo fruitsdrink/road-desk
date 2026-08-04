@@ -102,7 +102,15 @@ void inject_pointer(int button_mask, int x, int y) {
 
   const LONG abs_x = (x * 65535) / (screen_w - 1);
   const LONG abs_y = (y * 65535) / (screen_h - 1);
-  send_mouse(MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE, abs_x, abs_y);
+
+  // One absolute move; edge-triggered buttons. Keeps drag path to a single SendInput
+  // when only the pointer moved (common while LMB held).
+  INPUT in{};
+  in.type = INPUT_MOUSE;
+  in.mi.dx = abs_x;
+  in.mi.dy = abs_y;
+  in.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
+  SendInput(1, &in, sizeof(INPUT));
 
   const int down = button_mask & ~g_last_buttons;
   const int up = g_last_buttons & ~button_mask;

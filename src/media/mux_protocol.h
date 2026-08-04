@@ -29,6 +29,10 @@ enum VideoCodec : uint8_t {
   kVideoZlibBgra = 2,  // zlib of the same raw BGRA; uncompressed size = w*h*4
   // CopyRect: header x,y,w,h = dst; then u16 le src_x, src_y (no pixels).
   kVideoCopyRect = 3,
+  // WIC JPEG of top-down BGRA (modern lossy).
+  kVideoJpeg = 4,
+  // Annex-B H.264 (MF); payload after header is one or more NALs for this rect.
+  kVideoH264 = 5,
 };
 
 enum CursorMsg : uint8_t {
