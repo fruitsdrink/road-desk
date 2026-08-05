@@ -178,7 +178,7 @@ GET /v1/admin/audit/sessions?from=&to=&agent_id=&operator=&result=&limit=&cursor
 |------|------|------|
 | **A0** | ✅ 表 + upsert API + admin 只读列表（可用 curl 灌数） | 管理员能查假数据 |
 | **A1** | ✅ Viewer 上报 attempt/opened/closed/fail + mode；无协议改亦可 | 帐号登录远控一条完整话单 |
-| **A2** | ✅ 协议带 `session_id` + Host 上报 auth/容量/peer + 归并 | 故意错 PSK / 打满 8 路可见失败单 |
+| **A2** | ✅ 协议带 `session_id` + Host 上报 auth/容量/peer + 归并 | 错 PSK 可见失败单；容量满拒绝人工暂缓（无 8 路条件） |
 | **A3** | ✅ 剪贴板/文件布尔；只读切换；保留期任务；（可选）events 表延后 | CONTEXT 字段表一期列齐 |
 | **A4** | CSV 导出、按部门过滤、与目录 ACL 对齐（若以后做 ACL） | 运维可导出 |
 
@@ -209,10 +209,12 @@ GET /v1/admin/audit/sessions?from=&to=&agent_id=&operator=&result=&limit=&cursor
 - [x] A1 Viewer 上报
 - [x] A2 协议 `session_id` + Host 上报（auth/容量/peer/close）
 - [x] A3 剪贴板/文件/只读 flag + 保留期（`audit_events` 延后）
-- [ ] 帐号登录：成功远控一条；错媒体口令一条失败；用户关闭有时长（A1/A2 人工）
-- [ ]（A2）容量满拒绝可查（人工：打满 8 路后再连）
-- [ ] 管理端筛选可用；无录像入口
+- [x] 帐号登录：成功远控一条；错媒体口令一条失败；用户关闭有时长（A1/A2 人工，2026-08-05）
+- [ ]（A2）容量满拒绝可查 — **暂缓**：实验室暂无条件打满 8 路并发
+- [x] 管理端筛选可用；无录像入口
 - [x] `CONTEXT.md` 审计条从「MVP 不上」改为「一期话单已上、不含录像」并链到本文
+- [x] 文件方向 + 顶层名/路径进管理端（人工，同日）
+- [ ] 进程开/关审计 — 延后（可靠后再做）
 
 ---
 
