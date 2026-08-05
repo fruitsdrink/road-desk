@@ -1,8 +1,10 @@
 package api
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -130,56 +132,76 @@ func (s *Server) auditUpsert(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, a)
 }
 
-func (s *Server) listAuditSessions(w http.ResponseWriter, r *http.Request) {
+func (s *Server) parseAuditListFilter(r *http.Request, export bool) (store.AuditListFilter, error) {
 	q := r.URL.Query()
 	f := store.AuditListFilter{
 		AgentID:  strings.TrimSpace(q.Get("agent_id")),
 		Operator: strings.TrimSpace(q.Get("operator")),
 		Result:   strings.TrimSpace(q.Get("result")),
 	}
+	if v := strings.TrimSpace(q.Get("department_id")); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 1 {
+			return f, fmt.Errorf("department_id 无效")
+		}
+		f.DepartmentID = n
+	}
 	if v := q.Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 {
-			writeErr(w, http.StatusBadRequest, "limit 无效")
-			return
+			return f, fmt.Errorf("limit 无效")
 		}
 		f.Limit = n
+	} else if export {
+		f.Limit = 5000
 	}
 	if v := q.Get("from"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "from 须为 RFC3339")
-			return
+			return f, fmt.Errorf("from 须为 RFC3339")
 		}
 		f.From = &t
 	}
 	if v := q.Get("to"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "to 须为 RFC3339")
-			return
+			return f, fmt.Errorf("to 须为 RFC3339")
 		}
 		f.To = &t
 	}
 	if cur := strings.TrimSpace(q.Get("cursor")); cur != "" {
+		if export {
+			return f, fmt.Errorf("导出不支持 cursor")
+		}
 		parts := strings.SplitN(cur, "|", 2)
 		if len(parts) != 2 {
-			writeErr(w, http.StatusBadRequest, "cursor 格式为 attemptedAt|id")
-			return
+			return f, fmt.Errorf("cursor 格式为 attemptedAt|id")
 		}
 		t, err := time.Parse(time.RFC3339Nano, parts[0])
 		if err != nil {
 			t, err = time.Parse(time.RFC3339, parts[0])
 		}
 		if err != nil || !uuidRE.MatchString(parts[1]) {
-			writeErr(w, http.StatusBadRequest, "cursor 格式为 attemptedAt|id")
-			return
+			return f, fmt.Errorf("cursor 格式为 attemptedAt|id")
 		}
 		f.CursorAt = &t
 		f.CursorID = strings.ToLower(parts[1])
 	}
 	if f.Result != "" && !store.ValidateAuditResult(f.Result) {
-		writeErr(w, http.StatusBadRequest, "result 无效")
+		return f, fmt.Errorf("result 无效")
+	}
+	if !export {
+		if f.Limit <= 0 || f.Limit > 200 {
+			f.Limit = 50
+		}
+	}
+	return f, nil
+}
+
+func (s *Server) listAuditSessions(w http.ResponseWriter, r *http.Request) {
+	f, err := s.parseAuditListFilter(r, false)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -189,15 +211,80 @@ func (s *Server) listAuditSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := map[string]any{"items": items}
-	limit := f.Limit
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
-	if len(items) == limit {
+	if len(items) == f.Limit {
 		last := items[len(items)-1]
 		out["nextCursor"] = last.AttemptedAt.UTC().Format(time.RFC3339Nano) + "|" + last.ID
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func csvCell(s string) string {
+	return strings.ReplaceAll(s, "\r\n", " ")
+}
+
+func (s *Server) exportAuditSessionsCSV(w http.ResponseWriter, r *http.Request) {
+	f, err := s.parseAuditListFilter(r, true)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	items, err := s.Store.ListAuditSessions(r.Context(), f)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	filename := "audit-sessions-" + time.Now().UTC().Format("20060102-150405") + ".csv"
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	// UTF-8 BOM so Excel opens Chinese correctly.
+	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF})
+	cw := csv.NewWriter(w)
+	_ = cw.Write([]string{
+		"id", "attemptedAt", "openedAt", "closedAt", "operator", "department",
+		"viewerHost", "viewerIp", "agentId", "agentName", "agentEndpoint",
+		"mode", "result", "disconnectReason", "usedClipboard", "usedFileTransfer",
+		"partial", "meta",
+	})
+	for _, a := range items {
+		opened, closed := "", ""
+		if a.OpenedAt != nil {
+			opened = a.OpenedAt.UTC().Format(time.RFC3339)
+		}
+		if a.ClosedAt != nil {
+			closed = a.ClosedAt.UTC().Format(time.RFC3339)
+		}
+		meta := string(a.Meta)
+		if meta == "" {
+			meta = "{}"
+		}
+		_ = cw.Write([]string{
+			a.ID,
+			a.AttemptedAt.UTC().Format(time.RFC3339),
+			opened,
+			closed,
+			csvCell(a.OperatorName),
+			csvCell(a.DepartmentName),
+			csvCell(a.ViewerHost),
+			csvCell(a.ViewerIP),
+			csvCell(a.AgentID),
+			csvCell(a.AgentName),
+			csvCell(a.AgentEndpoint),
+			a.Mode,
+			a.Result,
+			csvCell(a.DisconnectReason),
+			strconv.FormatBool(a.UsedClipboard),
+			strconv.FormatBool(a.UsedFileTransfer),
+			strconv.FormatBool(a.Partial),
+			csvCell(meta),
+		})
+	}
+	cw.Flush()
+	if err := cw.Error(); err != nil {
+		// Headers may already be sent.
+		return
+	}
 }
 
 func (s *Server) getAuditSession(w http.ResponseWriter, r *http.Request) {

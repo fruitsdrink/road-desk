@@ -31,6 +31,7 @@ type AuditSession struct {
 	ClosedAt          *time.Time      `json:"closedAt"`
 	Partial           bool            `json:"partial"`
 	Meta              json.RawMessage `json:"meta"`
+	DepartmentName    string          `json:"departmentName"`
 	CreatedAt         time.Time       `json:"createdAt"`
 	UpdatedAt         time.Time       `json:"updatedAt"`
 }
@@ -59,14 +60,15 @@ type AuditUpsert struct {
 }
 
 type AuditListFilter struct {
-	From       *time.Time
-	To         *time.Time
-	AgentID    string
-	Operator   string
-	Result     string
-	Limit      int
-	CursorAt   *time.Time
-	CursorID   string
+	From         *time.Time
+	To           *time.Time
+	AgentID      string
+	Operator     string
+	Result       string
+	DepartmentID int64 // 0 = any; filters by operator user's department
+	Limit        int
+	CursorAt     *time.Time
+	CursorID     string
 }
 
 var (
@@ -89,7 +91,7 @@ func scanAuditSession(row pgx.Row) (AuditSession, error) {
 		&a.ID, &a.OperatorUserID, &a.OperatorName, &a.ViewerHost, &a.ViewerIP,
 		&a.AgentID, &a.AgentName, &a.AgentEndpoint, &a.Mode, &a.Result, &a.DisconnectReason,
 		&a.UsedClipboard, &a.UsedFileTransfer, &a.AttemptedAt, &a.OpenedAt, &a.ClosedAt,
-		&a.Partial, &meta, &a.CreatedAt, &a.UpdatedAt,
+		&a.Partial, &meta, &a.DepartmentName, &a.CreatedAt, &a.UpdatedAt,
 	)
 	if err != nil {
 		return a, err
@@ -103,13 +105,18 @@ func scanAuditSession(row pgx.Row) (AuditSession, error) {
 }
 
 const auditSelectCols = `
-	id, operator_user_id, operator_name, viewer_host, viewer_ip,
-	agent_id, agent_name, agent_endpoint, mode, result, disconnect_reason,
-	used_clipboard, used_file_transfer, attempted_at, opened_at, closed_at,
-	partial, meta, created_at, updated_at`
+	a.id, a.operator_user_id, a.operator_name, a.viewer_host, a.viewer_ip,
+	a.agent_id, a.agent_name, a.agent_endpoint, a.mode, a.result, a.disconnect_reason,
+	a.used_clipboard, a.used_file_transfer, a.attempted_at, a.opened_at, a.closed_at,
+	a.partial, a.meta, COALESCE(d.name, ''), a.created_at, a.updated_at`
+
+const auditFromSQL = `
+	FROM audit_sessions a
+	LEFT JOIN users u ON u.id = a.operator_user_id
+	LEFT JOIN departments d ON d.id = u.department_id`
 
 func (s *Store) GetAuditSession(ctx context.Context, id string) (AuditSession, error) {
-	row := s.Pool.QueryRow(ctx, `SELECT `+auditSelectCols+` FROM audit_sessions WHERE id=$1`, id)
+	row := s.Pool.QueryRow(ctx, `SELECT `+auditSelectCols+auditFromSQL+` WHERE a.id=$1`, id)
 	a, err := scanAuditSession(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return a, pgx.ErrNoRows
@@ -212,19 +219,26 @@ func (s *Store) UpsertAuditSession(ctx context.Context, u AuditUpsert) (AuditSes
 			partial = CASE WHEN $19::boolean IS NOT NULL THEN $19::boolean ELSE audit_sessions.partial END,
 			meta = COALESCE(audit_sessions.meta, '{}'::jsonb) || COALESCE(EXCLUDED.meta, '{}'::jsonb),
 			updated_at = NOW()
-		RETURNING `+auditSelectCols,
+		RETURNING id`,
 		u.ID, u.OperatorUserID, opName, viewerHost, viewerIP,
 		agentID, agentName, agentEndpoint, mode, result, disc,
 		usedClip, usedFile, attempted, u.OpenedAt, u.ClosedAt,
 		partial, meta, u.Partial,
 	)
-	return scanAuditSession(row)
+	var id string
+	if err := row.Scan(&id); err != nil {
+		return AuditSession{}, err
+	}
+	return s.GetAuditSession(ctx, id)
 }
 
 func (s *Store) ListAuditSessions(ctx context.Context, f AuditListFilter) ([]AuditSession, error) {
 	limit := f.Limit
-	if limit <= 0 || limit > 200 {
+	if limit <= 0 {
 		limit = 50
+	}
+	if limit > 5000 {
+		limit = 5000
 	}
 	var (
 		b    strings.Builder
@@ -236,27 +250,29 @@ func (s *Store) ListAuditSessions(ctx context.Context, f AuditListFilter) ([]Aud
 		args = append(args, v)
 		return fmt.Sprintf("$%d", n)
 	}
-	b.WriteString(`SELECT ` + auditSelectCols + ` FROM audit_sessions WHERE TRUE`)
+	b.WriteString(`SELECT ` + auditSelectCols + auditFromSQL + ` WHERE TRUE`)
 	if f.From != nil {
-		b.WriteString(` AND attempted_at >= ` + arg(f.From.UTC()))
+		b.WriteString(` AND a.attempted_at >= ` + arg(f.From.UTC()))
 	}
 	if f.To != nil {
-		b.WriteString(` AND attempted_at < ` + arg(f.To.UTC()))
+		b.WriteString(` AND a.attempted_at < ` + arg(f.To.UTC()))
 	}
 	if f.AgentID != "" {
-		b.WriteString(` AND agent_id = ` + arg(f.AgentID))
+		b.WriteString(` AND a.agent_id = ` + arg(f.AgentID))
 	}
 	if f.Operator != "" {
-		b.WriteString(` AND operator_name ILIKE ` + arg("%"+f.Operator+"%"))
+		b.WriteString(` AND a.operator_name ILIKE ` + arg("%"+f.Operator+"%"))
 	}
 	if f.Result != "" {
-		b.WriteString(` AND result = ` + arg(f.Result))
+		b.WriteString(` AND a.result = ` + arg(f.Result))
+	}
+	if f.DepartmentID > 0 {
+		b.WriteString(` AND u.department_id = ` + arg(f.DepartmentID))
 	}
 	if f.CursorAt != nil && f.CursorID != "" {
-		// (attempted_at, id) < cursor for DESC pagination
-		b.WriteString(` AND (attempted_at, id::text) < (` + arg(f.CursorAt.UTC()) + `, ` + arg(f.CursorID) + `)`)
+		b.WriteString(` AND (a.attempted_at, a.id::text) < (` + arg(f.CursorAt.UTC()) + `, ` + arg(f.CursorID) + `)`)
 	}
-	b.WriteString(` ORDER BY attempted_at DESC, id DESC LIMIT ` + arg(limit))
+	b.WriteString(` ORDER BY a.attempted_at DESC, a.id DESC LIMIT ` + arg(limit))
 
 	rows, err := s.Pool.Query(ctx, b.String(), args...)
 	if err != nil {

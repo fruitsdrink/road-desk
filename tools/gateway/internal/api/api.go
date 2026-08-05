@@ -62,6 +62,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("POST /v1/audit/sessions/upsert", s.requireAuditIngest(s.auditUpsert))
 	mux.HandleFunc("GET /v1/admin/audit/sessions", s.requireAdmin(s.listAuditSessions))
+	mux.HandleFunc("GET /v1/admin/audit/sessions/export", s.requireAdmin(s.exportAuditSessionsCSV))
 	mux.HandleFunc("GET /v1/admin/audit/sessions/{id}", s.requireAdmin(s.getAuditSession))
 
 	mux.HandleFunc("GET /v1/directory/tree", s.requireViewer(s.directoryTree))

@@ -126,7 +126,8 @@ GET/POST/PATCH/DELETE /v1/admin/groups|tags|agents...
 GET/POST/PATCH/DELETE /v1/admin/departments|users...
 GET /v1/admin/secrets/agent-psk|viewer-psk
 POST /v1/audit/sessions/upsert         # Viewer JWT/PSK 或 Agent-PSK；话单幂等
-GET /v1/admin/audit/sessions[/{id}]    # 管理员查审计
+GET /v1/admin/audit/sessions[/{id}]    # 管理员查审计（department_id 筛选）
+GET /v1/admin/audit/sessions/export    # 管理员导出 CSV（同筛选，最多 5000）
 GET /v1/directory/tree|agents          # Viewer-PSK 或 viewer/admin JWT
 GET /healthz
 ```

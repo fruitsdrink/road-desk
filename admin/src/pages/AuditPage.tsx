@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import { DatePicker, Input, Select, Space, Table, Tag, Tooltip, Typography } from 'antd'
+import { Button, DatePicker, Input, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { useQuery } from '@tanstack/react-query'
 import dayjs, { type Dayjs } from 'dayjs'
@@ -201,19 +201,24 @@ export function AuditPage() {
   const [operator, setOperator] = useState('')
   const [agentId, setAgentId] = useState('')
   const [result, setResult] = useState<string | undefined>()
+  const [departmentId, setDepartmentId] = useState<number | undefined>()
+  const [exporting, setExporting] = useState(false)
 
-  const params = {
+  const filterParams = {
     from: range?.[0]?.startOf('day').toISOString(),
     to: range?.[1]?.endOf('day').toISOString(),
     operator: operator.trim() || undefined,
     agent_id: agentId.trim() || undefined,
     result,
+    department_id: departmentId,
     limit: 100,
   }
 
+  const deptsQ = useQuery({ queryKey: ['departments'], queryFn: api.departments })
+
   const listQ = useQuery({
-    queryKey: ['audit-sessions', params],
-    queryFn: () => api.auditSessions(params),
+    queryKey: ['audit-sessions', filterParams],
+    queryFn: () => api.auditSessions(filterParams),
   })
 
   const tableScrollY = useTableScrollY(tableWrapRef, [listQ.isLoading, listQ.data?.items?.length])
@@ -227,6 +232,13 @@ export function AuditPage() {
         render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm:ss'),
       },
       { title: '操作员', dataIndex: 'operatorName', width: 100, ellipsis: true },
+      {
+        title: '部门',
+        dataIndex: 'departmentName',
+        width: 100,
+        ellipsis: true,
+        render: (v: string) => v || '—',
+      },
       {
         title: '发起端',
         key: 'viewer',
@@ -332,6 +344,25 @@ export function AuditPage() {
 
   const resizableColumns = useResizableColumns(columns)
 
+  const onExport = async () => {
+    setExporting(true)
+    try {
+      await api.downloadAuditCsv({
+        from: filterParams.from,
+        to: filterParams.to,
+        operator: filterParams.operator,
+        agent_id: filterParams.agent_id,
+        result: filterParams.result,
+        department_id: filterParams.department_id,
+      })
+      message.success('已开始下载 CSV')
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '导出失败')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="flex h-full flex-col gap-3 p-4">
       <Space wrap>
@@ -342,6 +373,15 @@ export function AuditPage() {
           value={operator}
           onChange={(e) => setOperator(e.target.value)}
           style={{ width: 140 }}
+        />
+        <Select
+          allowClear
+          placeholder="部门"
+          style={{ width: 160 }}
+          value={departmentId}
+          onChange={setDepartmentId}
+          loading={deptsQ.isLoading}
+          options={(deptsQ.data ?? []).map((d) => ({ value: d.id, label: d.name }))}
         />
         <Input
           allowClear
@@ -358,6 +398,9 @@ export function AuditPage() {
           onChange={setResult}
           options={Object.entries(resultLabel).map(([value, label]) => ({ value, label }))}
         />
+        <Button type="primary" loading={exporting} onClick={onExport}>
+          导出 CSV
+        </Button>
       </Space>
       <div ref={tableWrapRef} className="min-h-0 flex-1">
         <Table<AuditSession>
@@ -368,7 +411,7 @@ export function AuditPage() {
           columns={resizableColumns}
           components={resizableTableComponents}
           pagination={false}
-          scroll={{ y: tableScrollY, x: 1400 }}
+          scroll={{ y: tableScrollY, x: 1600 }}
         />
       </div>
     </div>

@@ -1,6 +1,6 @@
 # 接入审计实施方案
 
-Status: **active**（2026-08-05）— 已拍板双源+P1；A0–A3 已落地，A4 待办  
+Status: **active**（2026-08-05）— 已拍板双源+P1；A0–A4 已落地（ACL 对齐仍延后）  
 Related: [CONTEXT.md](../CONTEXT.md)（审计日志 / 控制面）、[gateway.md](./gateway.md)、[adr/0001-media-plane-vnc-adapter.md](./adr/0001-media-plane-vnc-adapter.md)、[viewer-implementation-plan.md](./viewer-implementation-plan.md)
 
 把远控「话单」落到控制面：可查询、可合规抽查；**不含会话录像**。媒体仍 Viewer↔Agent TLS mux 直连，审计事件由端上报，网关不旁路拆媒体包。
@@ -135,12 +135,15 @@ Host 上报同路径，`source=agent`，可填 `viewer_ip`、`result=auth_fail|c
 ### 5.2 管理查询
 
 ```
-GET /v1/admin/audit/sessions?from=&to=&agent_id=&operator=&result=&limit=&cursor=
+GET /v1/admin/audit/sessions?from=&to=&agent_id=&operator=&result=&department_id=&limit=&cursor=
+GET /v1/admin/audit/sessions/export?from=&to=&agent_id=&operator=&result=&department_id=  # CSV，最多 5000 行
 ```
 
 返回分页列表；详情可用 `GET /v1/admin/audit/sessions/{id}`（含 events，若启用）。
 
-**无导出 CSV 也可二期做**；一期管理端表格 + 筛选即可。
+部门过滤：按操作员账号所属 `users.department_id`（无 `operator_user_id` 的 PSK 话单不会命中部门筛选）。目录 ACL 尚未落地，A4 不做机器级 ACL。
+
+**CSV 导出**：管理端「导出 CSV」；UTF-8 BOM，含部门与 `meta`。
 
 ## 6. 端侧改动要点
 
@@ -170,7 +173,7 @@ GET /v1/admin/audit/sessions?from=&to=&agent_id=&operator=&result=&limit=&cursor
 ### 6.4 网关 / 管理端
 
 - Go：`internal/store` + `api` 路由；迁移 `003_audit.sql`。
-- Admin：导航「审计」；表格列：时间、操作员、发起端（本机/IP）、被控端、结果、模式、时长、剪贴板/文件、备注；筛选：时间范围、结果、操作员、被控端。
+- Admin：导航「审计」；表格列：时间、操作员、部门、发起端（本机/IP）、被控端、结果、模式、时长、剪贴板/文件、备注；筛选：时间范围、结果、操作员、部门、被控端；导出 CSV。
 
 ## 7. 分期
 
@@ -180,7 +183,7 @@ GET /v1/admin/audit/sessions?from=&to=&agent_id=&operator=&result=&limit=&cursor
 | **A1** | ✅ Viewer 上报 attempt/opened/closed/fail + mode；无协议改亦可 | 帐号登录远控一条完整话单 |
 | **A2** | ✅ 协议带 `session_id` + Host 上报 auth/容量/peer + 归并 | 错 PSK 可见失败单；容量满拒绝人工暂缓（无 8 路条件） |
 | **A3** | ✅ 剪贴板/文件布尔；只读切换；保留期任务；（可选）events 表延后 | CONTEXT 字段表一期列齐 |
-| **A4** | CSV 导出、按部门过滤、与目录 ACL 对齐（若以后做 ACL） | 运维可导出 |
+| **A4** | ✅ CSV 导出、按部门过滤；（目录 ACL 仍延后） | 运维可导出 |
 
 建议落地顺序：**A0 → A1 → A2 → A3**。A1 即可演示；A2 才达到「权威失败可查」。
 
@@ -214,6 +217,7 @@ GET /v1/admin/audit/sessions?from=&to=&agent_id=&operator=&result=&limit=&cursor
 - [x] 管理端筛选可用；无录像入口
 - [x] `CONTEXT.md` 审计条从「MVP 不上」改为「一期话单已上、不含录像」并链到本文
 - [x] 文件方向 + 顶层名/路径进管理端（人工，同日）
+- [x] A4 CSV 导出 + 按操作员部门过滤（ACL 延后）
 - [ ] 进程开/关审计 — 延后（可靠后再做）
 
 ---

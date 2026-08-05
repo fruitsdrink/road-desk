@@ -108,6 +108,7 @@ export type AuditSession = {
   closedAt: string | null
   partial: boolean
   meta: Record<string, unknown>
+  departmentName?: string
   createdAt: string
   updatedAt: string
 }
@@ -160,6 +161,7 @@ export const api = {
     agent_id?: string
     operator?: string
     result?: string
+    department_id?: number
     limit?: number
     cursor?: string
   } = {}) => {
@@ -173,6 +175,48 @@ export const api = {
     )
   },
   auditSession: (id: string) => request<AuditSession>(`/v1/admin/audit/sessions/${id}`),
+  downloadAuditCsv: async (params: {
+    from?: string
+    to?: string
+    agent_id?: string
+    operator?: string
+    result?: string
+    department_id?: number
+  } = {}) => {
+    const token = getToken()
+    const q = new URLSearchParams()
+    for (const [k, v] of Object.entries(params)) {
+      if (v != null && v !== '') q.set(k, String(v))
+    }
+    const qs = q.toString()
+    const res = await fetch(`/v1/admin/audit/sessions/export${qs ? `?${qs}` : ''}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (res.status === 401) {
+      handleUnauthorized(401)
+      throw new ApiError(401, '未授权')
+    }
+    if (!res.ok) {
+      let msg = '导出失败'
+      try {
+        const data = await res.json()
+        if (data?.error) msg = data.error
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(res.status, msg)
+    }
+    const blob = await res.blob()
+    const dispo = res.headers.get('Content-Disposition') || ''
+    const match = /filename="?([^";]+)"?/i.exec(dispo)
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = match?.[1] || 'audit-sessions.csv'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(a.href)
+  },
   downloadSecret: async (kind: 'agent-psk' | 'viewer-psk') => {
     const token = getToken()
     const res = await fetch(`/v1/admin/secrets/${kind}`, {
