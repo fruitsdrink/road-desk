@@ -3,6 +3,9 @@
 #include "address_book.h"
 #include "product_version.h"
 #include "session_host.h"
+#include "ui/rd_app_icon.h"
+#include "ui/rd_dpi.h"
+#include "ui/rd_tokens.h"
 
 #include <commctrl.h>
 #include <objidl.h>
@@ -25,17 +28,18 @@ namespace road_desk::viewer {
 namespace {
 
 namespace gdip = Gdiplus;
+namespace rd = road_desk::ui;
 
 constexpr wchar_t kConsoleClass[] = L"RoadDeskConsoleWindow";
 constexpr wchar_t kTabStripClass[] = L"RoadDeskTabStrip";
 constexpr wchar_t kDragGhostClass[] = L"RoadDeskDragGhost";
-constexpr int kToolbarHDip = 32;  // rd: 工具栏条
+constexpr int kToolbarHDip = rd::kToolbarHDip;
 constexpr int kToolbarIconDip = 16;
-constexpr int kToolbarPadXDip = 8;  // design padding [0,8]
-constexpr int kStatusHDip = 24;
+constexpr int kToolbarPadXDip = rd::kSpace2;
+constexpr int kStatusHDip = rd::kStatusHDip;
 constexpr int kTabHDefault = 30;
 constexpr int kCloseBtnWDip = 18;
-constexpr int kSplitterWDip = 4;
+constexpr int kSplitterWDip = rd::kSplitterWDip;
 constexpr int kTabNavWDip = 24;  // overflow ◀▶ (design Frame E)
 constexpr int kFloatBadgeWDip = 14;
 constexpr int kMaxSessions = 8;
@@ -47,23 +51,23 @@ constexpr int kGhostW = 260;
 constexpr int kGhostH = 160;
 constexpr int kGhostTitleH = 28;
 
-// Design tokens (docs/ui-design-system.md / docs/design/viewer-console.pen).
-constexpr COLORREF kChrome = RGB(236, 240, 245);       // rd.color.surface.chrome
-constexpr COLORREF kPanel = RGB(255, 255, 255);         // rd.color.surface.panel
-constexpr COLORREF kBorderSubtle = RGB(220, 226, 234);  // rd.color.border.subtle
-constexpr COLORREF kBorderStrong = RGB(180, 190, 204);  // rd.color.border.strong
-constexpr COLORREF kTextPrimary = RGB(28, 34, 46);      // rd.color.text.primary
-constexpr COLORREF kTextSecondary = RGB(88, 98, 114);   // rd.color.text.secondary
-constexpr COLORREF kTextMuted = RGB(140, 150, 164);     // rd.color.text.muted
-constexpr COLORREF kIconInk = RGB(88, 98, 114);         // toolbar glyphs
-constexpr COLORREF kRowHover = RGB(232, 238, 246);      // rd.color.row.hover
-constexpr COLORREF kRowSelected = RGB(210, 226, 244);   // rd.color.row.selected
-constexpr COLORREF kAccent = RGB(47, 107, 168);         // rd.color.accent
-constexpr COLORREF kAccentHover = RGB(38, 90, 145);     // rd.color.accent.hover
-constexpr COLORREF kAccentPressed = RGB(30, 74, 122);   // rd.color.accent.pressed
-constexpr COLORREF kSplitter = RGB(200, 208, 218);      // rd.color.splitter
-constexpr COLORREF kTabActive = RGB(255, 255, 255);     // rd.color.tab.active
-constexpr COLORREF kTabInactive = RGB(236, 240, 245);   // rd.color.tab.inactive
+// Aliases → shared tokens (docs/ui-design-system.md).
+constexpr COLORREF kChrome = rd::kColorSurfaceChrome;
+constexpr COLORREF kPanel = rd::kColorSurfacePanel;
+constexpr COLORREF kBorderSubtle = rd::kColorBorderSubtle;
+constexpr COLORREF kBorderStrong = rd::kColorBorderStrong;
+constexpr COLORREF kTextPrimary = rd::kColorTextPrimary;
+constexpr COLORREF kTextSecondary = rd::kColorTextSecondary;
+constexpr COLORREF kTextMuted = rd::kColorTextMuted;
+constexpr COLORREF kIconInk = rd::kColorTextSecondary;
+constexpr COLORREF kRowHover = rd::kColorRowHover;
+constexpr COLORREF kRowSelected = rd::kColorRowSelected;
+constexpr COLORREF kAccent = rd::kColorAccent;
+constexpr COLORREF kAccentHover = rd::kColorAccentHover;
+constexpr COLORREF kAccentPressed = rd::kColorAccentPressed;
+constexpr COLORREF kSplitter = rd::kColorSplitter;
+constexpr COLORREF kTabActive = rd::kColorTabActive;
+constexpr COLORREF kTabInactive = rd::kColorTabInactive;
 
 enum : int {
   IDC_TREE = 1001,
@@ -139,7 +143,7 @@ struct ConsoleState {
   int close_btn_w = kCloseBtnWDip;
   int tab_nav_w = kTabNavWDip;
   int float_badge_w = kFloatBadgeWDip;
-  int tree_width = 240;
+  int tree_width = rd::kTreeDefaultWDip;
   int tab_h = kTabHDefault;
   int selected_group_id = 0;
   int active_tab = kTabCatalog;  // kTabCatalog or session index
@@ -159,16 +163,11 @@ struct ConsoleState {
 };
 
 int system_dpi() {
-  HDC screen = GetDC(nullptr);
-  const int dpi = screen ? GetDeviceCaps(screen, LOGPIXELSY) : 96;
-  if (screen) {
-    ReleaseDC(nullptr, screen);
-  }
-  return dpi > 0 ? dpi : 96;
+  return rd::rd_dpi_screen();
 }
 
 int dip(int v, int dpi) {
-  return MulDiv(v, dpi > 0 ? dpi : 96, 96);
+  return rd::rd_dip(v, dpi);
 }
 
 gdip::Color gdip_rgb(COLORREF c, BYTE a = 255) {
@@ -373,22 +372,7 @@ void ensure_drag_ghost(ConsoleState* st, const std::wstring& title) {
 }
 
 HFONT create_ui_font(int dpi, int pt) {
-  LOGFONTW lf{};
-  lf.lfHeight = -MulDiv(pt, dpi > 0 ? dpi : 96, 72);
-  lf.lfWeight = FW_NORMAL;
-  lf.lfCharSet = DEFAULT_CHARSET;
-  lf.lfQuality = CLEARTYPE_QUALITY;
-  lf.lfPitchAndFamily = DEFAULT_PITCH | FF_SWISS;
-  wcscpy_s(lf.lfFaceName, L"Segoe UI");
-  if (HFONT font = CreateFontIndirectW(&lf)) {
-    return font;
-  }
-  wcscpy_s(lf.lfFaceName, L"Microsoft YaHei UI");
-  if (HFONT font = CreateFontIndirectW(&lf)) {
-    return font;
-  }
-  wcscpy_s(lf.lfFaceName, L"Tahoma");
-  return CreateFontIndirectW(&lf);
+  return rd::rd_create_font(dpi, pt, FW_NORMAL);
 }
 
 void apply_ui_font(ConsoleState* st, HWND child) {
@@ -2120,8 +2104,8 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
   switch (msg) {
     case WM_CREATE: {
       st->dpi = system_dpi();
-      st->ui_font = create_ui_font(st->dpi, 10);       // rd.font.body
-      st->caption_font = create_ui_font(st->dpi, 9);   // rd.font.caption
+      st->ui_font = create_ui_font(st->dpi, rd::kFontBodyPt);
+      st->caption_font = create_ui_font(st->dpi, rd::kFontCaptionPt);
       st->toolbar_h = dip(kToolbarHDip, st->dpi);
       st->status_h = dip(kStatusHDip, st->dpi);
       st->splitter_w = dip(kSplitterWDip, st->dpi);
@@ -2156,7 +2140,7 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
       SendMessageW(st->toolbar, TB_SETBUTTONSIZE, 0, MAKELONG(btn, btn));
       const int icon_px = dip(kToolbarIconDip, st->dpi);
       st->toolbar_il = build_toolbar_images(icon_px, kTextSecondary);
-      st->toolbar_il_on_accent = build_toolbar_images(icon_px, RGB(255, 255, 255));
+      st->toolbar_il_on_accent = build_toolbar_images(icon_px, rd::kColorTextOnBrand);
       st->toolbar_il_muted = build_toolbar_images(icon_px, kTextMuted);
       SendMessageW(st->toolbar, TB_SETIMAGELIST, 0,
                    reinterpret_cast<LPARAM>(st->toolbar_il));
@@ -2270,7 +2254,7 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
         if (st->dragging_splitter || st->splitter_hot) {
           const int mid_x = st->tree_width + st->splitter_w / 2;
           const int mid_y = (top + bottom) / 2;
-          HBRUSH dot = CreateSolidBrush(RGB(255, 255, 255));
+          HBRUSH dot = CreateSolidBrush(rd::kColorTextOnBrand);
           for (int i = -1; i <= 1; ++i) {
             RECT dr{mid_x - 1, mid_y + i * 5 - 1, mid_x + 1, mid_y + i * 5 + 1};
             FillRect(hdc, &dr, dot);
@@ -2630,6 +2614,7 @@ bool register_console_classes(HINSTANCE instance) {
   wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
   wc.hbrBackground = chrome_bg;
   wc.lpszClassName = kConsoleClass;
+  rd::rd_apply_wndclass_icons(&wc, instance);
   if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
     return false;
   }
@@ -2682,6 +2667,7 @@ int run_console(HINSTANCE instance, int /*show_cmd*/, const ConnectDefaults& con
   if (!hwnd) {
     return 1;
   }
+  rd::rd_set_window_icons(hwnd, instance);
   state.accel = create_console_accel();
   // Center restore bounds on the work area. Do not pass WinMain's show_cmd
   // (often SW_SHOWDEFAULT): Explorer STARTUPINFO would otherwise place the

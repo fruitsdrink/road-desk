@@ -7,6 +7,7 @@ add_executable(viewer WIN32
   session_host.cpp
   console_window.cpp
   viewer.manifest
+  ${CMAKE_SOURCE_DIR}/src/ui/rd_app.rc
 )
 
 target_include_directories(viewer PRIVATE

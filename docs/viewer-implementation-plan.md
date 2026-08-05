@@ -14,7 +14,7 @@ Related: [CONTEXT.md](../CONTEXT.md), [ui-design-system.md](./ui-design-system.m
 | **V1** | 管理台命令闭环 | ✅ 菜单与工具栏同一套命令；灰显占位已去掉 |
 | **V1b** | 壳层全键盘 | ✅ Tab/F6/加速键；会话抢键交还不做 |
 | **V2** | 会话断线重连 | ✅ 非主动断开自动重连 + 退避；鉴权失败停止 |
-| **V3** | UI 规范收口 | 对齐 `ui-design-system` P0–P2（token / 壳 / 图标辅助） |
+| **V3** | UI 规范收口 | ✅ `rd_tokens`/`rd_dpi`；登录+console+Agent 共用；主窗 `rd_app.ico` |
 | **V4** | 壳层交互补齐 | 分割条宽度芯片（退出确认 /「关于」已在 V1） |
 
 ### 1.2 明确不做 / 暂不实现
@@ -101,17 +101,19 @@ Related: [CONTEXT.md](../CONTEXT.md), [ui-design-system.md](./ui-design-system.m
 
 | 子项 | 内容 |
 |------|------|
-| **V3a ≈ P0** | 抽出 `src/ui/rd_tokens.h`（或等价）；Viewer 登录与 console 共用命名常量，禁止再散落魔法 RGB |
-| **V3b ≈ P1** | 管理台壳（菜单栏底、工具栏、树、列表、状态栏、等待文案）全部走 chrome/surface/accent + Segoe 字体 |
-| **V3c ≈ P2** | 应用图标挂到主窗；工具栏可继续 GDI+ Lucide 绘制，但路径/尺寸走 DIP；共享 DPI 辅助（`rd_dip` / `rd_font`） |
+| **V3a ≈ P0** | ✅ `src/ui/rd_tokens.h`；Viewer 登录 / console / Agent 配置共用命名常量 |
+| **V3b ≈ P1** | ✅ 管理台壳走 chrome/surface/accent + `rd_create_font`（Segoe→YaHei→Tahoma） |
+| **V3c ≈ P2** | ✅ `assets/brand/rd_app.ico` 嵌入 Viewer/Agent；`hIcon`/`hIconSm` + 登录/配置/浮出会话窗 |
 
-Agent 对齐若未完成，可与 V3a 同 PR 做完 token 头，避免两端再分叉。
+Agent 配置对话框已同批对齐 token，避免两端分叉。
 
 ### 4.1 验收
 
-- [ ] 登录 + 管理台主窗 100% / 150% 截图对照设计稿 Frame A/B
-- [ ] 无「登录精修、管理台系统灰」割裂感
-- [ ] PR 说明对照的 `rd.color.*` / `rd.space.*` token 名
+- [x] 代码侧无散落魔法 RGB（登录 / console / Agent / session 等待与重连条）
+- [ ] 登录 + 管理台主窗 100% / 150% 截图对照设计稿 Frame A/B（人工）
+- [x] 无「登录精修、管理台系统灰」代码割裂（同 token）
+- [x] 对照 `rd.color.*` / `rd.space.*`（见 `src/ui/rd_tokens.h`）
+- [x] 主窗应用图标（`rd_app.ico` 16/32/48/256；资源 `IDI_RD_APP`）
 
 ---
 

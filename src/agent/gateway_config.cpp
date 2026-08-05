@@ -1,6 +1,9 @@
 #include "gateway_config.h"
 
 #include "log.h"
+#include "ui/rd_app_icon.h"
+#include "ui/rd_dpi.h"
+#include "ui/rd_tokens.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -20,6 +23,7 @@ namespace road_desk::agent {
 namespace {
 
 namespace gdip = Gdiplus;
+namespace rd = road_desk::ui;
 
 std::string trim(std::string s) {
   while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' ' || s.back() == '\t')) {
@@ -104,28 +108,28 @@ bool split_gateway_url(const std::string& url, std::string* host, std::string* p
   return !host->empty() && !port->empty();
 }
 
-// Tokens: docs/ui-design-system.md (Agent top-header config).
-constexpr COLORREF kBg = RGB(246, 248, 251);
-constexpr COLORREF kPanel = RGB(255, 255, 255);
-constexpr COLORREF kChrome = RGB(236, 240, 245);
-constexpr COLORREF kBrandBg = RGB(22, 30, 46);
-constexpr COLORREF kBrandMuted = RGB(160, 176, 200);
-constexpr COLORREF kLabel = RGB(88, 98, 114);
-constexpr COLORREF kMuted = RGB(140, 150, 164);
-constexpr COLORREF kText = RGB(28, 34, 46);
-constexpr COLORREF kRule = RGB(220, 226, 234);
-constexpr COLORREF kAccent = RGB(47, 107, 168);
-constexpr COLORREF kSuccess = RGB(46, 125, 90);
-constexpr COLORREF kDanger = RGB(176, 60, 60);
+// Tokens: docs/ui-design-system.md (Agent config) via ui/rd_tokens.h
+constexpr COLORREF kBg = rd::kColorSurfaceApp;
+constexpr COLORREF kPanel = rd::kColorSurfacePanel;
+constexpr COLORREF kChrome = rd::kColorSurfaceChrome;
+constexpr COLORREF kBrandBg = rd::kColorBrandBg;
+constexpr COLORREF kBrandMuted = rd::kColorBrandFgMuted;
+constexpr COLORREF kLabel = rd::kColorTextSecondary;
+constexpr COLORREF kMuted = rd::kColorTextMuted;
+constexpr COLORREF kText = rd::kColorTextPrimary;
+constexpr COLORREF kRule = rd::kColorBorderSubtle;
+constexpr COLORREF kAccent = rd::kColorAccent;
+constexpr COLORREF kSuccess = rd::kColorSuccess;
+constexpr COLORREF kDanger = rd::kColorDanger;
 
 constexpr int kClientW = 420;
 constexpr int kClientH = 384;
-constexpr int kHeaderH = 72;
-constexpr int kPadX = 28;
-constexpr int kPadTop = 20;
-constexpr int kEditH = 28;
+constexpr int kHeaderH = rd::kHeaderHDip;
+constexpr int kPadX = rd::kSpace7;
+constexpr int kPadTop = rd::kSpace5;
+constexpr int kEditH = rd::kEditHDip;
 constexpr int kLabelH = 18;
-constexpr int kFieldGap = 12;
+constexpr int kFieldGap = rd::kSpace3;
 constexpr int kPortW = 120;
 constexpr int kBrowseW = 100;
 constexpr int kEyeW = 28;
@@ -181,8 +185,7 @@ struct DlgState {
 };
 
 int dip(const DlgState* st, int v) {
-  const int dpi = st && st->dpi > 0 ? st->dpi : 96;
-  return MulDiv(v, dpi, 96);
+  return rd::rd_dip(v, st && st->dpi > 0 ? st->dpi : 96);
 }
 
 DlgState* g_dlg = nullptr;
@@ -363,9 +366,9 @@ void draw_owner_button(DRAWITEMSTRUCT* dis, DlgState* st, const wchar_t* label, 
   }
   const bool hot = (dis->itemState & ODS_SELECTED) != 0;
   const RECT& rc = dis->rcItem;
-  COLORREF bg = primary ? (hot ? RGB(38, 90, 145) : kAccent)
-                        : (hot ? RGB(230, 235, 242) : (chrome ? kChrome : kPanel));
-  COLORREF fg = primary ? RGB(255, 255, 255) : kText;
+  COLORREF bg = primary ? (hot ? rd::kColorAccentHover : kAccent)
+                        : (hot ? rd::kColorRowHover : (chrome ? kChrome : kPanel));
+  COLORREF fg = primary ? rd::kColorTextOnBrand : kText;
   COLORREF bd = primary ? bg : kRule;
   HBRUSH br = CreateSolidBrush(bg);
   FillRect(dis->hDC, &rc, br);
@@ -401,16 +404,7 @@ void draw_owner_button(DRAWITEMSTRUCT* dis, DlgState* st, const wchar_t* label, 
 }
 
 HFONT make_font(int pt, int weight) {
-  HDC screen = GetDC(nullptr);
-  const int dpi = GetDeviceCaps(screen, LOGPIXELSY);
-  ReleaseDC(nullptr, screen);
-  LOGFONTW lf{};
-  lf.lfHeight = -MulDiv(pt, dpi, 72);
-  lf.lfWeight = weight;
-  lf.lfCharSet = DEFAULT_CHARSET;
-  lf.lfQuality = CLEARTYPE_QUALITY;
-  wcscpy_s(lf.lfFaceName, L"Segoe UI");
-  return CreateFontIndirectW(&lf);
+  return rd::rd_create_font(rd::rd_dpi_screen(), pt, weight);
 }
 
 void apply_font(HFONT font, HWND hwnd) {
@@ -453,14 +447,14 @@ void paint_dialog(HWND hwnd, DlgState* st) {
   HBRUSH accent_br = CreateSolidBrush(kAccent);
   FillRect(hdc, &mark_rc, accent_br);
   DeleteObject(accent_br);
-  SetTextColor(hdc, RGB(255, 255, 255));
+  SetTextColor(hdc, rd::kColorTextOnBrand);
   if (st && st->font_mark) {
     SelectObject(hdc, st->font_mark);
   }
   DrawTextW(hdc, L"RD", -1, &mark_rc, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 
   const int title_x = pad_x + mark + dip(st, 12);
-  SetTextColor(hdc, RGB(255, 255, 255));
+  SetTextColor(hdc, rd::kColorTextOnBrand);
   if (st && st->font_brand) {
     SelectObject(hdc, st->font_brand);
   }
@@ -731,6 +725,7 @@ bool prompt_gateway_config(GatewayConfig* out) {
   wc.lpszClassName = kClass;
   wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
   wc.hbrBackground = nullptr;
+  rd::rd_apply_wndclass_icons(&wc, wc.hInstance);
   RegisterClassW(&wc);
 
   HDC screen = GetDC(nullptr);
@@ -740,10 +735,10 @@ bool prompt_gateway_config(GatewayConfig* out) {
   DlgState st;
   st.cfg = out;
   st.dpi = dpi > 0 ? dpi : 96;
-  st.font = make_font(10, FW_NORMAL);
-  st.font_title = make_font(10, FW_SEMIBOLD);
-  st.font_brand = make_font(16, FW_SEMIBOLD);
-  st.font_label = make_font(9, FW_NORMAL);
+  st.font = make_font(rd::kFontBodyPt, FW_NORMAL);
+  st.font_title = make_font(rd::kFontBodyPt, FW_SEMIBOLD);
+  st.font_brand = make_font(rd::kFontBrandPt, FW_SEMIBOLD);
+  st.font_label = make_font(rd::kFontLabelPt, FW_NORMAL);
   st.font_mark = make_font(13, FW_BOLD);
   st.bg_brush = CreateSolidBrush(kBg);
   st.edit_brush = CreateSolidBrush(kPanel);
@@ -774,6 +769,7 @@ bool prompt_gateway_config(GatewayConfig* out) {
     g_dlg = nullptr;
     return false;
   }
+  rd::rd_set_window_icons(hwnd, wc.hInstance);
   center_on_work_area(hwnd, win_w, win_h);
 
   const int pad_x = dip(&st, kPadX);

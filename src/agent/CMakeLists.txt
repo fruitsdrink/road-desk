@@ -5,6 +5,7 @@ add_executable(host-agent
   gateway_client.cpp
   debug_http.cpp
   host-agent.manifest
+  ${CMAKE_SOURCE_DIR}/src/ui/rd_app.rc
 )
 
 target_include_directories(host-agent PRIVATE

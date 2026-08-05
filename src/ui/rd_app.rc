@@ -1,0 +1,4 @@
+#include "rd_app_res.h"
+
+// Multi-size ICO (16/32/48/256) — assets/brand/rd_app.ico
+IDI_RD_APP ICON "..\\..\\assets\\brand\\rd_app.ico"

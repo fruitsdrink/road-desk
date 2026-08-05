@@ -7,7 +7,7 @@ Skill: `.cursor/skills/win32-ui/SKILL.md`
 ## 1. 目标与范围
 
 把 Viewer 与 Host Agent 的原生 Win32 界面收成**同一产品语言**：同一套颜色、字体、间距、控件尺寸、图标与 DPI 约定。  
-Viewer 登录与 Agent 网关配置已按本规范落地；管理台壳仍偏系统色，后续换皮对齐 token。
+Viewer 登录、管理台壳与 Agent 网关配置已共用 `src/ui/rd_tokens.h` / `rd_dpi.h`；应用图标为 `assets/brand/rd_app.ico`（`IDI_RD_APP`，挂主窗 / 登录 / Agent 配置 / 浮出会话）。
 
 **范围内**
 
@@ -35,7 +35,7 @@ Viewer 登录与 Agent 网关配置已按本规范落地；管理台壳仍偏系
 
 ## 3. 设计 Token
 
-实现时建议集中在未来共享头（示意名 `src/ui/rd_tokens.h` 或等价）；**在抽出共享库之前，两端常量名与数值必须一致**。
+实现集中在 `src/ui/rd_tokens.h`（颜色 / 字号 / 间距 / 控件 DIP）与 `src/ui/rd_dpi.h`（`rd_dip` / `rd_create_font`）；Viewer 与 Agent 禁止再散落魔法 RGB。
 
 ### 3.1 颜色
 
@@ -366,9 +366,9 @@ rd_font(pt, w)   → lfHeight = -MulDiv(pt, dpi, 72)
 
 | 阶段 | 内容 |
 |------|------|
-| **P0** | 抽出 token 头；Agent 配置对话框对齐 Viewer 登录壳（顶栏+色+字+间距+浏览文案）；两端 manifest DPI 一致 |
-| **P1** | 管理台外壳改用 chrome/surface/accent，统一 UI 字体；会话等待字用 `font.body` |
-| **P2** | 应用图标 + 工具栏图标；共享 `src/ui` 对话框/字体/DPI 辅助 |
+| **P0** | ✅ `src/ui/rd_tokens.h` + `rd_dpi.h`；Agent 配置对齐 Viewer 登录壳色/字/间距 |
+| **P1** | ✅ 管理台外壳 chrome/surface/accent；统一 UI 字体；会话等待 `font.body` |
+| **P2** | ✅ 应用图标 `rd_app.ico` + 工具栏 Lucide DIP；共享 `src/ui` 字体/DPI 辅助 |
 | **P3** | 评估自绘主按钮与 `rd.radius.md`；评估 Per-Monitor（需 `WM_DPICHANGED`） |
 
 ## 8. 反模式

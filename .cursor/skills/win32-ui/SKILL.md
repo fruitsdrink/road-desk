@@ -22,9 +22,9 @@ Any change that affects native UI chrome in Viewer or Host Agent (dialogs, conso
 ## Hard rules
 
 - **One product language**: Viewer and Agent share the same brand colors, fonts, and「浏览…」label. Viewer login uses the split auth layout (left brand / right form); Agent uses the compact top-header config dialog.
-- **Named tokens only**: use `rd.color.*` / `rd.space.*` / `rd.font.*` values from the design doc; do not invent new RGB or padding without updating the doc first.
-- **Fonts everywhere**: Segoe UI stack + `WM_SETFONT` on all controls; pt→px via `MulDiv` and DPI.
-- **DPI**: scale **layout and fonts** with DIP helpers; keep System DPI Aware; do not enable Per-Monitor V2 unless `WM_DPICHANGED` is fully handled.
+- **Named tokens only**: include `src/ui/rd_tokens.h` (`road_desk::ui::kColor*` / `kSpace*` / `kFont*`); do not invent new RGB or padding without updating the design doc first.
+- **Fonts everywhere**: `rd_create_font` (Segoe → YaHei UI → Tahoma) + `WM_SETFONT` on all controls; pt→px via helpers in `src/ui/rd_dpi.h`.
+- **DPI**: scale **layout and fonts** with `rd_dip` / `rd_dpi_*`; keep System DPI Aware; do not enable Per-Monitor V2 unless `WM_DPICHANGED` is fully handled.
 - **Radius**: 0 for stock controls; max 4 DIP for owner-draw; no capsule/pill UI.
 - **No demo drift**: do not leave Agent as a plain system dialog while Viewer is branded.
 
@@ -33,8 +33,8 @@ Any change that affects native UI chrome in Viewer or Host Agent (dialogs, conso
 ```
 Task progress:
 - [ ] Read docs/ui-design-system.md (tokens + component section you touch)
-- [ ] Match existing UI helper patterns in the same binary; prefer shared src/ui when it exists
-- [ ] Apply tokens (color/font/space/control sizes)
+- [ ] Match existing UI helper patterns; include `ui/rd_tokens.h` + `ui/rd_dpi.h`
+- [ ] Apply tokens (`road_desk::ui::kColor*` / `kSpace*` / control DIP sizes)
 - [ ] Scale all CreateWindow coordinates with DIP
 - [ ] Verify copy (Road Desk titles, 浏览…, CONTEXT terms)
 - [ ] Note 100%/125%/150% checks in the PR or reply
@@ -64,6 +64,11 @@ Task progress:
 | Login title | 18pt Semibold |
 
 Full tables, anti-patterns, and phased rollout: [docs/ui-design-system.md](../../../docs/ui-design-system.md).
+
+## App icon
+
+- Asset: `assets/brand/rd_app.ico` (16/32/48/256, accent +「RD」).
+- Embed via `src/ui/rd_app.rc` (`IDI_RD_APP`); apply with `ui/rd_app_icon.h` on top-level windows.
 
 ## Out of scope
 

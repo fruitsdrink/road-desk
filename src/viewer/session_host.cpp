@@ -1,6 +1,9 @@
 #include "session_host.h"
 
 #include "media_log.h"
+#include "ui/rd_app_icon.h"
+#include "ui/rd_dpi.h"
+#include "ui/rd_tokens.h"
 
 #include <objidl.h>
 #include <gdiplus.h>
@@ -15,6 +18,8 @@
 namespace road_desk::viewer {
 namespace gdip = Gdiplus;
 namespace {
+
+namespace rd = road_desk::ui;
 
 constexpr wchar_t kSessionClass[] = L"RoadDeskSessionHost";
 constexpr UINT_PTR kReconnectTimerId = 42;
@@ -307,6 +312,7 @@ bool SessionHost::register_class(HINSTANCE instance) {
   wc.hCursor = nullptr;
   wc.hbrBackground = nullptr;
   wc.lpszClassName = kSessionClass;
+  rd::rd_apply_wndclass_icons(&wc, instance);
   if (RegisterClassExW(&wc) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
     return false;
   }
@@ -336,6 +342,9 @@ bool SessionHost::open(HINSTANCE instance, HWND parent_or_null, const std::wstri
                           instance, this);
   if (!hwnd_) {
     return false;
+  }
+  if (floating_) {
+    rd::rd_set_window_icons(hwnd_, instance);
   }
   AddClipboardFormatListener(hwnd_);
 
@@ -801,21 +810,11 @@ void SessionHost::paint() {
                   0, 0, w, h, bgra.data(), &bmi, DIB_RGB_COLORS, SRCCOPY);
   } else {
     // Design Frame B: monitor icon + 「正在连接被控端…」+ sessionHint + body font.
-    HDC screen = GetDC(nullptr);
-    const int dpi = screen ? GetDeviceCaps(screen, LOGPIXELSY) : 96;
-    if (screen) {
-      ReleaseDC(nullptr, screen);
-    }
-    LOGFONTW lf{};
-    lf.lfHeight = -MulDiv(10, dpi > 0 ? dpi : 96, 72);
-    lf.lfWeight = FW_NORMAL;
-    lf.lfCharSet = DEFAULT_CHARSET;
-    lf.lfQuality = CLEARTYPE_QUALITY;
-    wcscpy_s(lf.lfFaceName, L"Segoe UI");
-    HFONT font = CreateFontIndirectW(&lf);
+    const int dpi = rd::rd_dpi_screen();
+    HFONT font = rd::rd_create_font(dpi, rd::kFontBodyPt);
     HGDIOBJ old_font = font ? SelectObject(back_dc_, font) : nullptr;
     SetBkMode(back_dc_, TRANSPARENT);
-    SetTextColor(back_dc_, RGB(220, 220, 220));  // rd.color.text.sessionHint
+    SetTextColor(back_dc_, rd::kColorTextSessionHint);
 
     const wchar_t* msg = L"正在连接被控端…";
     std::wstring owned_msg;
@@ -827,13 +826,13 @@ void SessionHost::paint() {
     }
     SIZE tsz{};
     GetTextExtentPoint32W(back_dc_, msg, static_cast<int>(wcslen(msg)), &tsz);
-    const int icon = MulDiv(22, dpi > 0 ? dpi : 96, 96);
-    const int gap = MulDiv(10, dpi > 0 ? dpi : 96, 96);
+    const int icon = rd::rd_dip(22, dpi);
+    const int gap = rd::rd_dip(rd::kSpace2 + 2, dpi);
     const int block_h = icon + gap + tsz.cy;
     const int top = rc.top + (ch - block_h) / 2;
     const int cx = rc.left + cw / 2;
 
-    HPEN pen = CreatePen(PS_SOLID, 2, RGB(220, 220, 220));
+    HPEN pen = CreatePen(PS_SOLID, 2, rd::kColorTextSessionHint);
     HGDIOBJ old_pen = SelectObject(back_dc_, pen);
     HGDIOBJ old_br = SelectObject(back_dc_, GetStockObject(NULL_BRUSH));
     const int ml = cx - icon / 2;
@@ -864,28 +863,18 @@ void SessionHost::paint() {
     if (banner.empty()) {
       banner = L"正在重连…";
     }
-    RECT band{0, ch - MulDiv(28, 96, 96), cw, ch};
+    RECT band{0, ch - rd::kEditHDip, cw, ch};
     if (ch > 40) {
-      HDC screen = GetDC(nullptr);
-      const int dpi = screen ? GetDeviceCaps(screen, LOGPIXELSY) : 96;
-      if (screen) {
-        ReleaseDC(nullptr, screen);
-      }
-      const int band_h = MulDiv(28, dpi > 0 ? dpi : 96, 96);
+      const int dpi = rd::rd_dpi_screen();
+      const int band_h = rd::rd_dip(rd::kEditHDip, dpi);
       band = {0, ch - band_h, cw, ch};
-      HBRUSH br = CreateSolidBrush(RGB(22, 30, 46));
+      HBRUSH br = CreateSolidBrush(rd::kColorBrandBg);
       FillRect(hdc, &band, br);
       DeleteObject(br);
-      LOGFONTW lf{};
-      lf.lfHeight = -MulDiv(9, dpi > 0 ? dpi : 96, 72);
-      lf.lfWeight = FW_NORMAL;
-      lf.lfCharSet = DEFAULT_CHARSET;
-      lf.lfQuality = CLEARTYPE_QUALITY;
-      wcscpy_s(lf.lfFaceName, L"Segoe UI");
-      HFONT font = CreateFontIndirectW(&lf);
+      HFONT font = rd::rd_create_font(dpi, rd::kFontCaptionPt);
       HGDIOBJ old = font ? SelectObject(hdc, font) : nullptr;
       SetBkMode(hdc, TRANSPARENT);
-      SetTextColor(hdc, RGB(236, 240, 245));
+      SetTextColor(hdc, rd::kColorSurfaceChrome);
       DrawTextW(hdc, banner.c_str(), -1, &band, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
       if (old) {
         SelectObject(hdc, old);
