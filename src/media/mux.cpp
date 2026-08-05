@@ -168,15 +168,22 @@ bool mux_read_idle(road_desk::media::tls::TlsSession* tls, uint8_t* channel_out,
   return pump(payload_out->data(), static_cast<int>(len));
 }
 
-bool control_send_auth(road_desk::media::tls::TlsSession* tls, const std::string& password) {
-  if (password.size() > 1024) {
+bool control_send_auth(road_desk::media::tls::TlsSession* tls, const std::string& password,
+                       const std::string& session_id) {
+  if (password.size() > 1024 || session_id.size() > 128) {
     return false;
   }
-  std::vector<uint8_t> body(1 + 2 + password.size());
+  const size_t sid_extra = session_id.empty() ? 0 : (2 + session_id.size());
+  std::vector<uint8_t> body(1 + 2 + password.size() + sid_extra);
   body[0] = kCtrlAuth;
   write_u16_le(body.data() + 1, static_cast<uint16_t>(password.size()));
   if (!password.empty()) {
     std::memcpy(body.data() + 3, password.data(), password.size());
+  }
+  if (!session_id.empty()) {
+    uint8_t* sid = body.data() + 3 + password.size();
+    write_u16_le(sid, static_cast<uint16_t>(session_id.size()));
+    std::memcpy(sid + 2, session_id.data(), session_id.size());
   }
   return mux_write(tls, kChannelControl, body.data(), static_cast<uint32_t>(body.size()));
 }
@@ -214,7 +221,8 @@ bool control_send_auth_fail(road_desk::media::tls::TlsSession* tls, const std::s
   return mux_write(tls, kChannelControl, body.data(), static_cast<uint32_t>(body.size()));
 }
 
-bool parse_auth_password(const uint8_t* p, size_t n, std::string* password_out) {
+bool parse_auth_password(const uint8_t* p, size_t n, std::string* password_out,
+                         std::string* session_id_out) {
   if (!p || !password_out || n < 3 || p[0] != kCtrlAuth) {
     return false;
   }
@@ -223,6 +231,16 @@ bool parse_auth_password(const uint8_t* p, size_t n, std::string* password_out) 
     return false;
   }
   password_out->assign(reinterpret_cast<const char*>(p + 3), plen);
+  if (session_id_out) {
+    session_id_out->clear();
+    const size_t after = 3u + plen;
+    if (n >= after + 2) {
+      const uint16_t sid_len = read_u16_le(p + after);
+      if (sid_len > 0 && n >= after + 2u + sid_len && sid_len <= 128) {
+        session_id_out->assign(reinterpret_cast<const char*>(p + after + 2), sid_len);
+      }
+    }
+  }
   return true;
 }
 

@@ -906,7 +906,7 @@ bool MediaClient::start(const MediaClientConfig& config) {
   logf("TLS up peer_fp=%s", tls::peer_fingerprint_sha256(st->tls).c_str());
 
   using namespace road_desk::replace;
-  if (!control_send_auth(st->tls, config.password)) {
+  if (!control_send_auth(st->tls, config.password, config.audit_session_id)) {
     logf("send auth failed");
     tls::tls_close(st->tls);
     st->tls = nullptr;

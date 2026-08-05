@@ -1,6 +1,7 @@
 #include "debug_http.h"
 #include "gateway_client.h"
 #include "gateway_config.h"
+#include "audit_client.h"
 #include "log.h"
 
 #include "auth.h"
@@ -210,6 +211,29 @@ int main(int argc, char** argv) {
   // Shared-control counter (not exclusive). Host allows up to 8 concurrent viewers.
   cfg.session_mutex = &g_session_mutex;
 
+  road_desk::agent::GatewayConfig gcfg;
+  bool gateway_ready = false;
+  if (!no_gateway) {
+    if (!road_desk::agent::load_gateway_config(&gcfg)) {
+      road_desk::agent::log_line("gateway: no agent.json — prompting for config");
+      if (!road_desk::agent::prompt_gateway_config(&gcfg)) {
+        road_desk::agent::log_line(
+            "gateway: config cancelled — media stays up; use --no-gateway to skip");
+      } else if (!road_desk::agent::save_gateway_config(gcfg)) {
+        road_desk::agent::log_line("gateway: save agent.json failed — continuing in-memory");
+      }
+    }
+    if (!gcfg.gateway_url.empty() && !gcfg.agent_psk.empty() && !gcfg.agent_id.empty()) {
+      gateway_ready = true;
+      road_desk::agent::audit_set_agent(gcfg);
+      cfg.audit_fn = &road_desk::agent::audit_on_media_event;
+      cfg.audit_user = nullptr;
+      road_desk::agent::log_line("audit: host upsert enabled");
+    }
+  } else {
+    road_desk::agent::log_line("gateway: skipped (--no-gateway)");
+  }
+
   {
     char line[256];
     std::snprintf(line, sizeof(line), "config port=%d tls=%d argc=%d", cfg.listen_port,
@@ -242,23 +266,9 @@ int main(int argc, char** argv) {
   }
 
   road_desk::agent::GatewayClient gateway;
-  if (!no_gateway) {
-    road_desk::agent::GatewayConfig gcfg;
-    if (!road_desk::agent::load_gateway_config(&gcfg)) {
-      road_desk::agent::log_line("gateway: no agent.json — prompting for config");
-      if (!road_desk::agent::prompt_gateway_config(&gcfg)) {
-        road_desk::agent::log_line(
-            "gateway: config cancelled — media stays up; use --no-gateway to skip");
-      } else if (!road_desk::agent::save_gateway_config(gcfg)) {
-        road_desk::agent::log_line("gateway: save agent.json failed — continuing in-memory");
-      }
-    }
-    if (!gcfg.gateway_url.empty() && !gcfg.agent_psk.empty() && !gcfg.agent_id.empty()) {
-      gateway.start(gcfg, media.bound_port(), ROAD_DESK_VERSION_STRING);
-      road_desk::agent::log_line("gateway: client started (register/heartbeat; failures retry)");
-    }
-  } else {
-    road_desk::agent::log_line("gateway: skipped (--no-gateway)");
+  if (gateway_ready) {
+    gateway.start(gcfg, media.bound_port(), ROAD_DESK_VERSION_STRING);
+    road_desk::agent::log_line("gateway: client started (register/heartbeat; failures retry)");
   }
 
   // Debug HTTP on media_port+1 for pulling session MP4 + logs (lab / Cursor skill).

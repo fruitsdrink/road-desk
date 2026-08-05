@@ -29,12 +29,14 @@ using MuxIdleFn = bool (*)(void* ctx);
 bool mux_read_idle(road_desk::media::tls::TlsSession* tls, uint8_t* channel_out,
                    std::vector<uint8_t>* payload_out, MuxIdleFn idle, void* idle_ctx);
 
-bool control_send_auth(road_desk::media::tls::TlsSession* tls, const std::string& password);
+bool control_send_auth(road_desk::media::tls::TlsSession* tls, const std::string& password,
+                       const std::string& session_id = std::string());
 bool control_send_auth_ok(road_desk::media::tls::TlsSession* tls, uint16_t width,
                           uint16_t height, const std::string& version = std::string());
 bool control_send_auth_fail(road_desk::media::tls::TlsSession* tls, const std::string& reason);
 
-// Parse Auth payload (after type byte already consumed or include type).
-bool parse_auth_password(const uint8_t* p, size_t n, std::string* password_out);
+// Parse Auth payload. Optional trailing session_id (A2); old clients omit it.
+bool parse_auth_password(const uint8_t* p, size_t n, std::string* password_out,
+                         std::string* session_id_out = nullptr);
 
 }  // namespace road_desk::replace

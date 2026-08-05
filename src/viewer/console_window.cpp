@@ -1,6 +1,7 @@
 #include "console_window.h"
 
 #include "address_book.h"
+#include "audit_client.h"
 #include "product_version.h"
 #include "session_host.h"
 #include "ui/rd_app_icon.h"
@@ -793,7 +794,10 @@ void refresh_directory(ConsoleState* st) {
     set_status(st, L"目录已刷新（演示模式）");
     return;
   }
-  DirectoryConfig dir = load_directory_config();
+  DirectoryConfig dir = audit_directory_copy();
+  if (dir.gateway_url.empty()) {
+    dir = load_directory_config();
+  }
   if (dir.directory_key.empty() && !dir.viewer_psk.empty()) {
     dir.directory_key = dir.viewer_psk;
   }
@@ -804,6 +808,7 @@ void refresh_directory(ConsoleState* st) {
     set_status(st, msg.c_str());
     return;
   }
+  audit_set_directory(dir);
   fill_tree(st);
   set_status(st, L"目录已刷新");
 }
@@ -971,6 +976,18 @@ bool open_session_for_device(ConsoleState* st, int device_id) {
   tab.host = std::make_unique<SessionHost>();
   tab.host->set_device_id(device_id);
   SessionHost* raw = tab.host.get();
+  if (address_book_source() == AddressBookSource::kGateway && audit_reporting_enabled()) {
+    std::string agent_name;
+    // UTF-8 display name for audit (gateway expects UTF-8 JSON).
+    {
+      int n = WideCharToMultiByte(CP_UTF8, 0, d->name.c_str(), -1, nullptr, 0, nullptr, nullptr);
+      if (n > 1) {
+        agent_name.assign(static_cast<size_t>(n - 1), '\0');
+        WideCharToMultiByte(CP_UTF8, 0, d->name.c_str(), -1, agent_name.data(), n, nullptr, nullptr);
+      }
+    }
+    raw->set_audit_session(audit_new_session_id(), d->agent_id, agent_name, connect.host_port);
+  }
   if (!raw->open(st->instance, st->session_area, tab.title, connect,
                  [](SessionHost* h) { on_session_closed(h); },
                  /*auto_reconnect=*/true)) {

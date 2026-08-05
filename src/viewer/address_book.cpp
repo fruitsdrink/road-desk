@@ -308,6 +308,7 @@ void add_group_tree(const std::string& json, size_t start, size_t end, int paren
           std::string hostname = json_extract_string_after(json, aobj, "hostname", nullptr);
           std::string preferred = json_extract_string_after(json, aobj, "preferredIpv4", nullptr);
           std::string version = json_extract_string_after(json, aobj, "version", nullptr);
+          std::string agent_id = json_extract_string_after(json, aobj, "agentId", nullptr);
           int media_port = static_cast<int>(json_extract_number_after(json, aobj, "mediaPort", nullptr));
           bool online = json_extract_bool_after(json, aobj, "online");
           if (display.empty()) {
@@ -321,6 +322,7 @@ void add_group_tree(const std::string& json, size_t start, size_t end, int paren
           dev.host = preferred;
           dev.port = media_port > 0 ? media_port : 38471;
           dev.version = version;
+          dev.agent_id = agent_id;
           dev.online = online;
           dev.role = online ? L"在线" : L"离线";
           if (!preferred.empty()) {

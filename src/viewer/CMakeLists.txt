@@ -6,6 +6,7 @@ add_executable(viewer WIN32
   address_book.cpp
   session_host.cpp
   console_window.cpp
+  audit_client.cpp
   viewer.manifest
   ${CMAKE_SOURCE_DIR}/src/ui/rd_app.rc
 )

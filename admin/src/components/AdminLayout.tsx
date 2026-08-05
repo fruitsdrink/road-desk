@@ -8,6 +8,7 @@ const navItems = [
   { key: '/', label: '编目' },
   { key: '/departments', label: '部门' },
   { key: '/users', label: '用户' },
+  { key: '/audit', label: '审计' },
 ]
 
 export function AdminLayout() {

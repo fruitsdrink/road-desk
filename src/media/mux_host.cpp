@@ -32,6 +32,7 @@
 #define NOMINMAX
 #endif
 #include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <objbase.h>
 
@@ -769,11 +770,51 @@ struct ClientConn {
   bool authed = false;
   bool need_keyframe = false;
   bool dead = false;
+  bool audit_opened = false;
   uint32_t cursor_hash_sent = 0;
+  std::string session_id;
+  std::string viewer_ip;
   HostClipSession clip;
 };
 
-void close_client(ClientConn* c, session::SessionMutex* mutex) {
+std::string socket_peer_ip(SOCKET s) {
+  sockaddr_storage ss{};
+  int len = sizeof(ss);
+  if (s == INVALID_SOCKET || getpeername(s, reinterpret_cast<sockaddr*>(&ss), &len) != 0) {
+    return {};
+  }
+  char buf[INET6_ADDRSTRLEN] = {};
+  if (ss.ss_family == AF_INET) {
+    auto* in = reinterpret_cast<sockaddr_in*>(&ss);
+    if (InetNtopA(AF_INET, &in->sin_addr, buf, sizeof(buf))) {
+      return buf;
+    }
+  } else if (ss.ss_family == AF_INET6) {
+    auto* in6 = reinterpret_cast<sockaddr_in6*>(&ss);
+    if (InetNtopA(AF_INET6, &in6->sin6_addr, buf, sizeof(buf))) {
+      return buf;
+    }
+  }
+  return {};
+}
+
+void emit_audit(MediaPlaneConfig::AuditFn fn, void* user, const char* phase, const char* result,
+                const char* disconnect_reason, const std::string& session_id,
+                const std::string& viewer_ip) {
+  if (!fn) {
+    return;
+  }
+  MediaPlaneConfig::AuditEvent ev;
+  ev.phase = phase;
+  ev.result = result;
+  ev.disconnect_reason = disconnect_reason;
+  ev.session_id = session_id.empty() ? nullptr : session_id.c_str();
+  ev.viewer_ip = viewer_ip.empty() ? nullptr : viewer_ip.c_str();
+  fn(user, &ev);
+}
+
+void close_client(ClientConn* c, session::SessionMutex* mutex, MediaPlaneConfig::AuditFn audit_fn,
+                  void* audit_user) {
   if (!c) {
     return;
   }
@@ -784,6 +825,10 @@ void close_client(ClientConn* c, session::SessionMutex* mutex) {
   }
   if (c->authed && mutex) {
     mutex->release();
+  }
+  if (c->audit_opened) {
+    emit_audit(audit_fn, audit_user, "closed", "ok", "transport_lost", c->session_id, c->viewer_ip);
+    c->audit_opened = false;
   }
   c->authed = false;
   c->dead = true;
@@ -799,7 +844,8 @@ unsigned count_authed(const std::vector<ClientConn>& clients) {
   return n;
 }
 
-bool try_auth_client(ClientConn* c, const std::string& psk, session::SessionMutex* mutex) {
+bool try_auth_client(ClientConn* c, const std::string& psk, session::SessionMutex* mutex,
+                     MediaPlaneConfig::AuditFn audit_fn, void* audit_user) {
   using namespace road_desk::replace;
   if (!c || !c->tls || c->authed) {
     return true;
@@ -808,6 +854,9 @@ bool try_auth_client(ClientConn* c, const std::string& psk, session::SessionMute
   const int pending = tls::tls_pending(c->tls);
   if (!socket_readable(sock, 0) && pending <= 0) {
     return true;
+  }
+  if (c->viewer_ip.empty()) {
+    c->viewer_ip = socket_peer_ip(sock);
   }
   uint8_t ch = 0;
   std::vector<uint8_t> payload;
@@ -818,15 +867,25 @@ bool try_auth_client(ClientConn* c, const std::string& psk, session::SessionMute
   if (ch != kChannelControl || payload.empty()) {
     logf("expected Control auth, got channel=%u", static_cast<unsigned>(ch));
     control_send_auth_fail(c->tls, "expected control auth");
+    emit_audit(audit_fn, audit_user, "failed", "auth_fail", "auth_fail", c->session_id,
+               c->viewer_ip);
     return false;
   }
   std::string provided;
-  if (!parse_auth_password(payload.data(), payload.size(), &provided)) {
+  std::string sid;
+  if (!parse_auth_password(payload.data(), payload.size(), &provided, &sid)) {
     control_send_auth_fail(c->tls, "malformed auth");
+    emit_audit(audit_fn, audit_user, "failed", "auth_fail", "auth_fail", c->session_id,
+               c->viewer_ip);
     return false;
+  }
+  if (!sid.empty()) {
+    c->session_id = std::move(sid);
   }
   if (!road_desk::session::authenticate_psk(psk, provided)) {
     control_send_auth_fail(c->tls, "auth failed");
+    emit_audit(audit_fn, audit_user, "failed", "auth_fail", "auth_fail", c->session_id,
+               c->viewer_ip);
     return false;
   }
   const int sw = GetSystemMetrics(SM_CXSCREEN);
@@ -844,13 +903,16 @@ bool try_auth_client(ClientConn* c, const std::string& psk, session::SessionMute
   if (mutex) {
     mutex->try_acquire();
   }
+  emit_audit(audit_fn, audit_user, "opened", "ok", nullptr, c->session_id, c->viewer_ip);
+  c->audit_opened = true;
   logf("client authed desktop=%ux%u shared-control viewers=%u", width, height,
        mutex ? mutex->count() : 0);
   return true;
 }
 
 bool drain_all_clients(std::vector<ClientConn>* clients, const std::string& psk,
-                       session::SessionMutex* mutex) {
+                       session::SessionMutex* mutex, MediaPlaneConfig::AuditFn audit_fn,
+                       void* audit_user) {
   if (!clients) {
     return true;
   }
@@ -859,14 +921,14 @@ bool drain_all_clients(std::vector<ClientConn>* clients, const std::string& psk,
       continue;
     }
     if (!c.authed) {
-      if (!try_auth_client(&c, psk, mutex)) {
-        close_client(&c, mutex);
+      if (!try_auth_client(&c, psk, mutex, audit_fn, audit_user)) {
+        close_client(&c, mutex, audit_fn, audit_user);
       }
       continue;
     }
     if (!drain_incoming(c.tls, &c.clip)) {
       logf("client gone (recv)");
-      close_client(&c, mutex);
+      close_client(&c, mutex, audit_fn, audit_user);
     }
   }
   clients->erase(std::remove_if(clients->begin(), clients->end(),
@@ -877,7 +939,8 @@ bool drain_all_clients(std::vector<ClientConn>* clients, const std::string& psk,
 
 bool push_clipboard_one(ClientConn* c, uint32_t* shared_xfer_id,
                         std::vector<ClientConn>* all_for_pump, const std::string& psk,
-                        session::SessionMutex* mutex) {
+                        session::SessionMutex* mutex, MediaPlaneConfig::AuditFn audit_fn,
+                        void* audit_user) {
   using namespace road_desk::replace;
   if (!c || !c->tls || !c->authed || c->clip.sending_files) {
     return true;
@@ -892,7 +955,7 @@ bool push_clipboard_one(ClientConn* c, uint32_t* shared_xfer_id,
   }
 
   auto pump = [&]() -> bool {
-    return drain_all_clients(all_for_pump, psk, mutex);
+    return drain_all_clients(all_for_pump, psk, mutex, audit_fn, audit_user);
   };
 
   if (clipboard_has_hdrop()) {
@@ -967,7 +1030,8 @@ bool push_clipboard_one(ClientConn* c, uint32_t* shared_xfer_id,
 }
 
 bool fanout_host_clipboard(std::vector<ClientConn>* clients, uint32_t* shared_xfer_id,
-                           const std::string& psk, session::SessionMutex* mutex) {
+                           const std::string& psk, session::SessionMutex* mutex,
+                           MediaPlaneConfig::AuditFn audit_fn, void* audit_user) {
   if (!clients) {
     return true;
   }
@@ -975,8 +1039,8 @@ bool fanout_host_clipboard(std::vector<ClientConn>* clients, uint32_t* shared_xf
     if (!c.authed || c.dead) {
       continue;
     }
-    if (!push_clipboard_one(&c, shared_xfer_id, clients, psk, mutex)) {
-      close_client(&c, mutex);
+    if (!push_clipboard_one(&c, shared_xfer_id, clients, psk, mutex, audit_fn, audit_user)) {
+      close_client(&c, mutex, audit_fn, audit_user);
     }
   }
   clients->erase(std::remove_if(clients->begin(), clients->end(),
@@ -989,7 +1053,8 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
                   road_desk::replace::CaptureMode capture_mode,
                   road_desk::replace::CaptureStrategy capture_strategy,
                   const std::atomic<bool>* stop_requested, session::SessionMutex* mutex,
-                  tls::HostCredentials* creds) {
+                  tls::HostCredentials* creds, MediaPlaneConfig::AuditFn audit_fn,
+                  void* audit_user) {
   using namespace road_desk::replace;
 
   auto qpc_ms = []() -> double {
@@ -1138,7 +1203,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
         vout_write_ms += GetTickCount() - vout_w0;
         vout_qwrite_ms += qpc_ms() - vout_q1;
         if (!ok) {
-          close_client(&c, mutex);
+          close_client(&c, mutex, audit_fn, audit_user);
           continue;
         }
         any_sent = true;
@@ -1919,9 +1984,9 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
     g_inject_active.store(true);
     {
       std::lock_guard<std::mutex> lock(shared.io_mu);
-      drain_all_clients(&shared.clients, psk, mutex);
+      drain_all_clients(&shared.clients, psk, mutex, audit_fn, audit_user);
       if (!dragging && !shared.video_writing.load()) {
-        fanout_host_clipboard(&shared.clients, &shared_xfer_id, psk, mutex);
+        fanout_host_clipboard(&shared.clients, &shared_xfer_id, psk, mutex, audit_fn, audit_user);
       }
     }
     flush_pending_input();
@@ -1969,23 +2034,30 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
     if (sel > 0 && FD_ISSET(listen_sock, &rfds)) {
       SOCKET tcp = tls::tcp_accept(listen_sock);
       if (tcp != INVALID_SOCKET) {
+        const std::string peer = socket_peer_ip(tcp);
         std::lock_guard<std::mutex> lock(shared.io_mu);
         if (shared.clients.size() >= kMaxClients) {
-          logf("reject: max clients (%u)", static_cast<unsigned>(kMaxClients));
+          logf("reject: max clients (%u) peer=%s", static_cast<unsigned>(kMaxClients),
+               peer.c_str());
+          emit_audit(audit_fn, audit_user, "failed", "capacity_reject", "capacity_reject",
+                     std::string(), peer);
           closesocket(tcp);
         } else if (!creds) {
           closesocket(tcp);
         } else {
           tls::TlsSession* tls_sess = tls::server_handshake(tcp, *creds);
           if (!tls_sess) {
-            logf("TLS handshake failed");
+            logf("TLS handshake failed peer=%s", peer.c_str());
+            emit_audit(audit_fn, audit_user, "failed", "tls_fail", "tls_fail", std::string(),
+                       peer);
           } else {
             ClientConn c;
             c.tls = tls_sess;
+            c.viewer_ip = peer;
             shared.clients.push_back(std::move(c));
-            logf("TLS up clients=%u/%u - awaiting auth",
+            logf("TLS up clients=%u/%u peer=%s - awaiting auth",
                  static_cast<unsigned>(shared.clients.size()),
-                 static_cast<unsigned>(kMaxClients));
+                 static_cast<unsigned>(kMaxClients), peer.c_str());
           }
         }
       }
@@ -1994,7 +2066,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
     g_inject_active.store(true);
     {
       std::lock_guard<std::mutex> lock(shared.io_mu);
-      drain_all_clients(&shared.clients, psk, mutex);
+      drain_all_clients(&shared.clients, psk, mutex, audit_fn, audit_user);
     }
     flush_pending_input();
     g_inject_active.store(false);
@@ -2011,7 +2083,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
           continue;
         }
         if (!send_cursor_if_changed(c.tls, shape, &c.cursor_hash_sent)) {
-          close_client(&c, mutex);
+          close_client(&c, mutex, audit_fn, audit_user);
         }
       }
       shared.clients.erase(std::remove_if(shared.clients.begin(), shared.clients.end(),
@@ -2022,7 +2094,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
     g_inject_active.store(true);
     {
       std::lock_guard<std::mutex> lock(shared.io_mu);
-      drain_all_clients(&shared.clients, psk, mutex);
+      drain_all_clients(&shared.clients, psk, mutex, audit_fn, audit_user);
       shared.clients.erase(std::remove_if(shared.clients.begin(), shared.clients.end(),
                                           [](const ClientConn& c) { return c.dead || !c.tls; }),
                            shared.clients.end());
@@ -2066,7 +2138,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
   {
     std::lock_guard<std::mutex> lock(shared.io_mu);
     for (ClientConn& c : shared.clients) {
-      close_client(&c, mutex);
+      close_client(&c, mutex, audit_fn, audit_user);
     }
     shared.clients.clear();
   }
@@ -2092,6 +2164,8 @@ struct MediaPlane::Impl {
   std::string password;
   std::string fingerprint;
   session::SessionMutex* session_mutex = nullptr;
+  MediaPlaneConfig::AuditFn audit_fn = nullptr;
+  void* audit_user = nullptr;
   road_desk::replace::CaptureMode capture_mode = road_desk::replace::CaptureMode::Auto;
   road_desk::replace::CaptureStrategy capture_strategy = road_desk::replace::CaptureStrategy::Legacy;
 
@@ -2186,6 +2260,8 @@ bool MediaPlane::listen(const MediaPlaneConfig& config) {
 
   impl_->password = config.password;
   impl_->session_mutex = config.session_mutex;
+  impl_->audit_fn = config.audit_fn;
+  impl_->audit_user = config.audit_user;
   impl_->stop_requested = false;
   {
     char* e = nullptr;
@@ -2279,7 +2355,8 @@ void MediaPlane::serve() {
 
   logf("serve: shared-control multi-viewer");
   serve_shared(impl_->listen_sock, impl_->password, impl_->capture_mode, impl_->capture_strategy,
-               &impl_->stop_requested, impl_->session_mutex, &impl_->tls_creds);
+               &impl_->stop_requested, impl_->session_mutex, &impl_->tls_creds, impl_->audit_fn,
+               impl_->audit_user);
 
   road_desk::replace::release_modifiers();
   impl_->cleanup_listen();

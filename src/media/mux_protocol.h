@@ -17,8 +17,8 @@ enum Channel : uint8_t {
 };
 
 enum ControlType : uint8_t {
-  kCtrlAuth = 1,      // client -> host: u16 le pass_len + utf8
-  kCtrlAuthOk = 2,    // host -> client: u16 le width, u16 le height
+  kCtrlAuth = 1,      // client -> host: u16 le pass_len + utf8 [+ optional u16 sid_len + utf8 session_id]
+  kCtrlAuthOk = 2,    // host -> client: u16 le width, u16 le height [+ optional version]
   kCtrlAuthFail = 3,  // host -> client: u16 le reason_len + utf8
   kCtrlPing = 4,
   kCtrlPong = 5,

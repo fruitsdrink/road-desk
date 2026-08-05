@@ -1,5 +1,6 @@
 #include "session_host.h"
 
+#include "audit_client.h"
 #include "media_log.h"
 #include "ui/rd_app_icon.h"
 #include "ui/rd_dpi.h"
@@ -202,6 +203,10 @@ LRESULT CALLBACK SessionWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
     case WM_CLIPBOARDUPDATE:
       if (!self->view_only_ && !self->reconnecting_ && self->client_.connected()) {
         self->client_.notify_clipboard_changed();
+        if (!self->audit_clipboard_sent_) {
+          self->audit_clipboard_sent_ = true;
+          self->audit_emit("flag", "ok", nullptr, /*flag_clipboard=*/true);
+        }
       }
       return 0;
     case WM_MEDIA_TRANSPORT_LOST:
@@ -304,6 +309,46 @@ SessionHost::~SessionHost() {
   close();
 }
 
+void SessionHost::set_audit_session(const std::string& session_id, const std::string& agent_id,
+                                    const std::string& agent_name_utf8,
+                                    const std::string& agent_endpoint) {
+  audit_session_id_ = session_id;
+  audit_agent_id_ = agent_id;
+  audit_agent_name_ = agent_name_utf8;
+  audit_agent_endpoint_ = agent_endpoint;
+  audit_clipboard_sent_ = false;
+  audit_opened_sent_ = false;
+}
+
+void SessionHost::audit_emit(const char* phase, const char* result, const char* disconnect_reason,
+                             bool flag_clipboard) {
+  if (!audit_reporting_enabled() || audit_session_id_.empty() || !phase) {
+    return;
+  }
+  AuditReport r;
+  r.session_id = audit_session_id_;
+  r.phase = phase;
+  r.agent_id = audit_agent_id_;
+  r.agent_name = audit_agent_name_;
+  r.agent_endpoint = audit_agent_endpoint_;
+  r.mode = view_only_ ? "view_only" : "control";
+  if (result && result[0]) {
+    r.result = result;
+  }
+  if (disconnect_reason && disconnect_reason[0]) {
+    r.disconnect_reason = disconnect_reason;
+  }
+  if (flag_clipboard) {
+    r.set_clipboard = true;
+    r.used_clipboard = true;
+  }
+  if (reconnect_attempt_ > 0) {
+    r.reconnect_count = reconnect_attempt_;
+  }
+  r.partial = true;
+  audit_report_async(r);
+}
+
 bool SessionHost::register_class(HINSTANCE instance) {
   WNDCLASSEXW wc{};
   wc.cbSize = sizeof(wc);
@@ -350,16 +395,29 @@ bool SessionHost::open(HINSTANCE instance, HWND parent_or_null, const std::wstri
 
   road_desk::media::MediaClientConfig cfg = make_client_config();
   if (cfg.require_tls && !cfg.tls_insecure && cfg.tls_fingerprint_sha256.empty()) {
+    audit_emit("failed", "tls_fail", nullptr);
     DestroyWindow(hwnd_);
     hwnd_ = nullptr;
     return false;
   }
+  audit_emit("attempt", "unknown", nullptr);
   if (!client_.start(cfg)) {
+    using road_desk::media::MediaClientFail;
+    const MediaClientFail fail = client_.last_fail();
+    const char* result = "connect_fail";
+    if (fail == MediaClientFail::Auth) {
+      result = "auth_fail";
+    } else if (fail == MediaClientFail::Config) {
+      result = "tls_fail";
+    }
+    audit_emit("failed", result, nullptr);
     DestroyWindow(hwnd_);
     hwnd_ = nullptr;
     return false;
   }
   started_ = true;
+  audit_opened_sent_ = true;
+  audit_emit("opened", "ok", nullptr);
   if (floating_) {
     ShowWindow(hwnd_, SW_SHOW);
   }
@@ -394,12 +452,13 @@ std::wstring SessionHost::status_text() const {
   return {};
 }
 
-road_desk::media::MediaClientConfig SessionHost::make_client_config() const {
+  road_desk::media::MediaClientConfig SessionHost::make_client_config() const {
   road_desk::media::MediaClientConfig cfg;
   apply_connect_defaults_to(&cfg, connect_);
   cfg.notify_hwnd = hwnd_;
   cfg.resize_msg = WM_MEDIA_RESIZE;
   cfg.disconnect_msg = WM_MEDIA_TRANSPORT_LOST;
+  cfg.audit_session_id = audit_session_id_;
   return cfg;
 }
 
@@ -450,6 +509,15 @@ void SessionHost::stop_reconnect(const wchar_t* status) {
     status_override_ = status;
   }
   road_desk::media::media_logf("viewer", "reconnect stopped host=%s", connect_.host_port.c_str());
+  using road_desk::media::MediaClientFail;
+  const MediaClientFail fail = client_.last_fail();
+  const char* result = "connect_fail";
+  if (fail == MediaClientFail::Auth) {
+    result = "auth_fail";
+  } else if (fail == MediaClientFail::Config) {
+    result = "tls_fail";
+  }
+  audit_emit("failed", result, "transport_lost");
   notify_chrome_changed();
   InvalidateRect(hwnd_, nullptr, FALSE);
 }
@@ -465,6 +533,9 @@ void SessionHost::on_transport_lost() {
   if (!auto_reconnect_ || reconnect_gave_up_) {
     road_desk::media::media_logf("viewer", "transport lost (no reconnect) host=%s",
                                  connect_.host_port.c_str());
+    if (!user_closing_) {
+      audit_emit("closed", "ok", "transport_lost");
+    }
     DestroyWindow(hwnd_);
     return;
   }
@@ -506,9 +577,23 @@ void SessionHost::try_reconnect() {
 
   started_ = true;
   reconnecting_ = false;
+  const int prior_attempts = reconnect_attempt_;
   reconnect_attempt_ = 0;
   status_override_.clear();
   road_desk::media::media_logf("viewer", "reconnect ok host=%s", connect_.host_port.c_str());
+  if (prior_attempts > 0) {
+    AuditReport r;
+    r.session_id = audit_session_id_;
+    r.phase = "flag";
+    r.agent_id = audit_agent_id_;
+    r.agent_name = audit_agent_name_;
+    r.agent_endpoint = audit_agent_endpoint_;
+    r.mode = view_only_ ? "view_only" : "control";
+    r.result = "ok";
+    r.reconnect_count = prior_attempts;
+    r.partial = true;
+    audit_report_async(r);
+  }
   notify_chrome_changed();
   InvalidateRect(hwnd_, nullptr, FALSE);
 }
@@ -570,6 +655,9 @@ void SessionHost::set_view_only(bool on) {
   view_only_ = on;
   if (on) {
     client_.release_modifiers();
+  }
+  if (audit_opened_sent_) {
+    audit_emit("flag", "ok", nullptr);
   }
 }
 
@@ -891,6 +979,12 @@ void SessionHost::paint() {
 void SessionHost::on_destroy() {
   if (hwnd_) {
     KillTimer(hwnd_, kReconnectTimerId);
+  }
+  if (user_closing_ && audit_opened_sent_) {
+    audit_emit("closed", "ok", "user_close");
+  } else if (reconnect_gave_up_ && audit_opened_sent_) {
+    // failed already emitted in stop_reconnect; still close the bill
+    audit_emit("closed", nullptr, "transport_lost");
   }
   RemoveClipboardFormatListener(hwnd_);
   release_backbuffer();

@@ -19,6 +19,7 @@ struct BookNode {
   std::string host;     // device only
   int port = 38471;
   std::string version;
+  std::string agent_id;  // gateway agentId (empty for demo)
   bool online = false;
 };
 

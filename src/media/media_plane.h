@@ -28,6 +28,18 @@ struct MediaPlaneConfig {
   std::string tls_cert_path;
   // Optional in-process session counter (Agent-owned). Shared control; not exclusive.
   session::SessionMutex* session_mutex = nullptr;
+
+  // Host → control-plane audit (A2). Optional; never blocks media path long.
+  struct AuditEvent {
+    const char* phase = nullptr;             // opened | failed | closed
+    const char* result = nullptr;            // ok | auth_fail | capacity_reject | ...
+    const char* disconnect_reason = nullptr; // transport_lost | ...
+    const char* session_id = nullptr;        // may be empty → reporter invents UUID
+    const char* viewer_ip = nullptr;
+  };
+  using AuditFn = void (*)(void* user, const AuditEvent* ev);
+  AuditFn audit_fn = nullptr;
+  void* audit_user = nullptr;
 };
 
 // Host-side media plane (Mirror/GDI capture + TLS mux + input inject).
@@ -57,6 +69,8 @@ class MediaPlane {
 struct MediaClientConfig {
   std::string host_port = "127.0.0.1:38471";
   std::string password = "road-desk";
+  // Optional audit correlation id (UUID); sent after password in kCtrlAuth (A2).
+  std::string audit_session_id;
   HWND notify_hwnd = nullptr;
   UINT resize_msg = WM_APP + 1;
   // Posted when the mux thread ends (transport loss). 0 → legacy WM_CLOSE.

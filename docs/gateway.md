@@ -2,6 +2,8 @@
 
 打通 **Agent 注册心跳 → 网关编目 → 管理端维护 → Viewer 真目录直连媒体**。媒体仍走 Viewer↔Agent TLS mux，不经网关中继。
 
+接入审计（远控话单）方案见 [audit-implementation-plan.md](./audit-implementation-plan.md)（控制面入库；媒体直连需端上报）。
+
 ## 组件
 
 | 路径 | 说明 |
@@ -119,16 +121,29 @@ pwsh -File scripts/smoke.ps1
 ```
 POST /v1/agents/register|heartbeat     # Agent-PSK
 POST /v1/admin/login                   # 仅 role=admin
-POST /v1/viewer/login                  # 仅 role=viewer
+POST /v1/viewer/login                  # viewer 或 admin（目录）
 GET/POST/PATCH/DELETE /v1/admin/groups|tags|agents...
 GET/POST/PATCH/DELETE /v1/admin/departments|users...
 GET /v1/admin/secrets/agent-psk|viewer-psk
+POST /v1/audit/sessions/upsert         # Viewer JWT/PSK 或 Agent-PSK；话单幂等
+GET /v1/admin/audit/sessions[/{id}]    # 管理员查审计
 GET /v1/directory/tree|agents          # Viewer-PSK 或 viewer/admin JWT
 GET /healthz
 ```
+
+灌一条假话单（网关已起、持有 admin JWT 或 viewer.psk）：
+
+```powershell
+# $tok = 管理端登录后的 Bearer；也可用 viewer.psk
+curl -s -X POST http://127.0.0.1:8743/v1/audit/sessions/upsert `
+  -H "Authorization: Bearer $tok" -H "Content-Type: application/json" `
+  -d '{"id":"550e8400-e29b-41d4-a716-446655440000","phase":"opened","operatorName":"demo","agentId":"lab-1","agentName":"WIN10-LAB","agentEndpoint":"192.168.26.132:38471","mode":"control","result":"ok","partial":true}'
+```
+
+管理端「审计」页可筛时间 / 操作员 / 被控端 / 结果。端上报与协议见 [audit-implementation-plan.md](./audit-implementation-plan.md)。
 
 ## 部门与用户
 
 - 用户必须归属某个部门；系统预置部门「系统管理」。
 - 角色：`admin` 可登录管理端；`viewer` 仅可通过 `POST /v1/viewer/login` 获取 JWT 访问目录（Viewer 仍可用 `viewer.psk`）。
-- 管理端导航：编目 / 部门 / 用户。
+- 管理端导航：编目 / 部门 / 用户 / 审计。

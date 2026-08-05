@@ -89,6 +89,29 @@ export type LoginResult = {
   userId: number
 }
 
+export type AuditSession = {
+  id: string
+  operatorUserId: number | null
+  operatorName: string
+  viewerHost: string
+  viewerIp: string
+  agentId: string
+  agentName: string
+  agentEndpoint: string
+  mode: string
+  result: string
+  disconnectReason: string
+  usedClipboard: boolean
+  usedFileTransfer: boolean
+  attemptedAt: string
+  openedAt: string | null
+  closedAt: string | null
+  partial: boolean
+  meta: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<LoginResult>('/v1/admin/login', {
@@ -131,6 +154,25 @@ export const api = {
     body: Partial<{ password: string; role: UserRole; departmentId: number; enabled: boolean }>,
   ) => request<User>(`/v1/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   deleteUser: (id: number) => request<void>(`/v1/admin/users/${id}`, { method: 'DELETE' }),
+  auditSessions: (params: {
+    from?: string
+    to?: string
+    agent_id?: string
+    operator?: string
+    result?: string
+    limit?: number
+    cursor?: string
+  } = {}) => {
+    const q = new URLSearchParams()
+    for (const [k, v] of Object.entries(params)) {
+      if (v != null && v !== '') q.set(k, String(v))
+    }
+    const qs = q.toString()
+    return request<{ items: AuditSession[]; nextCursor?: string }>(
+      `/v1/admin/audit/sessions${qs ? `?${qs}` : ''}`,
+    )
+  },
+  auditSession: (id: string) => request<AuditSession>(`/v1/admin/audit/sessions/${id}`),
   downloadSecret: async (kind: 'agent-psk' | 'viewer-psk') => {
     const token = getToken()
     const res = await fetch(`/v1/admin/secrets/${kind}`, {

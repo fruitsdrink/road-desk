@@ -60,6 +60,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/admin/users/{id}", s.requireAdmin(s.patchUser))
 	mux.HandleFunc("DELETE /v1/admin/users/{id}", s.requireAdmin(s.deleteUser))
 
+	mux.HandleFunc("POST /v1/audit/sessions/upsert", s.requireAuditIngest(s.auditUpsert))
+	mux.HandleFunc("GET /v1/admin/audit/sessions", s.requireAdmin(s.listAuditSessions))
+	mux.HandleFunc("GET /v1/admin/audit/sessions/{id}", s.requireAdmin(s.getAuditSession))
+
 	mux.HandleFunc("GET /v1/directory/tree", s.requireViewer(s.directoryTree))
 	mux.HandleFunc("GET /v1/directory/agents", s.requireViewer(s.listAgents))
 

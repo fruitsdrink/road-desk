@@ -18,6 +18,7 @@ import { LoginPage } from './pages/LoginPage'
 import { CatalogPage } from './pages/CatalogPage'
 import { DepartmentsPage } from './pages/DepartmentsPage'
 import { UsersPage } from './pages/UsersPage'
+import { AuditPage } from './pages/AuditPage'
 import './styles.css'
 
 const queryClient = new QueryClient()
@@ -70,10 +71,16 @@ const usersRoute = createRoute({
   component: UsersPage,
 })
 
+const auditRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/audit',
+  component: AuditPage,
+})
+
 const router = createRouter({
   routeTree: rootRoute.addChildren([
     loginRoute,
-    appRoute.addChildren([indexRoute, departmentsRoute, usersRoute]),
+    appRoute.addChildren([indexRoute, departmentsRoute, usersRoute, auditRoute]),
   ]),
 })
 

@@ -42,6 +42,11 @@ class SessionHost {
   bool open(HINSTANCE instance, HWND parent_or_null, const std::wstring& title,
             const ConnectDefaults& connect, ClosedFn on_closed, bool auto_reconnect = false);
 
+  // Gateway audit (A1). Call before open() when directory reporting is enabled.
+  void set_audit_session(const std::string& session_id, const std::string& agent_id,
+                         const std::string& agent_name_utf8, const std::string& agent_endpoint);
+  const std::string& audit_session_id() const { return audit_session_id_; }
+
   void close();
   void clear_closed_handler() { on_closed_ = nullptr; }
   bool connected() const;
@@ -96,6 +101,8 @@ class SessionHost {
   void stop_reconnect(const wchar_t* status);
   road_desk::media::MediaClientConfig make_client_config() const;
   int reconnect_delay_ms() const;
+  void audit_emit(const char* phase, const char* result, const char* disconnect_reason,
+                  bool flag_clipboard = false);
 
   road_desk::media::MediaClient client_;
   ConnectDefaults connect_{};
@@ -112,6 +119,12 @@ class SessionHost {
   int device_id_ = -1;
   bool view_only_ = false;
   bool fullscreen_ = false;
+  bool audit_clipboard_sent_ = false;
+  bool audit_opened_sent_ = false;
+  std::string audit_session_id_;
+  std::string audit_agent_id_;
+  std::string audit_agent_name_;
+  std::string audit_agent_endpoint_;
   // If non-null, fullscreen was entered from a docked child; Esc should re-attach here.
   HWND fullscreen_dock_parent_ = nullptr;
   RECT fullscreen_restore_rect_{};

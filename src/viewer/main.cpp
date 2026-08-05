@@ -1,4 +1,5 @@
 #include "address_book.h"
+#include "audit_client.h"
 #include "auth.h"
 #include "connect_config.h"
 #include "console_window.h"
@@ -116,6 +117,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_cmd)
         if (!road_desk::viewer::save_directory_config(dir)) {
           std::fprintf(stderr, "warning: failed to save viewer.json\n");
         }
+        road_desk::viewer::audit_set_directory(dir);
         viewer_boot("gateway_configured");
       } else {
         viewer_boot("gateway_prompt_cancelled");
@@ -133,6 +135,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_cmd)
             road_desk::viewer::address_book_load(road_desk::viewer::AddressBookSource::kGateway, dir,
                                                  &err)) {
           road_desk::viewer::save_directory_config(dir);
+          road_desk::viewer::audit_set_directory(dir);
           viewer_boot("gateway_directory_ok");
         } else {
           viewer_boot("gateway_directory_cancelled");
@@ -141,6 +144,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmd_line, int show_cmd)
           return 1;
         }
       } else {
+        road_desk::viewer::audit_set_directory(dir);
         viewer_boot("gateway_directory_ok");
       }
     } else if (force_demo) {
