@@ -14,4 +14,4 @@
 
 在 Cursor 中用 Pencil 打开对应 `.pen` 预览。本 Agent 会话若 Tools & MCP 中无 `pencil`，可直接编辑 JSON 或新开对话后再用 MCP 改画布。
 
-后续实现批次见 [viewer-implementation-plan.md](../viewer-implementation-plan.md)（V1–V3 已完成；V4 分割条宽度芯片未做）。
+后续实现批次见 [viewer-implementation-plan.md](../viewer-implementation-plan.md)（V1–V4 已完成）。

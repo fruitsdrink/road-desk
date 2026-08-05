@@ -33,6 +33,7 @@ namespace rd = road_desk::ui;
 constexpr wchar_t kConsoleClass[] = L"RoadDeskConsoleWindow";
 constexpr wchar_t kTabStripClass[] = L"RoadDeskTabStrip";
 constexpr wchar_t kDragGhostClass[] = L"RoadDeskDragGhost";
+constexpr wchar_t kSplitterChipClass[] = L"RoadDeskSplitterChip";
 constexpr int kToolbarHDip = rd::kToolbarHDip;
 constexpr int kToolbarIconDip = 16;
 constexpr int kToolbarPadXDip = rd::kSpace2;
@@ -42,6 +43,9 @@ constexpr int kCloseBtnWDip = 18;
 constexpr int kSplitterWDip = rd::kSplitterWDip;
 constexpr int kTabNavWDip = 24;  // overflow ◀▶ (design Frame E)
 constexpr int kFloatBadgeWDip = 14;
+constexpr int kSplitterChipWDip = 72;  // design Frame D width chip
+constexpr int kSplitterChipHDip = 24;
+constexpr int kSplitterChipGapDip = 12;
 constexpr int kMaxSessions = 8;
 constexpr int kTabCatalog = -1;
 constexpr int kTabHitClose = -3;  // session close button (drag_tab_index holds session idx)
@@ -130,6 +134,7 @@ struct ConsoleState {
   HWND tab_strip = nullptr;
   HWND status = nullptr;
   HWND session_area = nullptr;
+  HWND splitter_chip = nullptr;  // Frame D: DIP width while dragging
   HFONT ui_font = nullptr;       // rd.font.body 10pt
   HFONT caption_font = nullptr;  // rd.font.caption 9pt
   HBRUSH menu_chrome_br = nullptr;
@@ -152,6 +157,7 @@ struct ConsoleState {
   bool dragging_splitter = false;
   bool splitter_hot = false;
   int body_top = 0;  // below toolbar; for splitter paint/hit
+  int splitter_chip_dip = 0;  // logical width shown on chip
   int tab_scroll_x = 0;
   bool dragging_tab = false;
   bool drag_tear_armed = false;  // moved far enough; detach only on LBUTTONUP
@@ -161,6 +167,8 @@ struct ConsoleState {
   HWND drag_ghost = nullptr;
   std::wstring drag_ghost_title;
 };
+
+ConsoleState* g_console = nullptr;
 
 int system_dpi() {
   return rd::rd_dpi_screen();
@@ -187,6 +195,100 @@ void fill_round_rect(HDC hdc, const RECT& rc, COLORREF fill, COLORREF border, in
   SelectObject(hdc, old_br);
   DeleteObject(pen);
   DeleteObject(br);
+}
+
+// Frame D: tree width chip (DIP), shown only while dragging the splitter.
+void hide_splitter_chip(ConsoleState* st) {
+  if (st && st->splitter_chip) {
+    ShowWindow(st->splitter_chip, SW_HIDE);
+  }
+}
+
+void update_splitter_chip(ConsoleState* st) {
+  if (!st || !st->hwnd || !st->splitter_chip) {
+    return;
+  }
+  if (!st->dragging_splitter) {
+    hide_splitter_chip(st);
+    return;
+  }
+  RECT client{};
+  GetClientRect(st->hwnd, &client);
+  const int dpi = st->dpi > 0 ? st->dpi : 96;
+  const int top = st->body_top > 0 ? st->body_top : st->toolbar_h;
+  const int bottom = client.bottom - st->status_h;
+  if (bottom <= top) {
+    hide_splitter_chip(st);
+    return;
+  }
+  st->splitter_chip_dip = MulDiv(st->tree_width, 96, dpi);
+  wchar_t label[32];
+  swprintf_s(label, L"%d px", st->splitter_chip_dip);
+
+  HDC hdc = GetDC(st->splitter_chip);
+  HFONT font = st->caption_font ? st->caption_font : st->ui_font;
+  HGDIOBJ old = font && hdc ? SelectObject(hdc, font) : nullptr;
+  SIZE tsz{0, 0};
+  if (hdc) {
+    GetTextExtentPoint32W(hdc, label, static_cast<int>(wcslen(label)), &tsz);
+  }
+  if (old) {
+    SelectObject(hdc, old);
+  }
+  if (hdc) {
+    ReleaseDC(st->splitter_chip, hdc);
+  }
+
+  const int pad_x = dip(rd::kSpace2 + 2, dpi);
+  const int chip_h = dip(kSplitterChipHDip, dpi);
+  int chip_w = dip(kSplitterChipWDip, dpi);
+  if (tsz.cx + pad_x * 2 > chip_w) {
+    chip_w = tsz.cx + pad_x * 2;
+  }
+  const int gap = dip(kSplitterChipGapDip, dpi);
+  int x = st->tree_width + st->splitter_w + gap;
+  if (x + chip_w > client.right - gap) {
+    x = st->tree_width - gap - chip_w;
+  }
+  if (x < gap) {
+    x = gap;
+  }
+  const int y = top + (bottom - top - chip_h) / 2;
+  SetWindowTextW(st->splitter_chip, label);
+  SetWindowPos(st->splitter_chip, HWND_TOP, x, y, chip_w, chip_h,
+               SWP_SHOWWINDOW | SWP_NOACTIVATE);
+  InvalidateRect(st->splitter_chip, nullptr, FALSE);
+}
+
+LRESULT CALLBACK SplitterChipProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+  ConsoleState* st = g_console;
+  switch (msg) {
+    case WM_PAINT: {
+      PAINTSTRUCT ps{};
+      HDC hdc = BeginPaint(hwnd, &ps);
+      RECT rc{};
+      GetClientRect(hwnd, &rc);
+      const int dpi = st && st->dpi > 0 ? st->dpi : 96;
+      fill_round_rect(hdc, rc, rd::kColorBrandBg, rd::kColorBrandBg, dip(rd::kRadiusMdDip, dpi) * 2);
+      wchar_t label[32] = {};
+      GetWindowTextW(hwnd, label, 32);
+      HFONT font = st && st->caption_font ? st->caption_font : (st ? st->ui_font : nullptr);
+      HGDIOBJ old = font ? SelectObject(hdc, font) : nullptr;
+      SetBkMode(hdc, TRANSPARENT);
+      SetTextColor(hdc, rd::kColorTextOnBrand);
+      DrawTextW(hdc, label, -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+      if (old) {
+        SelectObject(hdc, old);
+      }
+      EndPaint(hwnd, &ps);
+      return 0;
+    }
+    case WM_ERASEBKGND:
+      return 1;
+    default:
+      break;
+  }
+  return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
 void paint_toolbar_separator(HDC hdc, const RECT& rc, int dpi) {
@@ -266,8 +368,6 @@ LRESULT paint_toolbar_button(ConsoleState* st, LPNMTBCUSTOMDRAW cd) {
 
   return TBCDRF_NOBACKGROUND | TBCDRF_NOEDGES;
 }
-
-ConsoleState* g_console = nullptr;
 
 std::wstring utf8_to_wide_local(const std::string& s) {
   if (s.empty()) {
@@ -2219,6 +2319,13 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
                                    nullptr);
       SendMessageW(st->status, SB_SETBKCOLOR, 0, static_cast<LPARAM>(kChrome));
 
+      st->splitter_chip =
+          CreateWindowExW(0, kSplitterChipClass, L"", WS_CHILD | WS_CLIPSIBLINGS, 0, 0, 1, 1, hwnd,
+                          nullptr, st->instance, nullptr);
+      if (st->splitter_chip) {
+        ShowWindow(st->splitter_chip, SW_HIDE);
+      }
+
       apply_ui_font(st, st->toolbar);
       apply_ui_font(st, st->tree);
       apply_ui_font(st, st->list);
@@ -2523,6 +2630,7 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
         SetCapture(hwnd);
         RECT split_rc{split, top, split + st->splitter_w, rc.bottom - st->status_h};
         InvalidateRect(hwnd, &split_rc, FALSE);
+        update_splitter_chip(st);
       }
       return 0;
     }
@@ -2538,6 +2646,7 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
         st->tree_width = x;
         layout(st);
         SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
+        update_splitter_chip(st);
       } else if (over != st->splitter_hot) {
         st->splitter_hot = over;
         RECT split_rc{st->tree_width, top, st->tree_width + st->splitter_w, rc.bottom - st->status_h};
@@ -2549,6 +2658,7 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
       if (st->dragging_splitter) {
         st->dragging_splitter = false;
         ReleaseCapture();
+        hide_splitter_chip(st);
         RECT rc{};
         GetClientRect(hwnd, &rc);
         const int top = st->body_top > 0 ? st->body_top : st->toolbar_h;
@@ -2556,8 +2666,20 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
         InvalidateRect(hwnd, &split_rc, FALSE);
       }
       return 0;
+    case WM_CAPTURECHANGED:
+      if (st->dragging_splitter && reinterpret_cast<HWND>(lparam) != hwnd) {
+        st->dragging_splitter = false;
+        hide_splitter_chip(st);
+        InvalidateRect(hwnd, nullptr, FALSE);
+      }
+      return 0;
     case WM_DESTROY:
       destroy_drag_ghost(st);
+      hide_splitter_chip(st);
+      if (st->splitter_chip) {
+        DestroyWindow(st->splitter_chip);
+        st->splitter_chip = nullptr;
+      }
       for (auto& tab : st->sessions) {
         if (tab.host) {
           tab.host->clear_closed_handler();
@@ -2638,6 +2760,17 @@ bool register_console_classes(HINSTANCE instance) {
   gc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
   gc.lpszClassName = kDragGhostClass;
   if (!RegisterClassExW(&gc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+    return false;
+  }
+
+  WNDCLASSEXW chip{};
+  chip.cbSize = sizeof(chip);
+  chip.lpfnWndProc = SplitterChipProc;
+  chip.hInstance = instance;
+  chip.hCursor = LoadCursor(nullptr, IDC_ARROW);
+  chip.hbrBackground = nullptr;
+  chip.lpszClassName = kSplitterChipClass;
+  if (!RegisterClassExW(&chip) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
     return false;
   }
   return SessionHost::register_class(instance);
