@@ -59,6 +59,17 @@ class SessionHost {
   bool send_vk(unsigned vk, bool down);
   void release_modifiers();
 
+  // View-only: freeze keyboard/mouse/clipboard forwarding; video stays live.
+  void set_view_only(bool on);
+  bool view_only() const { return view_only_; }
+
+  // Fullscreen the session window (docked sessions detach first). Esc exits.
+  bool toggle_fullscreen();
+  bool fullscreen() const { return fullscreen_; }
+
+  // Save the current remote framebuffer (with cursor) as PNG.
+  bool save_screenshot(const std::wstring& path);
+
   static SessionHost* from_hwnd(HWND hwnd);
   static void install_keyboard_hook(HINSTANCE instance);
   static void uninstall_keyboard_hook();
@@ -78,6 +89,10 @@ class SessionHost {
   bool started_ = false;
   std::wstring title_;
   int device_id_ = -1;
+  bool view_only_ = false;
+  bool fullscreen_ = false;
+  RECT fullscreen_restore_rect_{};
+  LONG_PTR fullscreen_restore_style_ = 0;
   ClosedFn on_closed_;
 
   HDC back_dc_ = nullptr;

@@ -1,12 +1,17 @@
 #include "session_host.h"
 
+#include <objidl.h>
+#include <gdiplus.h>
 #include <windowsx.h>
 
 #include <cstdio>
 #include <cstring>
 #include <vector>
 
+#pragma comment(lib, "gdiplus.lib")
+
 namespace road_desk::viewer {
+namespace gdip = Gdiplus;
 namespace {
 
 constexpr wchar_t kSessionClass[] = L"RoadDeskSessionHost";
@@ -100,13 +105,20 @@ int map_mouse_y(HWND hwnd, LPARAM lparam, int fb_w, int fb_h, bool fit_workspace
 }
 
 LRESULT CALLBACK low_level_keyboard(int code, WPARAM wparam, LPARAM lparam) {
-  if (code == HC_ACTION && g_kb_target && g_kb_target->wants_keyboard() &&
-      g_kb_target->connected()) {
+  if (code == HC_ACTION && g_kb_target && g_kb_target->connected()) {
     const auto* info = reinterpret_cast<KBDLLHOOKSTRUCT*>(lparam);
     if (!(info->flags & LLKHF_INJECTED)) {
-      const bool down = (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN);
-      if (g_kb_target->send_vk(info->vkCode, down)) {
+      // Esc always exits fullscreen locally instead of reaching the remote.
+      if (g_kb_target->fullscreen() && info->vkCode == VK_ESCAPE &&
+          wparam == WM_KEYDOWN) {
+        g_kb_target->toggle_fullscreen();
         return 1;
+      }
+      if (g_kb_target->wants_keyboard()) {
+        const bool down = (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN);
+        if (g_kb_target->send_vk(info->vkCode, down)) {
+          return 1;
+        }
       }
     }
   }
@@ -164,9 +176,14 @@ LRESULT CALLBACK SessionWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
       return 0;
     case WM_SETCURSOR:
       if (LOWORD(lparam) == HTCLIENT) {
-        // Always local OS cursor (VNC-style). Host blanks system cursors so the remote
-        // soft-cursor channel is empty — hiding the local cursor on hover left none.
-        SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+        // View-only: hide the local cursor so it does not obscure the remote frame.
+        if (self->view_only_) {
+          SetCursor(nullptr);
+        } else {
+          // Always local OS cursor (VNC-style). Host blanks system cursors so the remote
+          // soft-cursor channel is empty — hiding the local cursor on hover left none.
+          SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+        }
         return TRUE;
       }
       break;
@@ -175,7 +192,9 @@ LRESULT CALLBACK SessionWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
       self->client_.set_software_cursor_enabled(false);
       return 0;
     case WM_CLIPBOARDUPDATE:
-      self->client_.notify_clipboard_changed();
+      if (!self->view_only_) {
+        self->client_.notify_clipboard_changed();
+      }
       return 0;
     case WM_CLOSE:
       DestroyWindow(hwnd);
@@ -188,7 +207,7 @@ LRESULT CALLBACK SessionWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
     case WM_RBUTTONDOWN:
     case WM_RBUTTONUP:
     case WM_MOUSEMOVE: {
-      if (!self->client_.connected()) {
+      if (self->view_only_ || !self->client_.connected()) {
         break;
       }
       if (msg == WM_MOUSEMOVE) {
@@ -241,10 +260,15 @@ LRESULT CALLBACK SessionWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
       }
       break;
     case WM_KEYDOWN:
+      if (self->fullscreen_ && wparam == VK_ESCAPE) {
+        self->toggle_fullscreen();
+        return 0;
+      }
+      [[fallthrough]];
     case WM_KEYUP:
     case WM_SYSKEYDOWN:
     case WM_SYSKEYUP:
-      if (!g_kb_hook) {
+      if (!g_kb_hook && !self->view_only_) {
         self->client_.send_vk(static_cast<unsigned>(wparam),
                               msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN);
       }
@@ -363,7 +387,7 @@ bool SessionHost::attach_to_parent(HWND parent) {
 }
 
 bool SessionHost::wants_keyboard() const {
-  if (!hwnd_ || g_kb_target != this) {
+  if (view_only_ || !hwnd_ || g_kb_target != this) {
     return false;
   }
   HWND fg = GetForegroundWindow();
@@ -380,6 +404,89 @@ bool SessionHost::send_vk(unsigned vk, bool down) {
 
 void SessionHost::release_modifiers() {
   client_.release_modifiers();
+}
+
+void SessionHost::set_view_only(bool on) {
+  view_only_ = on;
+  if (on) {
+    client_.release_modifiers();
+  }
+}
+
+bool SessionHost::toggle_fullscreen() {
+  if (!hwnd_) {
+    return false;
+  }
+  if (fullscreen_) {
+    SetWindowLongPtrW(hwnd_, GWL_STYLE, fullscreen_restore_style_);
+    SetWindowPos(hwnd_, HWND_NOTOPMOST, fullscreen_restore_rect_.left,
+                 fullscreen_restore_rect_.top,
+                 fullscreen_restore_rect_.right - fullscreen_restore_rect_.left,
+                 fullscreen_restore_rect_.bottom - fullscreen_restore_rect_.top,
+                 SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    fullscreen_ = false;
+    InvalidateRect(hwnd_, nullptr, TRUE);
+    return true;
+  }
+  // Docked sessions detach first so the session can cover the whole monitor.
+  if (!floating_) {
+    const HINSTANCE inst =
+        reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd_, GWLP_HINSTANCE));
+    if (!detach_to_floating(inst)) {
+      return false;
+    }
+  }
+  GetWindowRect(hwnd_, &fullscreen_restore_rect_);
+  fullscreen_restore_style_ = GetWindowLongPtrW(hwnd_, GWL_STYLE);
+  HMONITOR mon = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST);
+  MONITORINFO mi{};
+  mi.cbSize = sizeof(mi);
+  if (!GetMonitorInfoW(mon, &mi)) {
+    return false;
+  }
+  const LONG_PTR style =
+      (GetWindowLongPtrW(hwnd_, GWL_STYLE) & ~(WS_OVERLAPPEDWINDOW)) | WS_POPUP | WS_VISIBLE;
+  SetWindowLongPtrW(hwnd_, GWL_STYLE, style);
+  SetWindowPos(hwnd_, HWND_TOPMOST, mi.rcMonitor.left, mi.rcMonitor.top,
+               mi.rcMonitor.right - mi.rcMonitor.left,
+               mi.rcMonitor.bottom - mi.rcMonitor.top,
+               SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+  fullscreen_ = true;
+  SetFocus(hwnd_);
+  InvalidateRect(hwnd_, nullptr, TRUE);
+  return true;
+}
+
+bool SessionHost::save_screenshot(const std::wstring& path) {
+  const uint32_t epoch = client_.framebuffer_epoch();
+  if (epoch != desk_epoch_ || desk_bgra_.empty()) {
+    int w = 0;
+    int h = 0;
+    if (!client_.copy_desktop_bgra(desk_bgra_, w, h)) {
+      return false;
+    }
+    desk_w_ = w;
+    desk_h_ = h;
+    desk_epoch_ = epoch;
+  }
+  if (desk_w_ <= 0 || desk_h_ <= 0 || desk_bgra_.empty()) {
+    return false;
+  }
+  std::vector<uint8_t> bgra = desk_bgra_;
+  client_.composite_software_cursor(bgra, desk_w_, desk_h_);
+
+  gdip::GdiplusStartupInput gsi;
+  ULONG_PTR token = 0;
+  if (gdip::GdiplusStartup(&token, &gsi, nullptr) != gdip::Ok) {
+    return false;
+  }
+  gdip::Bitmap bmp(desk_w_, desk_h_, desk_w_ * 4, PixelFormat32bppARGB, bgra.data());
+  // PNG encoder CLSID {557cf406-1a04-11d3-9a73-0000f81ef32e}.
+  CLSID png_clsid = {0x557cf406, 0x1a04, 0x11d3,
+                     {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}};
+  const gdip::Status st = bmp.Save(path.c_str(), &png_clsid, nullptr);
+  gdip::GdiplusShutdown(token);
+  return st == gdip::Ok;
 }
 
 SessionHost* SessionHost::from_hwnd(HWND hwnd) {
