@@ -18,10 +18,20 @@ enum Channel : uint8_t {
 
 enum ControlType : uint8_t {
   kCtrlAuth = 1,      // client -> host: u16 le pass_len + utf8 [+ optional u16 sid_len + utf8 session_id]
-  kCtrlAuthOk = 2,    // host -> client: u16 le width, u16 le height [+ optional version]
+  // host -> client: u16 le width, u16 le height [+ optional u16 vlen + version]
+  //                 [+ optional u8 session_role]  (A5a; omitted by old hosts → treat as control)
+  kCtrlAuthOk = 2,
   kCtrlAuthFail = 3,  // host -> client: u16 le reason_len + utf8
   kCtrlPing = 4,
   kCtrlPong = 5,
+  // host -> client: u8 session_role (A5a mid-session promote / demote)
+  kCtrlSessionRole = 6,
+};
+
+// Trailing AuthOk session_role (A5a exclusive control).
+enum SessionRole : uint8_t {
+  kSessionRoleControl = 0,
+  kSessionRoleViewOnly = 1,
 };
 
 enum VideoCodec : uint8_t {

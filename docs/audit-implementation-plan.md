@@ -1,6 +1,6 @@
 # 接入审计实施方案
 
-Status: **active**（2026-08-05）— 已拍板双源+P1；A0–A4 + `audit_events` 时间线已落地；**桌面行为审计已拍板目标（独占控制 + 进程/窗口时间线），端侧未开工**；目录 ACL 一期不做  
+Status: **active**（2026-08-05）— 已拍板双源+P1；A0–A4 + `audit_events` 已落地；**A5a 一路控制/其余只读已落地**；A5b–d 桌面行为采集待做；目录 ACL 一期不做  
 Related: [CONTEXT.md](../CONTEXT.md)（审计日志 / 控制面）、[gateway.md](./gateway.md)、[adr/0001-media-plane-vnc-adapter.md](./adr/0001-media-plane-vnc-adapter.md)、[viewer-implementation-plan.md](./viewer-implementation-plan.md)
 
 把远控「话单」落到控制面：可查询、可合规抽查；**不含会话录像**。媒体仍 Viewer↔Agent TLS mux 直连，审计事件由端上报，网关不旁路拆媒体包。
@@ -17,7 +17,7 @@ Related: [CONTEXT.md](../CONTEXT.md)（审计日志 / 控制面）、[gateway.md
 | 查看或控制 | ✅ | Viewer 上报会话模式：`control` / `view_only`（本地只读开关）；非控权转移语义 |
 | 剪贴板 / 文件 | ✅ | 布尔「本会话是否用过」；文件另记方向、次数与**顶层**名/路径于 `meta.fileTransfer`（目录只记目录本身，不展开子文件）；仅管理端可见 |
 | 断开原因 | ✅ | `user_close` / `transport_lost` / `auth_fail` / `host_gone` / `replaced` 等枚举 |
-| 互斥拒绝 | 📋 | **已拍板（行为审计前提）**：同时仅 **一路控制**，其余连接强制 **观看（只读）**；第二路争控 → 拒绝或降为只读（枚举待实现，如 `control_busy`）。今日代码仍为共享控制 + 容量≤8，端侧改完前勿假装已互斥 |
+| 互斥拒绝 | ✅ | **A5a**：同时仅 **一路控制**，其余强制 **观看**；主控断开后 **自动提升** 仍在线的最早旁观（`kCtrlSessionRole`）。容量上限仍为 8 |
 
 **不做**：会话录像 / 录屏审计 / 操作回放；键鼠轨迹；剪贴板正文；从 `host-agent.log` 扫日志当正式审计；媒体进网关中继。
 
@@ -141,7 +141,7 @@ Related: [CONTEXT.md](../CONTEXT.md)（审计日志 / 控制面）、[gateway.md
 
 **依赖顺序：**
 
-1. **A5a** Host：**一路控制、其余强制只读**（含争控拒绝/降级与审计 `result`/`mode`）。
+1. **A5a** ✅ Host：**一路控制、其余强制只读**；主控离开自动提升最早旁观（`kCtrlSessionRole`）；非主控 Input/剪贴板/文件丢弃。
 2. **A5b** 会话内较全 `process_open` / `process_close`（含 path、cmdline）。
 3. **A5c** `window_focus`（+ 可选 `window_title`）。
 4. **A5d** 管理端时间线展示（cmdline/标题默认折叠）、筛选与导出策略、可选更短保留期。
@@ -249,7 +249,7 @@ GET /v1/admin/audit/sessions/export?from=&to=&agent_id=&operator=&result=&depart
 | **A2** | ✅ 协议带 `session_id` + Host 上报 auth/容量/peer + 归并 | 错 PSK 可见失败单；容量满拒绝人工暂缓（无 8 路条件） |
 | **A3** | ✅ 剪贴板/文件布尔；只读切换；保留期；`audit_events` 时间线（进程 type 预留） | CONTEXT 字段表一期列齐 |
 | **A4** | ✅ CSV 导出、按部门过滤；**目录 ACL 明确不做（一期）** | ✅ 人工验收通过（2026-08-05） |
-| **A5a** | 📋 一路控制、其余强制只读（争控策略 + 话单） | 第二路键鼠无法注入；可观看 |
+| **A5a** | ✅ 一路控制、其余强制只读；主控离开自动提升旁观 | ✅ 人工验收中（2026-08-05；含提升续测） |
 | **A5b** | 📋 主控会话进程开/关时间线（path + cmdline） | 管理端可见并归属该操作员 |
 | **A5c** | 📋 前台窗口焦点/标题 | 与进程时间线可对照「当时在看什么」 |
 | **A5d** | 📋 管理端展示/导出/保留策略（敏感字段） | cmdline/标题默认折叠；仅 admin |
@@ -262,7 +262,7 @@ GET /v1/admin/audit/sessions/export?from=&to=&agent_id=&operator=&result=&depart
 |----|------|
 | 会话录像 | CONTEXT Avoid；与审计话单分离 |
 | 中继路径审计 | 尚无中继 |
-| 旁观 / 控权转移话单字段 | A5a 起：非主控为 `view_only`；控权转移 = 旧主控结束 + 新主控新会话（或后续显式移交） |
+| 旁观 / 控权转移话单字段 | A5a：非主控 `view_only`；主控离开自动提升旁观（同会话改 `mode`，不新开话单） |
 | 多路同时控制 | **行为审计前提下不做**；已拍板仅一路控制 |
 | 独占互斥拒绝 | A5a 实现前仍勿造假；实现后补 `control_busy`（名待定）与容量拒绝区分 |
 | 会话内键鼠轨迹 / 录像 | CONTEXT Avoid；行为审计止于进程+窗口元数据 |
@@ -293,7 +293,7 @@ GET /v1/admin/audit/sessions/export?from=&to=&agent_id=&operator=&result=&depart
 - [x] 文件方向 + 顶层名/路径进管理端（人工，同日）
 - [x] A4 CSV 导出 + 按操作员部门过滤（人工验收 2026-08-05；**目录 ACL 一期不做**）
 - [x] 桌面行为审计目标拍板：尽量还原；归单一操作员；path+cmdline+窗口标题；**一路控制、其余只读**（§4.3）
-- [ ] A5a 一路控制 / 其余强制只读（端侧）
+- [x] A5a 一路控制 / 其余强制只读；主控离开自动提升旁观（人工验收续测 2026-08-05）
 - [ ] A5b/c 进程与窗口时间线上报（可靠后）
 - [ ] A5d 管理端敏感字段展示与导出策略
 

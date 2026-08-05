@@ -177,6 +177,8 @@ struct ClientState {
   int desk_h = 0;
   // Agent version from the auth-ok handshake (empty until connected).
   std::string agent_version;
+  // A5a: Host AuthOk / SessionRole → view_only. Updated from net thread.
+  std::atomic<bool> host_forces_view_only{false};
   uint32_t frame_id = 0;
   uint32_t frame_epoch = 0;
   std::vector<uint8_t> decode_buf;
@@ -567,8 +569,20 @@ void apply_cursor_payload(ClientState* st, const std::vector<uint8_t>& payload) 
   ++st->cursor_updates;
   LeaveCriticalSection(&st->cursor_lock);
 
-  if (st->cfg.notify_hwnd) {
-    InvalidateRect(st->cfg.notify_hwnd, nullptr, FALSE);
+  // Soft cursor rarely used (Host blanks OS cursors; Viewer draws local arrow). Avoid
+  // full-window invalidate on cursor-shape packets — that flashed the whole Viewer.
+  if (st->cfg.notify_hwnd && st->cfg.frame_dirty_msg && st->soft_mx >= 0 && st->soft_my >= 0) {
+    const int cw = st->cursor_w > 0 ? st->cursor_w : 32;
+    const int ch = st->cursor_h > 0 ? st->cursor_h : 32;
+    int x = st->soft_mx - st->cursor_hot_x;
+    int y = st->soft_my - st->cursor_hot_y;
+    if (x < 0) {
+      x = 0;
+    }
+    if (y < 0) {
+      y = 0;
+    }
+    PostMessageW(st->cfg.notify_hwnd, st->cfg.frame_dirty_msg, MAKELONG(x, y), MAKELONG(cw, ch));
   }
 }
 
@@ -656,6 +670,11 @@ bool apply_video_payload(ClientState* st, const std::vector<uint8_t>& payload) {
   }
 
   bool need_paint = false;
+  // Dirty notify rect (may expand beyond the encoded rect for CopyRect).
+  uint16_t paint_x = x;
+  uint16_t paint_y = y;
+  uint16_t paint_w = rw;
+  uint16_t paint_h = rh;
   if (codec == kVideoCopyRect) {
     if (payload.size() < kCopyRectPayloadSize) {
       return true;
@@ -688,6 +707,16 @@ bool apply_video_payload(ClientState* st, const std::vector<uint8_t>& payload) {
       ++st->copy_ok;
       ++st->frame_epoch;
       need_paint = true;
+      // Invalidate src∪dst so a paint between CopyRect and the exposed-area dirty
+      // does not leave a ghost window at the old position.
+      const int x0 = x < sx ? x : sx;
+      const int y0 = y < sy ? y : sy;
+      const int x1 = (x + rw > sx + rw) ? (x + rw) : (sx + rw);
+      const int y1 = (y + rh > sy + rh) ? (y + rh) : (sy + rh);
+      paint_x = static_cast<uint16_t>(x0);
+      paint_y = static_cast<uint16_t>(y0);
+      paint_w = static_cast<uint16_t>(x1 - x0);
+      paint_h = static_cast<uint16_t>(y1 - y0);
     }
     LeaveCriticalSection(&st->frame_lock);
   } else if (codec == kVideoRawBgra || codec == kVideoZlibBgra || codec == kVideoJpeg ||
@@ -766,7 +795,12 @@ bool apply_video_payload(ClientState* st, const std::vector<uint8_t>& payload) {
   }
 
   if (need_paint && st->cfg.notify_hwnd) {
-    InvalidateRect(st->cfg.notify_hwnd, nullptr, FALSE);
+    if (st->cfg.frame_dirty_msg) {
+      PostMessageW(st->cfg.notify_hwnd, st->cfg.frame_dirty_msg, MAKELONG(paint_x, paint_y),
+                   MAKELONG(paint_w, paint_h));
+    } else {
+      InvalidateRect(st->cfg.notify_hwnd, nullptr, FALSE);
+    }
   }
 
   const DWORD now = GetTickCount();
@@ -839,6 +873,20 @@ DWORD WINAPI net_thread(LPVOID param) {
     } else if (ch == kChannelFile) {
       if (!handle_file_payload(st, payload)) {
         break;
+      }
+    } else if (ch == kChannelControl && !payload.empty()) {
+      if (payload[0] == kCtrlPong) {
+        continue;
+      }
+      if (payload[0] == kCtrlSessionRole && payload.size() >= 2) {
+        const bool view_only = (payload[1] == kSessionRoleViewOnly);
+        st->host_forces_view_only.store(view_only);
+        logf("session role → %s", view_only ? "view_only" : "control");
+        if (st->cfg.notify_hwnd && st->cfg.session_role_msg) {
+          PostMessageW(st->cfg.notify_hwnd, st->cfg.session_role_msg,
+                       view_only ? 1 : 0, 0);
+        }
+        continue;
       }
     }
   }
@@ -941,6 +989,8 @@ bool MediaClient::start(const MediaClientConfig& config) {
   ClientState* st = &impl_->state;
   st->cfg = config;
   st->last_fail = MediaClientFail::None;
+  st->host_forces_view_only.store(false);
+  st->agent_version.clear();
   InterlockedExchange(&st->stop, 0);
 
   // Prefer viewer.log (opened by viewer main). Open it here if standalone.
@@ -1044,17 +1094,24 @@ bool MediaClient::start(const MediaClientConfig& config) {
     return false;
   }
 
-  st->desk_w = read_u16_le(payload.data() + 1);
-  st->desk_h = read_u16_le(payload.data() + 3);
-  st->agent_version.clear();
-  if (payload.size() >= 7) {
-    const uint16_t vlen = read_u16_le(payload.data() + 5);
-    if (vlen > 0 && payload.size() >= 7u + vlen) {
-      st->agent_version.assign(payload.begin() + 7, payload.begin() + 7 + vlen);
-    }
+  uint16_t aw = 0;
+  uint16_t ah = 0;
+  uint8_t role = kSessionRoleControl;
+  if (!parse_auth_ok(payload.data(), payload.size(), &aw, &ah, &st->agent_version, &role)) {
+    logf("AuthOk parse failed");
+    tls::tls_close(st->tls);
+    st->tls = nullptr;
+    WSACleanup();
+    st->wsa_started = false;
+    st->last_fail = MediaClientFail::Transient;
+    return false;
   }
-  logf("auth ok desktop=%dx%d agent=%s", st->desk_w, st->desk_h,
-       st->agent_version.empty() ? "-" : st->agent_version.c_str());
+  st->desk_w = aw;
+  st->desk_h = ah;
+  st->host_forces_view_only.store(role == kSessionRoleViewOnly);
+  logf("auth ok desktop=%dx%d agent=%s role=%s", st->desk_w, st->desk_h,
+       st->agent_version.empty() ? "-" : st->agent_version.c_str(),
+       st->host_forces_view_only.load() ? "view_only" : "control");
 
   if (st->cfg.notify_hwnd && st->cfg.resize_msg) {
     PostMessageW(st->cfg.notify_hwnd, st->cfg.resize_msg, static_cast<WPARAM>(st->desk_w),
@@ -1129,6 +1186,10 @@ MediaClientFail MediaClient::last_fail() const {
 
 std::string MediaClient::agent_version() const {
   return impl_ ? impl_->state.agent_version : std::string();
+}
+
+bool MediaClient::host_forces_view_only() const {
+  return impl_ && impl_->state.host_forces_view_only.load();
 }
 
 bool MediaClient::copy_desktop_bgra(std::vector<uint8_t>& out, int& width, int& height) const {

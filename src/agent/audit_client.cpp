@@ -196,6 +196,7 @@ std::string build_json(const AuditReport& r, const GatewayConfig& cfg) {
   add_str("agentName", local_computer_name(), &first);
   add_str("result", r.result, &first);
   add_str("disconnectReason", r.disconnect_reason, &first);
+  add_str("mode", r.mode, &first);
   add_bool("partial", r.partial, &first);
   j += '}';
   return j;
@@ -286,7 +287,10 @@ void audit_on_media_event(void* /*user*/, const media::MediaPlaneConfig::AuditEv
   if (ev->viewer_ip) {
     r.viewer_ip = ev->viewer_ip;
   }
-  // Same Viewer UUID → merge; Host is authoritative for peer/auth/capacity.
+  if (ev->mode && ev->mode[0]) {
+    r.mode = ev->mode;
+  }
+  // Same Viewer UUID → merge; Host is authoritative for peer/auth/capacity/mode.
   // Capacity reject often has no Viewer id → keep partial until only-host row.
   const bool has_viewer_sid = !r.session_id.empty();
   if (has_viewer_sid && (r.phase == "opened" || r.phase == "closed" || r.phase == "failed")) {

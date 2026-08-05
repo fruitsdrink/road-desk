@@ -345,11 +345,10 @@ void collapse_dirties_for_send(std::vector<DirtyRect>* rects, int desk_w, int de
   if (x1 <= x0 || y1 <= y0) {
     return;
   }
-  // Non-drag + mostly-dirty gets a real full-desk keyframe (cheapest resync).
-  // During drag only bbox the dirty region - a full-desk frame every tick would
-  // make dragging a large window unresponsive.
+  // Non-drag + mostly-dirty used to force a full-desk keyframe. Explorer select can
+  // dirty a large pane; that KF then went out as JPEG and flashed the whole Viewer.
+  // Keep refined strips so only real pixel changes are encoded.
   if (mostly_dirty && !drag_mode) {
-    rects->assign(1, {0, 0, desk_w, desk_h});
     return;
   }
   rects->assign(1, {x0, y0, x1 - x0, y1 - y0});
@@ -660,7 +659,7 @@ bool send_file_abort(tls::TlsSession* tls, uint32_t xfer_id) {
   return mux_write(tls, kChannelFile, body, 5);
 }
 
-bool drain_incoming(tls::TlsSession* tls, HostClipSession* clip) {
+bool drain_incoming(tls::TlsSession* tls, HostClipSession* clip, bool allow_control) {
   using namespace road_desk::replace;
   const SOCKET sock = tls::tls_get_socket(tls);
   // Bound how many input events are injected per io_mu hold — a fast mouse burst
@@ -673,9 +672,11 @@ bool drain_incoming(tls::TlsSession* tls, HostClipSession* clip) {
       return false;
     }
     if (ch == kChannelInput) {
-      handle_input(payload);
-      if (--input_budget == 0) {
-        return true;  // leave the rest for the next drain pass (inject spins)
+      if (allow_control) {
+        handle_input(payload);
+        if (--input_budget == 0) {
+          return true;  // leave the rest for the next drain pass (inject spins)
+        }
       }
       continue;
     }
@@ -687,6 +688,10 @@ bool drain_incoming(tls::TlsSession* tls, HostClipSession* clip) {
       continue;
     }
     if (ch == kChannelClipboard && clip && !payload.empty()) {
+      if (!allow_control) {
+        // Watchers may still send; drop mutate (A5a). Keep reading to stay in sync.
+        continue;
+      }
       if (payload[0] == kClipText) {
         std::vector<uint8_t> utf16;
         if (parse_clip_text_payload(payload.data(), payload.size(), &utf16)) {
@@ -737,6 +742,9 @@ bool drain_incoming(tls::TlsSession* tls, HostClipSession* clip) {
       continue;
     }
     if (ch == kChannelFile && clip && !payload.empty()) {
+      if (!allow_control) {
+        continue;
+      }
       DWORD echo_seq = 0;
       std::string err;
       if (!file_recv_on_payload(&clip->recv, payload.data(), payload.size(), &echo_seq, &err)) {
@@ -760,7 +768,7 @@ bool drain_incoming(tls::TlsSession* tls, HostClipSession* clip) {
 }
 
 bool pump_clip_drain(tls::TlsSession* tls, HostClipSession* clip) {
-  return drain_incoming(tls, clip);
+  return drain_incoming(tls, clip, true);
 }
 
 constexpr size_t kMaxClients = 8;
@@ -768,6 +776,7 @@ constexpr size_t kMaxClients = 8;
 struct ClientConn {
   tls::TlsSession* tls = nullptr;
   bool authed = false;
+  bool can_control = false;  // A5a: at most one true among authed clients
   bool need_keyframe = false;
   bool dead = false;
   bool audit_opened = false;
@@ -800,7 +809,7 @@ std::string socket_peer_ip(SOCKET s) {
 
 void emit_audit(MediaPlaneConfig::AuditFn fn, void* user, const char* phase, const char* result,
                 const char* disconnect_reason, const std::string& session_id,
-                const std::string& viewer_ip) {
+                const std::string& viewer_ip, const char* mode = nullptr) {
   if (!fn) {
     return;
   }
@@ -810,6 +819,7 @@ void emit_audit(MediaPlaneConfig::AuditFn fn, void* user, const char* phase, con
   ev.disconnect_reason = disconnect_reason;
   ev.session_id = session_id.empty() ? nullptr : session_id.c_str();
   ev.viewer_ip = viewer_ip.empty() ? nullptr : viewer_ip.c_str();
+  ev.mode = mode;
   fn(user, &ev);
 }
 
@@ -827,10 +837,12 @@ void close_client(ClientConn* c, session::SessionMutex* mutex, MediaPlaneConfig:
     mutex->release();
   }
   if (c->audit_opened) {
-    emit_audit(audit_fn, audit_user, "closed", "ok", "transport_lost", c->session_id, c->viewer_ip);
+    emit_audit(audit_fn, audit_user, "closed", "ok", "transport_lost", c->session_id, c->viewer_ip,
+               c->can_control ? "control" : "view_only");
     c->audit_opened = false;
   }
   c->authed = false;
+  c->can_control = false;
   c->dead = true;
 }
 
@@ -844,8 +856,46 @@ unsigned count_authed(const std::vector<ClientConn>& clients) {
   return n;
 }
 
+bool has_controller(const std::vector<ClientConn>& clients, const ClientConn* except) {
+  for (const ClientConn& o : clients) {
+    if (except && &o == except) {
+      continue;
+    }
+    if (o.authed && !o.dead && o.can_control) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// When the controller leaves, promote the earliest remaining authed viewer and notify it.
+void ensure_one_controller(std::vector<ClientConn>* clients, MediaPlaneConfig::AuditFn audit_fn,
+                           void* audit_user) {
+  using namespace road_desk::replace;
+  if (!clients || has_controller(*clients, nullptr)) {
+    return;
+  }
+  for (ClientConn& c : *clients) {
+    if (!c.authed || c.dead || !c.tls) {
+      continue;
+    }
+    c.can_control = true;
+    if (!control_send_session_role(c.tls, kSessionRoleControl)) {
+      logf("promote: SessionRole send failed peer=%s",
+           c.viewer_ip.empty() ? "-" : c.viewer_ip.c_str());
+    } else {
+      logf("promoted to control peer=%s session=%s",
+           c.viewer_ip.empty() ? "-" : c.viewer_ip.c_str(),
+           c.session_id.empty() ? "-" : c.session_id.c_str());
+    }
+    emit_audit(audit_fn, audit_user, "flag", "ok", nullptr, c.session_id, c.viewer_ip, "control");
+    return;
+  }
+}
+
 bool try_auth_client(ClientConn* c, const std::string& psk, session::SessionMutex* mutex,
-                     MediaPlaneConfig::AuditFn audit_fn, void* audit_user) {
+                     MediaPlaneConfig::AuditFn audit_fn, void* audit_user,
+                     std::vector<ClientConn>* clients) {
   using namespace road_desk::replace;
   if (!c || !c->tls || c->authed) {
     return true;
@@ -892,21 +942,27 @@ bool try_auth_client(ClientConn* c, const std::string& psk, session::SessionMute
   const int sh = GetSystemMetrics(SM_CYSCREEN);
   const uint16_t width = static_cast<uint16_t>(sw > 0 ? sw : 1);
   const uint16_t height = static_cast<uint16_t>(sh > 0 ? sh : 1);
-  if (!control_send_auth_ok(c->tls, width, height, ROAD_DESK_VERSION_STRING)) {
+  // A5a: first authed client gets control; others forced view-only.
+  // Controller leave → ensure_one_controller promotes the earliest remaining viewer.
+  const bool grant_control = !(clients && has_controller(*clients, c));
+  const uint8_t role = grant_control ? kSessionRoleControl : kSessionRoleViewOnly;
+  if (!control_send_auth_ok(c->tls, width, height, ROAD_DESK_VERSION_STRING, role)) {
     logf("send AuthOk failed");
     return false;
   }
   c->authed = true;
+  c->can_control = grant_control;
   c->need_keyframe = true;
   c->clip.last_seq = GetClipboardSequenceNumber();
   c->cursor_hash_sent = 0;
   if (mutex) {
     mutex->try_acquire();
   }
-  emit_audit(audit_fn, audit_user, "opened", "ok", nullptr, c->session_id, c->viewer_ip);
+  emit_audit(audit_fn, audit_user, "opened", "ok", nullptr, c->session_id, c->viewer_ip,
+             grant_control ? "control" : "view_only");
   c->audit_opened = true;
-  logf("client authed desktop=%ux%u shared-control viewers=%u", width, height,
-       mutex ? mutex->count() : 0);
+  logf("client authed desktop=%ux%u role=%s viewers=%u", width, height,
+       grant_control ? "control" : "view_only", mutex ? mutex->count() : 0);
   return true;
 }
 
@@ -921,12 +977,12 @@ bool drain_all_clients(std::vector<ClientConn>* clients, const std::string& psk,
       continue;
     }
     if (!c.authed) {
-      if (!try_auth_client(&c, psk, mutex, audit_fn, audit_user)) {
+      if (!try_auth_client(&c, psk, mutex, audit_fn, audit_user, clients)) {
         close_client(&c, mutex, audit_fn, audit_user);
       }
       continue;
     }
-    if (!drain_incoming(c.tls, &c.clip)) {
+    if (!drain_incoming(c.tls, &c.clip, c.can_control)) {
       logf("client gone (recv)");
       close_client(&c, mutex, audit_fn, audit_user);
     }
@@ -934,6 +990,7 @@ bool drain_all_clients(std::vector<ClientConn>* clients, const std::string& psk,
   clients->erase(std::remove_if(clients->begin(), clients->end(),
                                 [](const ClientConn& c) { return c.dead || !c.tls; }),
                  clients->end());
+  ensure_one_controller(clients, audit_fn, audit_user);
   return true;
 }
 
@@ -1046,6 +1103,7 @@ bool fanout_host_clipboard(std::vector<ClientConn>* clients, uint32_t* shared_xf
   clients->erase(std::remove_if(clients->begin(), clients->end(),
                                 [](const ClientConn& c) { return c.dead || !c.tls; }),
                  clients->end());
+  ensure_one_controller(clients, audit_fn, audit_user);
   return true;
 }
 
@@ -1584,12 +1642,43 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
         }
       }
 
-      // Drag: always full-frame diff. DXGI (VMware DDA) and Mirror report
-      // incomplete dirty sets while a window is moving (one 256px strip / partial
-      // rects), so relying on them leaves ghost trails of the old window position.
+      // Non-drag: OS dirties (DXGI/Mirror) are often coarse (whole Explorer list pane).
+      // Refine with pixel block-diff so selection highlights don't ship as large JPEG.
       if (cap->provides_dirties() && !force_validate && !force_full && !drag_mode) {
-        for (const CaptureDirty& d : mirror_dirties) {
-          dirties.push_back(DirtyRect{d.x, d.y, d.w, d.h});
+        if (have_prev && !prev.empty() && prev.size() == frame.size()) {
+          std::vector<DirtyRect> refined;
+          for (const CaptureDirty& d : mirror_dirties) {
+            int x = d.x;
+            int y = d.y;
+            int rw = d.w;
+            int rh = d.h;
+            if (x < 0) {
+              rw += x;
+              x = 0;
+            }
+            if (y < 0) {
+              rh += y;
+              y = 0;
+            }
+            if (x + rw > w) {
+              rw = w - x;
+            }
+            if (y + rh > h) {
+              rh = h - y;
+            }
+            if (rw <= 0 || rh <= 0) {
+              continue;
+            }
+            std::vector<DirtyRect> part;
+            collect_dirty_rects_region(frame.data(), prev.data(), w, x, y, rw, rh, &part);
+            refined.insert(refined.end(), part.begin(), part.end());
+          }
+          coalesce_vertical(&refined);
+          dirties = std::move(refined);
+        } else {
+          for (const CaptureDirty& d : mirror_dirties) {
+            dirties.push_back(DirtyRect{d.x, d.y, d.w, d.h});
+          }
         }
       } else if (gdi_region) {
         collect_dirty_rects_region(frame.data(), prev.data(), w, greg_x, greg_y, greg_w, greg_h,
@@ -1726,8 +1815,9 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
       const bool full_keyframe =
           dirties.size() == 1 && dirties[0].x == 0 && dirties[0].y == 0 && dirties[0].w == w &&
           dirties[0].h == h;
-      if (!full_keyframe) {
-        // Legacy drag: strips stay whole — splitting into many WIC encodes starved Win7 (0.4.2).
+      // Split large/non-drag updates into strips (incl. accidental full KF) so we never
+      // ship one Viewer-wide JPEG from Explorer UI updates.
+      if (!full_keyframe || !drag_mode) {
         if (!(!modern_lossy && drag_mode)) {
           split_rects_for_input_slices(&dirties, 256);
         }
@@ -1780,12 +1870,13 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
         EncodeRectStats enc{};
         const size_t area = static_cast<size_t>(r.w) * static_cast<size_t>(r.h);
         const size_t desk_area = static_cast<size_t>(w) * static_cast<size_t>(h);
-        // After first KF: never ship full-desk zlib (~1MB) — it holds io_mu and starves inject.
+        // After first KF: never ship full-desk zlib (~1MB) on drag — holds io_mu.
+        // Non-drag: never JPEG/H264 (Explorer select dirties whole window via DWM;
+        // lossy recompress flashes the entire Viewer even when Host barely changes).
         const bool huge = area * 2u > desk_area;
-        const bool allow_lossy = !full_keyframe || drag_mode || (have_prev && huge);
+        const bool allow_lossy = drag_mode;
         // Drag: JPEG only — H264 encode latency makes Viewer cursor lead the window.
-        const bool try_h264 =
-            modern_lossy && allow_lossy && !drag_mode && area >= static_cast<size_t>(96 * 96);
+        const bool try_h264 = false;  // non-drag disabled; drag uses JPEG below
         const bool try_jpeg = allow_lossy && area >= static_cast<size_t>(96 * 96);
         const int q = (drag_mode && huge) ? 32 : jpeg_q;
         bool ok = false;
@@ -1797,7 +1888,8 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
           ok = encode_jpeg_rect(frame_id, w, h, r.x, r.y, r.w, r.h, frame.data(), q, &raw_buf,
                                 &send_buf, &enc);
         }
-        if (!ok && !(have_prev && huge)) {
+        // Drag+huge: skip megabyte zlib. Non-drag strips should be small enough for zlib.
+        if (!ok && !(have_prev && huge && drag_mode)) {
           ok = encode_video_rect(frame_id, w, h, r.x, r.y, r.w, r.h, frame.data(), &raw_buf,
                                  &send_buf, &enc);
         }

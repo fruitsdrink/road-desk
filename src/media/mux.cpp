@@ -189,9 +189,9 @@ bool control_send_auth(road_desk::media::tls::TlsSession* tls, const std::string
 }
 
 bool control_send_auth_ok(road_desk::media::tls::TlsSession* tls, uint16_t width,
-                          uint16_t height, const std::string& version) {
+                          uint16_t height, const std::string& version, uint8_t session_role) {
   std::vector<uint8_t> body;
-  body.reserve(5 + 2 + version.size());
+  body.reserve(5 + 2 + version.size() + 1);
   body.push_back(kCtrlAuthOk);
   uint8_t hdr[4];
   write_u16_le(hdr, width);
@@ -205,6 +205,8 @@ bool control_send_auth_ok(road_desk::media::tls::TlsSession* tls, uint16_t width
   if (vlen > 0) {
     body.insert(body.end(), version.begin(), version.begin() + vlen);
   }
+  body.push_back(session_role == kSessionRoleViewOnly ? kSessionRoleViewOnly
+                                                      : kSessionRoleControl);
   return mux_write(tls, kChannelControl, body.data(), static_cast<uint32_t>(body.size()));
 }
 
@@ -219,6 +221,13 @@ bool control_send_auth_fail(road_desk::media::tls::TlsSession* tls, const std::s
     std::memcpy(body.data() + 3, reason.data(), reason.size());
   }
   return mux_write(tls, kChannelControl, body.data(), static_cast<uint32_t>(body.size()));
+}
+
+bool control_send_session_role(road_desk::media::tls::TlsSession* tls, uint8_t session_role) {
+  uint8_t body[2];
+  body[0] = kCtrlSessionRole;
+  body[1] = (session_role == kSessionRoleViewOnly) ? kSessionRoleViewOnly : kSessionRoleControl;
+  return mux_write(tls, kChannelControl, body, 2);
 }
 
 bool parse_auth_password(const uint8_t* p, size_t n, std::string* password_out,
@@ -239,6 +248,41 @@ bool parse_auth_password(const uint8_t* p, size_t n, std::string* password_out,
       if (sid_len > 0 && n >= after + 2u + sid_len && sid_len <= 128) {
         session_id_out->assign(reinterpret_cast<const char*>(p + after + 2), sid_len);
       }
+    }
+  }
+  return true;
+}
+
+bool parse_auth_ok(const uint8_t* p, size_t n, uint16_t* width_out, uint16_t* height_out,
+                   std::string* version_out, uint8_t* session_role_out) {
+  if (!p || !width_out || !height_out || n < 5 || p[0] != kCtrlAuthOk) {
+    return false;
+  }
+  *width_out = read_u16_le(p + 1);
+  *height_out = read_u16_le(p + 3);
+  if (version_out) {
+    version_out->clear();
+  }
+  if (session_role_out) {
+    *session_role_out = kSessionRoleControl;
+  }
+  size_t off = 5;
+  if (n >= off + 2) {
+    const uint16_t vlen = read_u16_le(p + off);
+    off += 2;
+    if (vlen > 0) {
+      if (n < off + vlen) {
+        return false;
+      }
+      if (version_out) {
+        version_out->assign(reinterpret_cast<const char*>(p + off), vlen);
+      }
+      off += vlen;
+    }
+    if (session_role_out && n > off) {
+      const uint8_t role = p[off];
+      *session_role_out =
+          (role == kSessionRoleViewOnly) ? kSessionRoleViewOnly : kSessionRoleControl;
     }
   }
   return true;

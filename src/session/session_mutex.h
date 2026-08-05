@@ -1,7 +1,7 @@
 #pragma once
 
-// Shared-control: counts active media sessions in-process (not exclusive).
-// Not a cross-process / multi-instance lock.
+// Counts active media sessions in-process (not a cross-process lock).
+// Exclusive control is enforced separately in mux_host (A5a: one controller).
 
 namespace road_desk::session {
 

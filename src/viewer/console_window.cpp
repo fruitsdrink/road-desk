@@ -761,10 +761,10 @@ void sync_chrome_commands(ConsoleState* st) {
     SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdCloseAll, has_sessions ? TRUE : FALSE);
     SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdScreenshot, has_active ? TRUE : FALSE);
     SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdFullscreen, has_active ? TRUE : FALSE);
-    SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdViewOnly, has_active ? TRUE : FALSE);
     const bool view_only =
         has_active && st->sessions[static_cast<size_t>(st->active_tab)].host &&
         st->sessions[static_cast<size_t>(st->active_tab)].host->view_only();
+    SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdViewOnly, has_active ? TRUE : FALSE);
     SendMessageW(st->toolbar, TB_CHECKBUTTON, kCmdViewOnly, view_only ? TRUE : FALSE);
   }
 
@@ -996,8 +996,12 @@ bool open_session_for_device(ConsoleState* st, int device_id) {
   }
   st->sessions.push_back(std::move(tab));
   select_tab(st, static_cast<int>(st->sessions.size()) - 1);
-  set_status(st, address_book_source() == AddressBookSource::kGateway ? L"已连接（网关目录）"
-                                                                     : L"已连接（演示：统一 Host Agent）");
+  if (raw->host_forced_view_only()) {
+    set_status(st, L"已连接（仅观看：被控端已有控制端）");
+  } else {
+    set_status(st, address_book_source() == AddressBookSource::kGateway ? L"已连接（网关目录）"
+                                                                       : L"已连接（演示：统一 Host Agent）");
+  }
   return true;
 }
 
@@ -1568,9 +1572,13 @@ void run_tab_context_menu(ConsoleState* st, HWND hwnd, int tab_index, int screen
       break;
     case kCmdTabCtxViewOnly:
       if (host) {
-        host->set_view_only(!host->view_only());
-        sync_chrome_commands(st);
-        set_status(st, host->view_only() ? L"仅查看模式：键鼠输入已冻结" : L"已恢复键鼠控制");
+        if (host->host_forced_view_only()) {
+          set_status(st, L"被控端已有控制端，本会话仅观看");
+        } else {
+          host->set_view_only(!host->view_only());
+          sync_chrome_commands(st);
+          set_status(st, host->view_only() ? L"仅查看模式：键鼠输入已冻结" : L"已恢复键鼠控制");
+        }
       }
       break;
     default:
@@ -2419,7 +2427,13 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
           if (!status.empty()) {
             set_status(st, status.c_str());
           } else if (host->connected()) {
-            set_status(st, L"已连接");
+            if (host->host_forced_view_only()) {
+              set_status(st, L"仅观看（被控端已有控制端）");
+            } else if (host->view_only()) {
+              set_status(st, L"仅查看模式：键鼠输入已冻结");
+            } else {
+              set_status(st, L"已连接（控制）");
+            }
           }
         }
       }
@@ -2491,10 +2505,14 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
               layout(st);
             }
           } else if (cmd == kCmdViewOnly && host) {
-            host->set_view_only(!host->view_only());
-            sync_chrome_commands(st);
-            set_status(st, host->view_only() ? L"仅查看模式：键鼠输入已冻结"
-                                             : L"已恢复键鼠控制");
+            if (host->host_forced_view_only()) {
+              set_status(st, L"被控端已有控制端，本会话仅观看");
+            } else {
+              host->set_view_only(!host->view_only());
+              sync_chrome_commands(st);
+              set_status(st, host->view_only() ? L"仅查看模式：键鼠输入已冻结"
+                                               : L"已恢复键鼠控制");
+            }
           }
         }
       }
@@ -2623,9 +2641,15 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
           case kCmdFullscreen:
             tip = L"全屏（Esc 退出）";
             break;
-          case kCmdViewOnly:
-            tip = L"仅查看（冻结键鼠输入）";
+          case kCmdViewOnly: {
+            const bool forced =
+                st->active_tab >= 0 &&
+                st->active_tab < static_cast<int>(st->sessions.size()) &&
+                st->sessions[static_cast<size_t>(st->active_tab)].host &&
+                st->sessions[static_cast<size_t>(st->active_tab)].host->host_forced_view_only();
+            tip = forced ? L"仅观看（被控端已有控制端）" : L"仅查看（冻结键鼠输入）";
             break;
+          }
         }
         if (tip) {
           wcsncpy_s(info->pszText, info->cchTextMax, tip, _TRUNCATE);

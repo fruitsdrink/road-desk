@@ -208,7 +208,7 @@ int main(int argc, char** argv) {
     road_desk::agent::log_line(
         "WARN: ROAD_DESK_ALLOW_PLAINTEXT ignored — mux requires TLS");
   }
-  // Shared-control counter (not exclusive). Host allows up to 8 concurrent viewers.
+  // Viewer counter (not exclusive). Exclusive control is mux_host can_control (A5a).
   cfg.session_mutex = &g_session_mutex;
 
   road_desk::agent::GatewayConfig gcfg;

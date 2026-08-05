@@ -232,6 +232,50 @@ LRESULT CALLBACK SessionWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
       }
       return 0;
     }
+    case WM_MEDIA_SESSION_ROLE:
+      self->apply_host_session_role();
+      return 0;
+    case WM_MEDIA_FRAME_DIRTY: {
+      const int fx = static_cast<int>(LOWORD(wparam));
+      const int fy = static_cast<int>(HIWORD(wparam));
+      const int fw = static_cast<int>(LOWORD(lparam));
+      const int fh = static_cast<int>(HIWORD(lparam));
+      int desk_w = 0;
+      int desk_h = 0;
+      if (!self->client_.framebuffer_size(&desk_w, &desk_h) || desk_w <= 0 || desk_h <= 0) {
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+      }
+      // Full-frame update → full invalidate.
+      if (fx == 0 && fy == 0 && fw >= desk_w && fh >= desk_h) {
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+      }
+      RECT crc{};
+      GetClientRect(hwnd, &crc);
+      RECT dest{};
+      if (!fit_rect(crc.right - crc.left, crc.bottom - crc.top, desk_w, desk_h, &dest,
+                    !self->floating_)) {
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+      }
+      const int dw = dest.right - dest.left;
+      const int dh = dest.bottom - dest.top;
+      if (dw <= 0 || dh <= 0) {
+        return 0;
+      }
+      RECT inv{};
+      inv.left = dest.left + (fx * dw) / desk_w;
+      inv.top = dest.top + (fy * dh) / desk_h;
+      inv.right = dest.left + ((fx + fw) * dw + desk_w - 1) / desk_w;
+      inv.bottom = dest.top + ((fy + fh) * dh + desk_h - 1) / desk_h;
+      InflateRect(&inv, 4, 4);
+      RECT clipped{};
+      if (IntersectRect(&clipped, &inv, &crc)) {
+        InvalidateRect(hwnd, &clipped, FALSE);
+      }
+      return 0;
+    }
     case WM_MEDIA_TRANSPORT_LOST:
       self->on_transport_lost();
       return 0;
@@ -461,6 +505,7 @@ bool SessionHost::open(HINSTANCE instance, HWND parent_or_null, const std::wstri
     hwnd_ = nullptr;
     return false;
   }
+  apply_host_session_role();
   started_ = true;
   audit_opened_sent_ = true;
   audit_emit("opened", "ok", nullptr);
@@ -505,6 +550,8 @@ std::wstring SessionHost::status_text() const {
   cfg.resize_msg = WM_MEDIA_RESIZE;
   cfg.disconnect_msg = WM_MEDIA_TRANSPORT_LOST;
   cfg.audit_activity_msg = WM_MEDIA_AUDIT_ACTIVITY;
+  cfg.session_role_msg = WM_MEDIA_SESSION_ROLE;
+  cfg.frame_dirty_msg = WM_MEDIA_FRAME_DIRTY;
   cfg.audit_session_id = audit_session_id_;
   return cfg;
 }
@@ -622,6 +669,7 @@ void SessionHost::try_reconnect() {
     return;
   }
 
+  apply_host_session_role();
   started_ = true;
   reconnecting_ = false;
   const int prior_attempts = reconnect_attempt_;
@@ -699,6 +747,10 @@ void SessionHost::release_modifiers() {
 }
 
 void SessionHost::set_view_only(bool on) {
+  if (host_forced_view_only_ && !on) {
+    // Host is source of truth: cannot take control while another Viewer holds it.
+    return;
+  }
   if (view_only_ == on) {
     return;
   }
@@ -707,6 +759,28 @@ void SessionHost::set_view_only(bool on) {
     client_.release_modifiers();
   }
   if (audit_opened_sent_) {
+    audit_emit("flag", "ok", nullptr);
+  }
+  notify_chrome_changed();
+}
+
+void SessionHost::apply_host_session_role() {
+  const bool forced = client_.host_forces_view_only();
+  const bool was_view_only = view_only_;
+  if (forced) {
+    host_forced_view_only_ = true;
+    if (!view_only_) {
+      view_only_ = true;
+      client_.release_modifiers();
+    }
+  } else if (host_forced_view_only_) {
+    // Was Host-forced watch; Host granted control (promote or reconnect) — lift freeze.
+    host_forced_view_only_ = false;
+    view_only_ = false;
+  } else {
+    host_forced_view_only_ = false;
+  }
+  if (audit_opened_sent_ && was_view_only != view_only_) {
     audit_emit("flag", "ok", nullptr);
   }
   notify_chrome_changed();
@@ -926,28 +1000,53 @@ void SessionHost::paint() {
     return;
   }
 
-  FillRect(back_dc_, &rc, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
-
   RECT dest{};
-  if (w > 0 && h > 0 && fit_rect(cw, ch, w, h, &dest, !floating_) &&
-      bgra.size() >= static_cast<size_t>(w) * h * 4) {
-    // Same path as UltraVNC / our spike_viewer: GDI HALFTONE stretch.
-    // CPU nearest-neighbor made ClearType look muddy at fractional scales.
-    BITMAPINFO bmi{};
-    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = w;
-    bmi.bmiHeader.biHeight = -h;
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-    bmi.bmiHeader.biCompression = BI_RGB;
-    // Drag: COLORONCOLOR (fast nearest) keeps cursor/window in sync while HALFTONE
-    // would cost extra ms/frame in software; HALFTONE stays for crisp stills.
-    const bool dragging = (last_ptr_mask_ & 1) != 0;
-    SetStretchBltMode(back_dc_, dragging ? COLORONCOLOR : HALFTONE);
-    SetBrushOrgEx(back_dc_, 0, 0, nullptr);
-    StretchDIBits(back_dc_, dest.left, dest.top, dest.right - dest.left, dest.bottom - dest.top,
-                  0, 0, w, h, bgra.data(), &bmi, DIB_RGB_COLORS, SRCCOPY);
+  const bool have_frame =
+      w > 0 && h > 0 && fit_rect(cw, ch, w, h, &dest, !floating_) &&
+      bgra.size() >= static_cast<size_t>(w) * h * 4;
+  if (have_frame) {
+    const int dw = dest.right - dest.left;
+    const int dh = dest.bottom - dest.top;
+    RECT update{};
+    if (!IntersectRect(&update, &ps.rcPaint, &rc)) {
+      EndPaint(hwnd_, &ps);
+      return;
+    }
+
+    auto fill_black = [&](int l, int t, int r, int b) {
+      if (r <= l || b <= t) {
+        return;
+      }
+      RECT bar{l, t, r, b};
+      RECT hit{};
+      if (IntersectRect(&hit, &bar, &update)) {
+        FillRect(back_dc_, &hit, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+      }
+    };
+    fill_black(0, 0, cw, dest.top);
+    fill_black(0, dest.bottom, cw, ch);
+    fill_black(0, dest.top, dest.left, dest.bottom);
+    fill_black(dest.right, dest.top, cw, dest.bottom);
+
+    // Always stretch the full desktop into |dest|. Partial-source StretchDIBits on a
+    // top-down DIB mis-maps rows during drag (see-through / torn windows). Presenting
+    // only ps.rcPaint via BitBlt still avoids the old full-client HALFTONE flash.
+    RECT paint_dest{};
+    if (IntersectRect(&paint_dest, &update, &dest) && dw > 0 && dh > 0) {
+      BITMAPINFO bmi{};
+      bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+      bmi.bmiHeader.biWidth = w;
+      bmi.bmiHeader.biHeight = -h;
+      bmi.bmiHeader.biPlanes = 1;
+      bmi.bmiHeader.biBitCount = 32;
+      bmi.bmiHeader.biCompression = BI_RGB;
+      SetStretchBltMode(back_dc_, COLORONCOLOR);
+      SetBrushOrgEx(back_dc_, 0, 0, nullptr);
+      StretchDIBits(back_dc_, dest.left, dest.top, dw, dh, 0, 0, w, h, bgra.data(), &bmi,
+                    DIB_RGB_COLORS, SRCCOPY);
+    }
   } else {
+    FillRect(back_dc_, &rc, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
     // Design Frame B: monitor icon + 「正在连接被控端…」+ sessionHint + body font.
     const int dpi = rd::rd_dpi_screen();
     HFONT font = rd::rd_create_font(dpi, rd::kFontBodyPt);
@@ -995,7 +1094,9 @@ void SessionHost::paint() {
     }
   }
 
-  BitBlt(hdc, 0, 0, cw, ch, back_dc_, 0, 0, SRCCOPY);
+  // Blit only the update region (not the entire client) to avoid whole-window flash.
+  BitBlt(hdc, ps.rcPaint.left, ps.rcPaint.top, ps.rcPaint.right - ps.rcPaint.left,
+         ps.rcPaint.bottom - ps.rcPaint.top, back_dc_, ps.rcPaint.left, ps.rcPaint.top, SRCCOPY);
 
   if (reconnecting_ || reconnect_gave_up_) {
     std::wstring banner = status_text();

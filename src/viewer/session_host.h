@@ -27,6 +27,10 @@ constexpr UINT WM_MEDIA_TRANSPORT_LOST = WM_APP + 4;
 // MediaClient: clipboard (wParam=1) or file transfer used this session.
 // File: wParam=2 Viewer→Host, wParam=3 Host→Viewer; lParam = entry count (no filenames).
 constexpr UINT WM_MEDIA_AUDIT_ACTIVITY = WM_APP + 5;
+// Host changed session role mid-session (A5a promote). wParam: 0=control, 1=view_only.
+constexpr UINT WM_MEDIA_SESSION_ROLE = WM_APP + 6;
+// Host/media dirty rect in framebuffer coords. wParam=MAKELONG(x,y) lParam=MAKELONG(w,h).
+constexpr UINT WM_MEDIA_FRAME_DIRTY = WM_APP + 7;
 
 class SessionHost {
  public:
@@ -77,6 +81,8 @@ class SessionHost {
   // View-only: freeze keyboard/mouse/clipboard forwarding; video stays live.
   void set_view_only(bool on);
   bool view_only() const { return view_only_; }
+  // Host assigned view-only at AuthOk (another Viewer holds control). Local toggle cannot clear.
+  bool host_forced_view_only() const { return host_forced_view_only_; }
 
   // Fullscreen the session window (docked sessions detach first). Esc exits.
   bool toggle_fullscreen();
@@ -106,6 +112,7 @@ class SessionHost {
   int reconnect_delay_ms() const;
   void audit_emit(const char* phase, const char* result, const char* disconnect_reason,
                   bool flag_clipboard = false, bool flag_file = false);
+  void apply_host_session_role();
 
   road_desk::media::MediaClient client_;
   ConnectDefaults connect_{};
@@ -121,6 +128,7 @@ class SessionHost {
   std::wstring title_;
   int device_id_ = -1;
   bool view_only_ = false;
+  bool host_forced_view_only_ = false;
   bool fullscreen_ = false;
   bool audit_clipboard_sent_ = false;
   bool audit_file_sent_ = false;

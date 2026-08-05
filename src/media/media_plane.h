@@ -26,7 +26,8 @@ struct MediaPlaneConfig {
   bool require_tls = true;
   // Optional: pre-created cert store path (unused in MVP — host generates self-signed).
   std::string tls_cert_path;
-  // Optional in-process session counter (Agent-owned). Shared control; not exclusive.
+  // Optional in-process session counter (Agent-owned). Counts authed viewers; exclusive
+  // control is enforced in mux_host (A5a: one can_control at a time).
   session::SessionMutex* session_mutex = nullptr;
 
   // Host → control-plane audit (A2). Optional; never blocks media path long.
@@ -36,6 +37,7 @@ struct MediaPlaneConfig {
     const char* disconnect_reason = nullptr; // transport_lost | ...
     const char* session_id = nullptr;        // may be empty → reporter invents UUID
     const char* viewer_ip = nullptr;
+    const char* mode = nullptr;              // control | view_only (A5a); optional
   };
   using AuditFn = void (*)(void* user, const AuditEvent* ev);
   AuditFn audit_fn = nullptr;
@@ -79,6 +81,11 @@ struct MediaClientConfig {
   // wParam: 1=clipboard, 2=file Viewer→Host, 3=file Host→Viewer.
   // lParam (file): top-level item count. Paths via take_pending_audit_files(). 0 → disabled.
   UINT audit_activity_msg = 0;
+  // Posted when Host changes session role mid-session (A5a promote). wParam: 0=control, 1=view_only.
+  UINT session_role_msg = 0;
+  // Posted for a framebuffer dirty rect (x,y,w,h packed). Prefer over full InvalidateRect.
+  // wParam=MAKELONG(x,y) lParam=MAKELONG(w,h). 0 → fall back to full invalidate.
+  UINT frame_dirty_msg = 0;
   bool require_tls = true;
   // Debug only: skip fingerprint check (ROAD_DESK_TLS_INSECURE=1).
   bool tls_insecure = false;
@@ -118,6 +125,8 @@ class MediaClient {
   MediaClientFail last_fail() const;
   // Agent version string received in the auth-ok handshake (empty until connected).
   std::string agent_version() const;
+  // True when Host assigned view-only role at AuthOk (A5a; another client holds control).
+  bool host_forces_view_only() const;
   // Update paint/resize/close notify target (e.g. after reparenting the session HWND).
   void set_notify_hwnd(HWND hwnd);
 

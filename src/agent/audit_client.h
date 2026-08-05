@@ -19,6 +19,7 @@ struct AuditReport {
   std::string viewer_ip;
   std::string result;  // ok|auth_fail|capacity_reject|tls_fail|...
   std::string disconnect_reason;
+  std::string mode;  // control|view_only (A5a)
   bool partial = true;
 };
 
