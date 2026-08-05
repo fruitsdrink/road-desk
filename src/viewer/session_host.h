@@ -22,6 +22,8 @@ constexpr UINT WM_MEDIA_RESIZE = WM_APP + 1;
 constexpr UINT WM_SESSION_CLOSED = WM_APP + 2;
 // Posted to the console when session metadata (agent version) is available.
 constexpr UINT WM_SESSION_META = WM_APP + 3;
+// Mux transport ended; SessionHost decides reconnect vs destroy.
+constexpr UINT WM_MEDIA_TRANSPORT_LOST = WM_APP + 4;
 
 class SessionHost {
  public:
@@ -36,12 +38,17 @@ class SessionHost {
   static bool register_class(HINSTANCE instance);
 
   // Create child (docked) or top-level (floating) host window and start MediaClient.
+  // auto_reconnect: console tabs retry on transport loss; CLI direct session stays false.
   bool open(HINSTANCE instance, HWND parent_or_null, const std::wstring& title,
-            const ConnectDefaults& connect, ClosedFn on_closed);
+            const ConnectDefaults& connect, ClosedFn on_closed, bool auto_reconnect = false);
 
   void close();
   void clear_closed_handler() { on_closed_ = nullptr; }
   bool connected() const;
+  bool reconnecting() const { return reconnecting_; }
+  int reconnect_attempt() const { return reconnect_attempt_; }
+  // Short status for the console status bar (empty when idle/connected).
+  std::wstring status_text() const;
   // Version reported by the connected host agent (empty until connected).
   std::string agent_version() const { return client_.agent_version(); }
   HWND hwnd() const { return hwnd_; }
@@ -83,11 +90,24 @@ class SessionHost {
   bool ensure_backbuffer(HDC hdc, int cw, int ch);
   void on_destroy();
   void notify_chrome_changed();
+  void on_transport_lost();
+  void schedule_reconnect();
+  void try_reconnect();
+  void stop_reconnect(const wchar_t* status);
+  road_desk::media::MediaClientConfig make_client_config() const;
+  int reconnect_delay_ms() const;
 
   road_desk::media::MediaClient client_;
+  ConnectDefaults connect_{};
   HWND hwnd_ = nullptr;
   bool floating_ = false;
   bool started_ = false;
+  bool auto_reconnect_ = false;
+  bool user_closing_ = false;
+  bool reconnecting_ = false;
+  bool reconnect_gave_up_ = false;
+  int reconnect_attempt_ = 0;
+  std::wstring status_override_;
   std::wstring title_;
   int device_id_ = -1;
   bool view_only_ = false;

@@ -888,7 +888,8 @@ bool open_session_for_device(ConsoleState* st, int device_id) {
   tab.host->set_device_id(device_id);
   SessionHost* raw = tab.host.get();
   if (!raw->open(st->instance, st->session_area, tab.title, connect,
-                 [](SessionHost* h) { on_session_closed(h); })) {
+                 [](SessionHost* h) { on_session_closed(h); },
+                 /*auto_reconnect=*/true)) {
     set_status(st, L"连接失败");
     return false;
   }
@@ -2296,14 +2297,26 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
       }
       break;
     }
-    case WM_SESSION_META:
-      // Agent version and/or chrome changes (fullscreen dock/undock).
+    case WM_SESSION_META: {
+      // Agent version, reconnect status, and/or chrome changes (fullscreen dock/undock).
       sync_session_floating_flags(st);
       layout(st);
       if (st->tab_strip) {
         InvalidateRect(st->tab_strip, nullptr, TRUE);
       }
+      if (st->active_tab >= 0 && st->active_tab < static_cast<int>(st->sessions.size())) {
+        SessionHost* host = st->sessions[static_cast<size_t>(st->active_tab)].host.get();
+        if (host) {
+          const std::wstring status = host->status_text();
+          if (!status.empty()) {
+            set_status(st, status.c_str());
+          } else if (host->connected()) {
+            set_status(st, L"已连接");
+          }
+        }
+      }
       return 0;
+    }
     case WM_SESSION_CLOSED: {
       auto* host = reinterpret_cast<SessionHost*>(lparam);
       for (int i = 0; i < static_cast<int>(st->sessions.size()); ++i) {

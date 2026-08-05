@@ -59,11 +59,21 @@ struct MediaClientConfig {
   std::string password = "road-desk";
   HWND notify_hwnd = nullptr;
   UINT resize_msg = WM_APP + 1;
+  // Posted when the mux thread ends (transport loss). 0 → legacy WM_CLOSE.
+  UINT disconnect_msg = 0;
   bool require_tls = true;
   // Debug only: skip fingerprint check (ROAD_DESK_TLS_INSECURE=1).
   bool tls_insecure = false;
   // Expected host cert SHA-256 (lowercase hex). Required when require_tls && !tls_insecure.
   std::string tls_fingerprint_sha256;
+};
+
+// Why the last start() / mux exit failed (for Viewer reconnect policy).
+enum class MediaClientFail : uint8_t {
+  None = 0,
+  Transient = 1,  // TCP/TLS/network/timeout — safe to retry
+  Auth = 2,       // PSK rejected — do not loop
+  Config = 3,     // Missing fingerprint / bad host:port — do not loop
 };
 
 // Viewer-side media client (TLS mux connect + frame + input send).
@@ -79,6 +89,7 @@ class MediaClient {
   bool start(const MediaClientConfig& config);
   void stop();
   bool connected() const;
+  MediaClientFail last_fail() const;
   // Agent version string received in the auth-ok handshake (empty until connected).
   std::string agent_version() const;
   // Update paint/resize/close notify target (e.g. after reparenting the session HWND).

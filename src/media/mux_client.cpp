@@ -162,6 +162,7 @@ struct ClientState {
   HANDLE thread = nullptr;
   volatile LONG stop = 0;
   std::atomic<bool> connected{false};
+  MediaClientFail last_fail = MediaClientFail::None;
   bool wsa_started = false;
 
   CRITICAL_SECTION frame_lock{};
@@ -751,8 +752,10 @@ DWORD WINAPI net_thread(LPVOID param) {
   road_desk::replace::file_recv_abort(&st->file_recv);
   InterlockedExchange(&st->stop, 1);
   st->connected = false;
+  st->last_fail = MediaClientFail::Transient;
   if (st->cfg.notify_hwnd) {
-    PostMessageW(st->cfg.notify_hwnd, WM_CLOSE, 0, 0);
+    const UINT msg = st->cfg.disconnect_msg ? st->cfg.disconnect_msg : WM_CLOSE;
+    PostMessageW(st->cfg.notify_hwnd, msg, 0, 0);
   }
   return 0;
 }
@@ -844,6 +847,7 @@ bool MediaClient::start(const MediaClientConfig& config) {
   }
   ClientState* st = &impl_->state;
   st->cfg = config;
+  st->last_fail = MediaClientFail::None;
   InterlockedExchange(&st->stop, 0);
 
   // Prefer viewer.log (opened by viewer main). Open it here if standalone.
@@ -854,16 +858,19 @@ bool MediaClient::start(const MediaClientConfig& config) {
 
   if (!config.require_tls) {
     logf("mux client requires TLS (require_tls=false)");
+    st->last_fail = MediaClientFail::Config;
     return false;
   }
   if (!config.tls_insecure && config.tls_fingerprint_sha256.empty()) {
     logf("TLS fingerprint required, or tls_insecure=true");
+    st->last_fail = MediaClientFail::Config;
     return false;
   }
 
   WSADATA wsa{};
   if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
     logf("WSAStartup failed");
+    st->last_fail = MediaClientFail::Transient;
     return false;
   }
   st->wsa_started = true;
@@ -874,6 +881,7 @@ bool MediaClient::start(const MediaClientConfig& config) {
     logf("bad host:port '%s'", config.host_port.c_str());
     WSACleanup();
     st->wsa_started = false;
+    st->last_fail = MediaClientFail::Config;
     return false;
   }
 
@@ -882,6 +890,7 @@ bool MediaClient::start(const MediaClientConfig& config) {
     logf("TCP connect failed %s:%d", host.c_str(), port);
     WSACleanup();
     st->wsa_started = false;
+    st->last_fail = MediaClientFail::Transient;
     return false;
   }
 
@@ -890,6 +899,8 @@ bool MediaClient::start(const MediaClientConfig& config) {
     logf("TLS handshake failed");
     WSACleanup();
     st->wsa_started = false;
+    st->last_fail = config.tls_fingerprint_sha256.empty() ? MediaClientFail::Transient
+                                                          : MediaClientFail::Config;
     return false;
   }
   logf("TLS up peer_fp=%s", tls::peer_fingerprint_sha256(st->tls).c_str());
@@ -901,6 +912,7 @@ bool MediaClient::start(const MediaClientConfig& config) {
     st->tls = nullptr;
     WSACleanup();
     st->wsa_started = false;
+    st->last_fail = MediaClientFail::Transient;
     return false;
   }
 
@@ -917,6 +929,7 @@ bool MediaClient::start(const MediaClientConfig& config) {
     st->tls = nullptr;
     WSACleanup();
     st->wsa_started = false;
+    st->last_fail = MediaClientFail::Transient;
     return false;
   }
   if (payload[0] == kCtrlAuthFail) {
@@ -925,6 +938,7 @@ bool MediaClient::start(const MediaClientConfig& config) {
     st->tls = nullptr;
     WSACleanup();
     st->wsa_started = false;
+    st->last_fail = MediaClientFail::Auth;
     return false;
   }
   if (payload[0] != kCtrlAuthOk || payload.size() < 5) {
@@ -933,6 +947,7 @@ bool MediaClient::start(const MediaClientConfig& config) {
     st->tls = nullptr;
     WSACleanup();
     st->wsa_started = false;
+    st->last_fail = MediaClientFail::Transient;
     return false;
   }
 
@@ -960,10 +975,12 @@ bool MediaClient::start(const MediaClientConfig& config) {
     st->tls = nullptr;
     WSACleanup();
     st->wsa_started = false;
+    st->last_fail = MediaClientFail::Transient;
     return false;
   }
 
   st->connected = true;
+  st->last_fail = MediaClientFail::None;
   return true;
 }
 
@@ -1011,6 +1028,10 @@ void MediaClient::stop() {
 bool MediaClient::connected() const {
   return impl_ && impl_->state.connected.load() &&
          InterlockedCompareExchange(&impl_->state.stop, 0, 0) == 0;
+}
+
+MediaClientFail MediaClient::last_fail() const {
+  return impl_ ? impl_->state.last_fail : MediaClientFail::None;
 }
 
 std::string MediaClient::agent_version() const {

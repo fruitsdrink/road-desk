@@ -13,7 +13,7 @@ Related: [CONTEXT.md](../CONTEXT.md), [ui-design-system.md](./ui-design-system.m
 |------|------|------|
 | **V1** | 管理台命令闭环 | ✅ 菜单与工具栏同一套命令；灰显占位已去掉 |
 | **V1b** | 壳层全键盘 | ✅ Tab/F6/加速键；会话抢键交还不做 |
-| **V2** | 会话断线重连 | 非主动断开可自动重连 + 退避；状态栏可见 |
+| **V2** | 会话断线重连 | ✅ 非主动断开自动重连 + 退避；鉴权失败停止 |
 | **V3** | UI 规范收口 | 对齐 `ui-design-system` P0–P2（token / 壳 / 图标辅助） |
 | **V4** | 壳层交互补齐 | 分割条宽度芯片（退出确认 /「关于」已在 V1） |
 
@@ -84,10 +84,10 @@ Related: [CONTEXT.md](../CONTEXT.md), [ui-design-system.md](./ui-design-system.m
 
 ### 3.3 验收
 
-- [ ] 主动关 Tab 无重连日志
-- [ ] 杀 Host 或断网后自动重连成功（内网）
-- [ ] 退避可见、不打满 Host（对照 pitfalls E9）
-- [ ] 鉴权失败不循环重试
+- [x] 主动关 Tab 无重连日志（`user_closing_` / 不 schedule）
+- [x] 杀 Host 或断网后自动重连（`WM_MEDIA_TRANSPORT_LOST` + 退避 timer）
+- [x] 退避 1s→2s→…→30s（`reconnect_delay_ms`）
+- [x] 鉴权/配置失败不循环（`MediaClientFail::Auth|Config` + MessageBox）
 
 ### 3.4 主要改动文件
 

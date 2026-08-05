@@ -1,5 +1,7 @@
 #include "session_host.h"
 
+#include "media_log.h"
+
 #include <objidl.h>
 #include <gdiplus.h>
 #include <windowsx.h>
@@ -15,6 +17,7 @@ namespace gdip = Gdiplus;
 namespace {
 
 constexpr wchar_t kSessionClass[] = L"RoadDeskSessionHost";
+constexpr UINT_PTR kReconnectTimerId = 42;
 
 SessionHost* g_kb_target = nullptr;
 HHOOK g_kb_hook = nullptr;
@@ -192,11 +195,22 @@ LRESULT CALLBACK SessionWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
       self->client_.set_software_cursor_enabled(false);
       return 0;
     case WM_CLIPBOARDUPDATE:
-      if (!self->view_only_) {
+      if (!self->view_only_ && !self->reconnecting_ && self->client_.connected()) {
         self->client_.notify_clipboard_changed();
       }
       return 0;
+    case WM_MEDIA_TRANSPORT_LOST:
+      self->on_transport_lost();
+      return 0;
+    case WM_TIMER:
+      if (wparam == kReconnectTimerId) {
+        KillTimer(hwnd, kReconnectTimerId);
+        self->try_reconnect();
+        return 0;
+      }
+      break;
     case WM_CLOSE:
+      self->user_closing_ = true;
       DestroyWindow(hwnd);
       return 0;
     case WM_DESTROY:
@@ -207,7 +221,7 @@ LRESULT CALLBACK SessionWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
     case WM_RBUTTONDOWN:
     case WM_RBUTTONUP:
     case WM_MOUSEMOVE: {
-      if (self->view_only_ || !self->client_.connected()) {
+      if (self->view_only_ || self->reconnecting_ || !self->client_.connected()) {
         break;
       }
       if (msg == WM_MOUSEMOVE) {
@@ -268,7 +282,7 @@ LRESULT CALLBACK SessionWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
     case WM_KEYUP:
     case WM_SYSKEYDOWN:
     case WM_SYSKEYUP:
-      if (!g_kb_hook && !self->view_only_) {
+      if (!g_kb_hook && !self->view_only_ && !self->reconnecting_) {
         self->client_.send_vk(static_cast<unsigned>(wparam),
                               msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN);
       }
@@ -300,12 +314,19 @@ bool SessionHost::register_class(HINSTANCE instance) {
 }
 
 bool SessionHost::open(HINSTANCE instance, HWND parent_or_null, const std::wstring& title,
-                       const ConnectDefaults& connect, ClosedFn on_closed) {
+                       const ConnectDefaults& connect, ClosedFn on_closed, bool auto_reconnect) {
   if (hwnd_) {
     return false;
   }
   title_ = title;
+  connect_ = connect;
   on_closed_ = std::move(on_closed);
+  auto_reconnect_ = auto_reconnect;
+  user_closing_ = false;
+  reconnecting_ = false;
+  reconnect_gave_up_ = false;
+  reconnect_attempt_ = 0;
+  status_override_.clear();
   floating_ = (parent_or_null == nullptr);
 
   DWORD style = floating_ ? WS_OVERLAPPEDWINDOW : (WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS);
@@ -318,10 +339,7 @@ bool SessionHost::open(HINSTANCE instance, HWND parent_or_null, const std::wstri
   }
   AddClipboardFormatListener(hwnd_);
 
-  road_desk::media::MediaClientConfig cfg;
-  apply_connect_defaults_to(&cfg, connect);
-  cfg.notify_hwnd = hwnd_;
-  cfg.resize_msg = WM_MEDIA_RESIZE;
+  road_desk::media::MediaClientConfig cfg = make_client_config();
   if (cfg.require_tls && !cfg.tls_insecure && cfg.tls_fingerprint_sha256.empty()) {
     DestroyWindow(hwnd_);
     hwnd_ = nullptr;
@@ -340,7 +358,9 @@ bool SessionHost::open(HINSTANCE instance, HWND parent_or_null, const std::wstri
 }
 
 void SessionHost::close() {
+  user_closing_ = true;
   if (hwnd_) {
+    KillTimer(hwnd_, kReconnectTimerId);
     DestroyWindow(hwnd_);
     // on_destroy clears hwnd_
   } else if (started_) {
@@ -350,7 +370,138 @@ void SessionHost::close() {
 }
 
 bool SessionHost::connected() const {
-  return started_ && client_.connected();
+  return started_ && client_.connected() && !reconnecting_;
+}
+
+std::wstring SessionHost::status_text() const {
+  if (!status_override_.empty()) {
+    return status_override_;
+  }
+  if (reconnecting_) {
+    wchar_t buf[64] = {};
+    _snwprintf_s(buf, _TRUNCATE, L"正在重连… (%d)", reconnect_attempt_ + 1);
+    return buf;
+  }
+  return {};
+}
+
+road_desk::media::MediaClientConfig SessionHost::make_client_config() const {
+  road_desk::media::MediaClientConfig cfg;
+  apply_connect_defaults_to(&cfg, connect_);
+  cfg.notify_hwnd = hwnd_;
+  cfg.resize_msg = WM_MEDIA_RESIZE;
+  cfg.disconnect_msg = WM_MEDIA_TRANSPORT_LOST;
+  return cfg;
+}
+
+int SessionHost::reconnect_delay_ms() const {
+  int shift = reconnect_attempt_;
+  if (shift > 5) {
+    shift = 5;
+  }
+  int ms = 1000 << shift;
+  if (ms > 30000) {
+    ms = 30000;
+  }
+  return ms;
+}
+
+void SessionHost::notify_chrome_changed() {
+  if (!hwnd_) {
+    return;
+  }
+  HWND root = GetAncestor(hwnd_, GA_ROOT);
+  if (root) {
+    PostMessageW(root, WM_SESSION_META, 0, reinterpret_cast<LPARAM>(this));
+  }
+}
+
+void SessionHost::schedule_reconnect() {
+  if (!hwnd_ || user_closing_ || !auto_reconnect_ || reconnect_gave_up_) {
+    return;
+  }
+  const int delay = reconnect_delay_ms();
+  road_desk::media::media_logf("viewer", "reconnect schedule attempt=%d delay_ms=%d host=%s",
+                               reconnect_attempt_ + 1, delay, connect_.host_port.c_str());
+  status_override_.clear();
+  reconnecting_ = true;
+  KillTimer(hwnd_, kReconnectTimerId);
+  SetTimer(hwnd_, kReconnectTimerId, static_cast<UINT>(delay), nullptr);
+  notify_chrome_changed();
+  InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void SessionHost::stop_reconnect(const wchar_t* status) {
+  if (hwnd_) {
+    KillTimer(hwnd_, kReconnectTimerId);
+  }
+  reconnecting_ = false;
+  reconnect_gave_up_ = true;
+  if (status && status[0]) {
+    status_override_ = status;
+  }
+  road_desk::media::media_logf("viewer", "reconnect stopped host=%s", connect_.host_port.c_str());
+  notify_chrome_changed();
+  InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void SessionHost::on_transport_lost() {
+  if (user_closing_ || !hwnd_) {
+    return;
+  }
+  client_.release_modifiers();
+  client_.stop();
+  started_ = false;
+
+  if (!auto_reconnect_ || reconnect_gave_up_) {
+    road_desk::media::media_logf("viewer", "transport lost (no reconnect) host=%s",
+                                 connect_.host_port.c_str());
+    DestroyWindow(hwnd_);
+    return;
+  }
+
+  road_desk::media::media_logf("viewer", "transport lost → reconnect host=%s",
+                               connect_.host_port.c_str());
+  schedule_reconnect();
+}
+
+void SessionHost::try_reconnect() {
+  if (user_closing_ || !hwnd_ || !auto_reconnect_ || reconnect_gave_up_) {
+    return;
+  }
+  reconnecting_ = true;
+  status_override_.clear();
+  ++reconnect_attempt_;
+  road_desk::media::media_logf("viewer", "reconnect try n=%d host=%s", reconnect_attempt_,
+                               connect_.host_port.c_str());
+  notify_chrome_changed();
+
+  client_.stop();
+  road_desk::media::MediaClientConfig cfg = make_client_config();
+  if (!client_.start(cfg)) {
+    using road_desk::media::MediaClientFail;
+    const MediaClientFail fail = client_.last_fail();
+    road_desk::media::media_logf("viewer", "reconnect fail n=%d kind=%u host=%s",
+                                 reconnect_attempt_, static_cast<unsigned>(fail),
+                                 connect_.host_port.c_str());
+    if (fail == MediaClientFail::Auth || fail == MediaClientFail::Config) {
+      const wchar_t* msg = (fail == MediaClientFail::Auth) ? L"重连已停止：认证失败"
+                                                           : L"重连已停止：配置无效";
+      stop_reconnect(msg);
+      MessageBoxW(hwnd_, msg, L"Road Desk", MB_OK | MB_ICONWARNING);
+      return;
+    }
+    schedule_reconnect();
+    return;
+  }
+
+  started_ = true;
+  reconnecting_ = false;
+  reconnect_attempt_ = 0;
+  status_override_.clear();
+  road_desk::media::media_logf("viewer", "reconnect ok host=%s", connect_.host_port.c_str());
+  notify_chrome_changed();
+  InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 bool SessionHost::detach_to_floating(HINSTANCE instance) {
@@ -387,7 +538,7 @@ bool SessionHost::attach_to_parent(HWND parent) {
 }
 
 bool SessionHost::wants_keyboard() const {
-  if (view_only_ || !hwnd_ || g_kb_target != this) {
+  if (view_only_ || reconnecting_ || !hwnd_ || g_kb_target != this || !client_.connected()) {
     return false;
   }
   HWND fg = GetForegroundWindow();
@@ -410,16 +561,6 @@ void SessionHost::set_view_only(bool on) {
   view_only_ = on;
   if (on) {
     client_.release_modifiers();
-  }
-}
-
-void SessionHost::notify_chrome_changed() {
-  if (!hwnd_) {
-    return;
-  }
-  HWND root = GetAncestor(hwnd_, GA_ROOT);
-  if (root) {
-    PostMessageW(root, WM_SESSION_META, 0, reinterpret_cast<LPARAM>(this));
   }
 }
 
@@ -677,6 +818,13 @@ void SessionHost::paint() {
     SetTextColor(back_dc_, RGB(220, 220, 220));  // rd.color.text.sessionHint
 
     const wchar_t* msg = L"正在连接被控端…";
+    std::wstring owned_msg;
+    if (reconnecting_ || reconnect_gave_up_) {
+      owned_msg = status_text();
+      if (!owned_msg.empty()) {
+        msg = owned_msg.c_str();
+      }
+    }
     SIZE tsz{};
     GetTextExtentPoint32W(back_dc_, msg, static_cast<int>(wcslen(msg)), &tsz);
     const int icon = MulDiv(22, dpi > 0 ? dpi : 96, 96);
@@ -710,16 +858,58 @@ void SessionHost::paint() {
   }
 
   BitBlt(hdc, 0, 0, cw, ch, back_dc_, 0, 0, SRCCOPY);
+
+  if (reconnecting_ || reconnect_gave_up_) {
+    std::wstring banner = status_text();
+    if (banner.empty()) {
+      banner = L"正在重连…";
+    }
+    RECT band{0, ch - MulDiv(28, 96, 96), cw, ch};
+    if (ch > 40) {
+      HDC screen = GetDC(nullptr);
+      const int dpi = screen ? GetDeviceCaps(screen, LOGPIXELSY) : 96;
+      if (screen) {
+        ReleaseDC(nullptr, screen);
+      }
+      const int band_h = MulDiv(28, dpi > 0 ? dpi : 96, 96);
+      band = {0, ch - band_h, cw, ch};
+      HBRUSH br = CreateSolidBrush(RGB(22, 30, 46));
+      FillRect(hdc, &band, br);
+      DeleteObject(br);
+      LOGFONTW lf{};
+      lf.lfHeight = -MulDiv(9, dpi > 0 ? dpi : 96, 72);
+      lf.lfWeight = FW_NORMAL;
+      lf.lfCharSet = DEFAULT_CHARSET;
+      lf.lfQuality = CLEARTYPE_QUALITY;
+      wcscpy_s(lf.lfFaceName, L"Segoe UI");
+      HFONT font = CreateFontIndirectW(&lf);
+      HGDIOBJ old = font ? SelectObject(hdc, font) : nullptr;
+      SetBkMode(hdc, TRANSPARENT);
+      SetTextColor(hdc, RGB(236, 240, 245));
+      DrawTextW(hdc, banner.c_str(), -1, &band, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+      if (old) {
+        SelectObject(hdc, old);
+      }
+      if (font) {
+        DeleteObject(font);
+      }
+    }
+  }
+
   EndPaint(hwnd_, &ps);
 }
 
 void SessionHost::on_destroy() {
+  if (hwnd_) {
+    KillTimer(hwnd_, kReconnectTimerId);
+  }
   RemoveClipboardFormatListener(hwnd_);
   release_backbuffer();
   if (started_) {
     client_.stop();
     started_ = false;
   }
+  reconnecting_ = false;
   if (g_kb_target == this) {
     g_kb_target = nullptr;
   }
