@@ -206,14 +206,55 @@ std::string build_json(const AuditReport& r) {
     add_bool("usedFileTransfer", r.used_file_transfer, &first);
   }
   add_bool("partial", r.partial, &first);
-  if (r.reconnect_count >= 0) {
+
+  const bool has_reconnect = r.reconnect_count >= 0;
+  const bool has_file_meta = r.file_out_count > 0 || r.file_in_count > 0;
+  if (has_reconnect || has_file_meta) {
     if (!first) {
       j += ',';
     }
     first = false;
-    char buf[64];
-    std::snprintf(buf, sizeof(buf), "\"meta\":{\"reconnectCount\":%d}", r.reconnect_count);
-    j += buf;
+    j += "\"meta\":{";
+    bool meta_first = true;
+    if (has_reconnect) {
+      char buf[48];
+      std::snprintf(buf, sizeof(buf), "\"reconnectCount\":%d", r.reconnect_count);
+      j += buf;
+      meta_first = false;
+    }
+    if (has_file_meta) {
+      if (!meta_first) {
+        j += ',';
+      }
+      char buf[192];
+      std::snprintf(buf, sizeof(buf),
+                    "\"fileTransfer\":{\"out\":%s,\"in\":%s,\"outCount\":%d,\"inCount\":%d,"
+                    "\"outEntries\":%d,\"inEntries\":%d",
+                    r.file_out_count > 0 ? "true" : "false", r.file_in_count > 0 ? "true" : "false",
+                    r.file_out_count, r.file_in_count, r.file_out_entries, r.file_in_entries);
+      j += buf;
+      if (!r.file_items.empty()) {
+        j += ",\"items\":[";
+        for (size_t i = 0; i < r.file_items.size(); ++i) {
+          const AuditFileItem& it = r.file_items[i];
+          if (i) {
+            j += ',';
+          }
+          j += "{\"dir\":\"";
+          j += it.outbound ? "out" : "in";
+          j += "\",\"name\":\"";
+          j += json_escape(it.name);
+          j += "\",\"path\":\"";
+          j += json_escape(it.path);
+          j += "\",\"isDir\":";
+          j += it.is_dir ? "true" : "false";
+          j += '}';
+        }
+        j += ']';
+      }
+      j += '}';
+    }
+    j += '}';
   }
   j += '}';
   return j;

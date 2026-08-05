@@ -3,6 +3,7 @@
 #include "gateway_config.h"
 
 #include <string>
+#include <vector>
 
 namespace road_desk::viewer {
 
@@ -12,6 +13,13 @@ DirectoryConfig audit_directory_copy();
 bool audit_reporting_enabled();
 
 std::string audit_new_session_id();
+
+struct AuditFileItem {
+  std::string path;  // UTF-8 full path
+  std::string name;  // basename
+  bool is_dir = false;
+  bool outbound = true;  // Viewer→Host
+};
 
 struct AuditReport {
   std::string session_id;
@@ -30,6 +38,13 @@ struct AuditReport {
   bool set_file = false;
   bool partial = true;
   int reconnect_count = -1;  // >=0 → write into meta
+  // Cumulative file-transfer stats (Viewer perspective).
+  // out = Viewer→Host, in = Host→Viewer. Top-level roots only in file_items.
+  int file_out_count = 0;
+  int file_in_count = 0;
+  int file_out_entries = 0;
+  int file_in_entries = 0;
+  std::vector<AuditFileItem> file_items;
 };
 
 // Fire-and-forget POST /v1/audit/sessions/upsert. Never blocks the UI thread long;

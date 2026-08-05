@@ -29,7 +29,7 @@ docker compose up -d
 网关启动时会读取工作目录下的 **`.env`**（可用 `.env.example` 复制）。规则：
 
 - 仅填充**尚未**出现在进程环境中的变量（系统/Shell 环境优先）
-- 常用键：`DATABASE_URL`、`ROAD_DESK_GATEWAY_LISTEN`、`ROAD_DESK_GATEWAY_DATA`、`ROAD_DESK_GATEWAY_WEB`
+- 常用键：`DATABASE_URL`、`ROAD_DESK_GATEWAY_LISTEN`、`ROAD_DESK_GATEWAY_DATA`、`ROAD_DESK_GATEWAY_WEB`、`ROAD_DESK_AUDIT_RETENTION_DAYS`（默认 90；`0` 关闭清理）
 
 ```powershell
 cd tools/gateway

@@ -203,12 +203,35 @@ LRESULT CALLBACK SessionWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
     case WM_CLIPBOARDUPDATE:
       if (!self->view_only_ && !self->reconnecting_ && self->client_.connected()) {
         self->client_.notify_clipboard_changed();
-        if (!self->audit_clipboard_sent_) {
-          self->audit_clipboard_sent_ = true;
-          self->audit_emit("flag", "ok", nullptr, /*flag_clipboard=*/true);
-        }
       }
       return 0;
+    case WM_MEDIA_AUDIT_ACTIVITY: {
+      if (wparam == 1 && !self->audit_clipboard_sent_) {
+        self->audit_clipboard_sent_ = true;
+        self->audit_emit("flag", "ok", nullptr, /*flag_clipboard=*/true, /*flag_file=*/false);
+      } else if (wparam == 2 || wparam == 3) {
+        const int entries = static_cast<int>(lparam);
+        const int add = entries > 0 ? entries : 1;
+        if (wparam == 2) {
+          ++self->audit_file_out_count_;
+          self->audit_file_out_entries_ += add;
+        } else {
+          ++self->audit_file_in_count_;
+          self->audit_file_in_entries_ += add;
+        }
+        auto pending = self->client_.take_pending_audit_files();
+        constexpr size_t kMaxAuditFiles = 64;
+        for (auto& it : pending) {
+          if (self->audit_file_items_.size() >= kMaxAuditFiles) {
+            break;
+          }
+          self->audit_file_items_.push_back(std::move(it));
+        }
+        self->audit_file_sent_ = true;
+        self->audit_emit("flag", "ok", nullptr, /*flag_clipboard=*/false, /*flag_file=*/true);
+      }
+      return 0;
+    }
     case WM_MEDIA_TRANSPORT_LOST:
       self->on_transport_lost();
       return 0;
@@ -317,11 +340,17 @@ void SessionHost::set_audit_session(const std::string& session_id, const std::st
   audit_agent_name_ = agent_name_utf8;
   audit_agent_endpoint_ = agent_endpoint;
   audit_clipboard_sent_ = false;
+  audit_file_sent_ = false;
+  audit_file_out_count_ = 0;
+  audit_file_in_count_ = 0;
+  audit_file_out_entries_ = 0;
+  audit_file_in_entries_ = 0;
+  audit_file_items_.clear();
   audit_opened_sent_ = false;
 }
 
 void SessionHost::audit_emit(const char* phase, const char* result, const char* disconnect_reason,
-                             bool flag_clipboard) {
+                             bool flag_clipboard, bool flag_file) {
   if (!audit_reporting_enabled() || audit_session_id_.empty() || !phase) {
     return;
   }
@@ -338,9 +367,26 @@ void SessionHost::audit_emit(const char* phase, const char* result, const char* 
   if (disconnect_reason && disconnect_reason[0]) {
     r.disconnect_reason = disconnect_reason;
   }
-  if (flag_clipboard) {
+  if (flag_clipboard || audit_clipboard_sent_) {
     r.set_clipboard = true;
     r.used_clipboard = true;
+  }
+  if (flag_file || audit_file_sent_) {
+    r.set_file = true;
+    r.used_file_transfer = true;
+    r.file_out_count = audit_file_out_count_;
+    r.file_in_count = audit_file_in_count_;
+    r.file_out_entries = audit_file_out_entries_;
+    r.file_in_entries = audit_file_in_entries_;
+    r.file_items.reserve(audit_file_items_.size());
+    for (const auto& it : audit_file_items_) {
+      AuditFileItem row;
+      row.path = it.path;
+      row.name = it.name;
+      row.is_dir = it.is_dir;
+      row.outbound = it.outbound;
+      r.file_items.push_back(std::move(row));
+    }
   }
   if (reconnect_attempt_ > 0) {
     r.reconnect_count = reconnect_attempt_;
@@ -458,6 +504,7 @@ std::wstring SessionHost::status_text() const {
   cfg.notify_hwnd = hwnd_;
   cfg.resize_msg = WM_MEDIA_RESIZE;
   cfg.disconnect_msg = WM_MEDIA_TRANSPORT_LOST;
+  cfg.audit_activity_msg = WM_MEDIA_AUDIT_ACTIVITY;
   cfg.audit_session_id = audit_session_id_;
   return cfg;
 }
@@ -652,6 +699,9 @@ void SessionHost::release_modifiers() {
 }
 
 void SessionHost::set_view_only(bool on) {
+  if (view_only_ == on) {
+    return;
+  }
   view_only_ = on;
   if (on) {
     client_.release_modifiers();
@@ -659,6 +709,7 @@ void SessionHost::set_view_only(bool on) {
   if (audit_opened_sent_) {
     audit_emit("flag", "ok", nullptr);
   }
+  notify_chrome_changed();
 }
 
 bool SessionHost::toggle_fullscreen() {

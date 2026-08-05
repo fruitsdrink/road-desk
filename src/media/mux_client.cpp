@@ -222,7 +222,80 @@ struct ClientState {
   uint32_t next_xfer_id = 1;
   bool sending_files = false;
   road_desk::replace::FileRecvState file_recv;
+  std::vector<MediaAuditFileItem> pending_audit_files;
 };
+
+std::string wide_to_utf8(const std::wstring& w) {
+  if (w.empty()) {
+    return {};
+  }
+  const int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+  if (n <= 1) {
+    return {};
+  }
+  std::string s(static_cast<size_t>(n - 1), '\0');
+  WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, s.data(), n, nullptr, nullptr);
+  return s;
+}
+
+std::wstring join_wpath(const std::wstring& a, const std::wstring& b) {
+  if (a.empty()) {
+    return b;
+  }
+  if (b.empty()) {
+    return a;
+  }
+  if (a.back() == L'\\' || a.back() == L'/') {
+    return a + b;
+  }
+  return a + L'\\' + b;
+}
+
+// Top-level HDROP roots only — directories recorded as name+path, not recursive children.
+void queue_audit_file_roots(ClientState* st, const road_desk::replace::FileOffer& offer, bool outbound,
+                            const std::wstring* recv_stage_root) {
+  using namespace road_desk::replace;
+  if (!st) {
+    return;
+  }
+  std::vector<MediaAuditFileItem> batch;
+  batch.reserve(offer.root_names.size());
+  for (const std::wstring& name : offer.root_names) {
+    MediaAuditFileItem item;
+    item.outbound = outbound;
+    item.name = wide_to_utf8(name);
+    item.path = item.name;
+    for (const FileOfferEntry& e : offer.entries) {
+      if (e.rel_path != name) {
+        continue;
+      }
+      item.is_dir = (e.flags & kClipEntryFlagDir) != 0;
+      if (outbound && !e.abs_path.empty()) {
+        item.path = wide_to_utf8(e.abs_path);
+      } else if (!outbound && recv_stage_root && !recv_stage_root->empty()) {
+        item.path = wide_to_utf8(join_wpath(*recv_stage_root, name));
+      } else if (!e.abs_path.empty()) {
+        item.path = wide_to_utf8(e.abs_path);
+      }
+      break;
+    }
+    if (item.path.size() > 512) {
+      item.path.resize(512);
+    }
+    if (item.name.size() > 256) {
+      item.name.resize(256);
+    }
+    batch.push_back(std::move(item));
+  }
+  if (batch.empty()) {
+    return;
+  }
+  EnterCriticalSection(&st->clip_lock);
+  for (MediaAuditFileItem& it : batch) {
+    st->pending_audit_files.push_back(std::move(it));
+  }
+  LeaveCriticalSection(&st->clip_lock);
+}
 
 void init_locks(ClientState* st) {
   if (!st->locks_ready) {
@@ -250,6 +323,13 @@ bool send_file_abort_client(tls::TlsSession* tls, uint32_t xfer_id) {
   body[0] = kFileAbort;
   write_u32_le(body + 1, xfer_id);
   return mux_write(tls, kChannelFile, body, 5);
+}
+
+void post_audit_activity(ClientState* st, WPARAM kind, LPARAM detail = 0) {
+  if (!st || !st->cfg.audit_activity_msg || !st->cfg.notify_hwnd) {
+    return;
+  }
+  PostMessageW(st->cfg.notify_hwnd, st->cfg.audit_activity_msg, kind, detail);
 }
 
 bool flush_clipboard_out(ClientState* st) {
@@ -315,6 +395,10 @@ bool flush_clipboard_out(ClientState* st) {
       return err == "pump abort" ? false : true;
     }
     logf("clipboard files send done id=%u", offer.transfer_id);
+    queue_audit_file_roots(st, offer, /*outbound=*/true, nullptr);
+    post_audit_activity(st, 2, static_cast<LPARAM>(offer.root_names.empty()
+                                                       ? offer.entries.size()
+                                                       : offer.root_names.size()));
     return true;
   }
 
@@ -340,6 +424,7 @@ bool flush_clipboard_out(ClientState* st) {
     }
     st->clip_last_seq = seq;
     logf("clipboard bitmap out raw=%zu wire=%zu", dib.size(), payload.size());
+    post_audit_activity(st, 1);
     return true;
   }
 
@@ -361,6 +446,7 @@ bool flush_clipboard_out(ClientState* st) {
     }
     st->clip_last_seq = seq;
     logf("clipboard text out %zu bytes", utf16.size());
+    post_audit_activity(st, 1);
     return true;
   }
 
@@ -382,6 +468,7 @@ bool handle_clipboard_payload(ClientState* st, const std::vector<uint8_t>& paylo
     if (clipboard_write_text_utf16(utf16.data(), utf16.size(), &st->clip_echo)) {
       st->clip_last_seq = st->clip_echo.ignore_seq;
       logf("clipboard text in %zu bytes", utf16.size());
+      post_audit_activity(st, 1);
     }
     return true;
   }
@@ -394,6 +481,7 @@ bool handle_clipboard_payload(ClientState* st, const std::vector<uint8_t>& paylo
     if (clipboard_write_dib(dib.data(), dib.size(), &st->clip_echo)) {
       st->clip_last_seq = st->clip_echo.ignore_seq;
       logf("clipboard bitmap in %zu bytes", dib.size());
+      post_audit_activity(st, 1);
     }
     return true;
   }
@@ -436,6 +524,11 @@ bool handle_file_payload(ClientState* st, const std::vector<uint8_t>& payload) {
     st->clip_echo.ignore_seq = echo_seq;
     st->clip_last_seq = echo_seq;
     logf("clipboard files published id=%u", st->file_recv.offer.transfer_id);
+    queue_audit_file_roots(st, st->file_recv.offer, /*outbound=*/false, &st->file_recv.stage_root);
+    post_audit_activity(st, 3,
+                        static_cast<LPARAM>(st->file_recv.offer.root_names.empty()
+                                                ? 1
+                                                : st->file_recv.offer.root_names.size()));
   }
   return true;
 }
@@ -1178,6 +1271,17 @@ void MediaClient::notify_clipboard_changed() {
   EnterCriticalSection(&impl_->state.clip_lock);
   impl_->state.clip_dirty = true;
   LeaveCriticalSection(&impl_->state.clip_lock);
+}
+
+std::vector<MediaAuditFileItem> MediaClient::take_pending_audit_files() {
+  std::vector<MediaAuditFileItem> out;
+  if (!impl_) {
+    return out;
+  }
+  EnterCriticalSection(&impl_->state.clip_lock);
+  out.swap(impl_->state.pending_audit_files);
+  LeaveCriticalSection(&impl_->state.clip_lock);
+  return out;
 }
 
 void MediaClient::set_notify_hwnd(HWND hwnd) {

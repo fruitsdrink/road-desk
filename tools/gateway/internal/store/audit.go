@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -271,4 +272,50 @@ func (s *Store) ListAuditSessions(ctx context.Context, f AuditListFilter) ([]Aud
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// PurgeAuditSessionsOlderThan deletes sessions whose attempted_at is before cutoff.
+// Retention is keyed on attempt time (not closed_at) so abandoned attempts also expire.
+func (s *Store) PurgeAuditSessionsOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
+	tag, err := s.Pool.Exec(ctx, `
+		DELETE FROM audit_sessions WHERE attempted_at < $1`, cutoff.UTC())
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// RunAuditRetention periodically deletes audit rows older than retentionDays.
+// retentionDays <= 0 disables the loop. Cancels when ctx is done.
+func RunAuditRetention(ctx context.Context, st *Store, retentionDays int) {
+	if st == nil || retentionDays <= 0 {
+		return
+	}
+	const interval = time.Hour
+	run := func() {
+		cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays)
+		n, err := st.PurgeAuditSessionsOlderThan(ctx, cutoff)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			log.Printf("audit retention: purge failed: %v", err)
+			return
+		}
+		if n > 0 {
+			log.Printf("audit retention: deleted %d sessions older than %d days (before %s)",
+				n, retentionDays, cutoff.Format(time.RFC3339))
+		}
+	}
+	run()
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			run()
+		}
+	}
 }

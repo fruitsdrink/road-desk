@@ -21,7 +21,8 @@ import (
 
 func main() {
 	cfg := config.Load()
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	pool, err := db.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -44,8 +45,9 @@ func main() {
 		jwtSecret = cfg.JWTSecret
 	}
 
+	st := &store.Store{Pool: pool, OnlineAfterS: cfg.OnlineAfterS}
 	srv := &api.Server{
-		Store:   &store.Store{Pool: pool, OnlineAfterS: cfg.OnlineAfterS},
+		Store:   st,
 		Auth:    auth.New(pool, jwtSecret),
 		DataDir: cfg.DataDir,
 		WebDir:  cfg.WebDir,
@@ -69,10 +71,19 @@ func main() {
 		}
 	}()
 
+	if cfg.AuditRetentionDays > 0 {
+		log.Printf("audit retention: %d days (ROAD_DESK_AUDIT_RETENTION_DAYS; 0 disables)",
+			cfg.AuditRetentionDays)
+		go store.RunAuditRetention(ctx, st, cfg.AuditRetentionDays)
+	} else {
+		log.Printf("audit retention: disabled")
+	}
+
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
 	<-ch
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
 	_ = httpSrv.Shutdown(shutdownCtx)
 }

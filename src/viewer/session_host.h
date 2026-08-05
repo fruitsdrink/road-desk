@@ -24,6 +24,9 @@ constexpr UINT WM_SESSION_CLOSED = WM_APP + 2;
 constexpr UINT WM_SESSION_META = WM_APP + 3;
 // Mux transport ended; SessionHost decides reconnect vs destroy.
 constexpr UINT WM_MEDIA_TRANSPORT_LOST = WM_APP + 4;
+// MediaClient: clipboard (wParam=1) or file transfer used this session.
+// File: wParam=2 Viewer→Host, wParam=3 Host→Viewer; lParam = entry count (no filenames).
+constexpr UINT WM_MEDIA_AUDIT_ACTIVITY = WM_APP + 5;
 
 class SessionHost {
  public:
@@ -102,7 +105,7 @@ class SessionHost {
   road_desk::media::MediaClientConfig make_client_config() const;
   int reconnect_delay_ms() const;
   void audit_emit(const char* phase, const char* result, const char* disconnect_reason,
-                  bool flag_clipboard = false);
+                  bool flag_clipboard = false, bool flag_file = false);
 
   road_desk::media::MediaClient client_;
   ConnectDefaults connect_{};
@@ -120,6 +123,12 @@ class SessionHost {
   bool view_only_ = false;
   bool fullscreen_ = false;
   bool audit_clipboard_sent_ = false;
+  bool audit_file_sent_ = false;
+  int audit_file_out_count_ = 0;
+  int audit_file_in_count_ = 0;
+  int audit_file_out_entries_ = 0;
+  int audit_file_in_entries_ = 0;
+  std::vector<road_desk::media::MediaAuditFileItem> audit_file_items_;
   bool audit_opened_sent_ = false;
   std::string audit_session_id_;
   std::string audit_agent_id_;

@@ -75,11 +75,23 @@ struct MediaClientConfig {
   UINT resize_msg = WM_APP + 1;
   // Posted when the mux thread ends (transport loss). 0 → legacy WM_CLOSE.
   UINT disconnect_msg = 0;
+  // Posted after clipboard text/bitmap or file transfer actually succeeds (A3).
+  // wParam: 1=clipboard, 2=file Viewer→Host, 3=file Host→Viewer.
+  // lParam (file): top-level item count. Paths via take_pending_audit_files(). 0 → disabled.
+  UINT audit_activity_msg = 0;
   bool require_tls = true;
   // Debug only: skip fingerprint check (ROAD_DESK_TLS_INSECURE=1).
   bool tls_insecure = false;
   // Expected host cert SHA-256 (lowercase hex). Required when require_tls && !tls_insecure.
   std::string tls_fingerprint_sha256;
+};
+
+// Top-level HDROP roots only (directory → name+path, not children). UTF-8.
+struct MediaAuditFileItem {
+  std::string path;
+  std::string name;
+  bool is_dir = false;
+  bool outbound = true;  // true = Viewer→Host, false = Host→Viewer
 };
 
 // Why the last start() / mux exit failed (for Viewer reconnect policy).
@@ -125,6 +137,8 @@ class MediaClient {
   void set_software_cursor_enabled(bool enabled);
   // Call from UI thread on WM_CLIPBOARDUPDATE (after AddClipboardFormatListener).
   void notify_clipboard_changed();
+  // Drain file-audit roots queued with the last WM audit_activity file posts.
+  std::vector<MediaAuditFileItem> take_pending_audit_files();
 
  private:
   struct Impl;

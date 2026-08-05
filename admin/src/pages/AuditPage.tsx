@@ -105,7 +105,14 @@ function formatRemark(row: AuditSession): string {
 
   const extras: string[] = []
   if (row.usedClipboard) extras.push('剪贴板')
-  if (row.usedFileTransfer) extras.push('文件传输')
+  if (row.usedFileTransfer) {
+    const ft = formatFileTransfer(row)
+    extras.push(ft === '是' ? '文件传输' : `文件传输（${ft}）`)
+    const detail = formatFileTransferDetail(row)
+    if (detail && detail !== ft && detail !== '是') {
+      parts.push(`文件明细：${detail.replace(/\n\n/g, '；').replace(/\n/g, ' ')}`)
+    }
+  }
   if (extras.length) {
     parts.push(`曾使用：${extras.join('、')}`)
   }
@@ -122,6 +129,70 @@ function formatRemark(row: AuditSession): string {
 
   if (!parts.length) return ''
   return parts.join('。') + '。'
+}
+
+type FileTransferItem = {
+  dir?: string
+  name?: string
+  path?: string
+  isDir?: boolean
+}
+
+type FileTransferMeta = {
+  out?: boolean
+  in?: boolean
+  outCount?: number
+  inCount?: number
+  outEntries?: number
+  inEntries?: number
+  items?: FileTransferItem[]
+}
+
+/** Viewer→Host / Host→Viewer: counts + top-level names (dir → name only, not children). */
+function formatFileTransfer(row: AuditSession): string {
+  if (!row.usedFileTransfer) return '—'
+  const meta = row.meta && typeof row.meta === 'object' ? row.meta : {}
+  const ft = meta.fileTransfer as FileTransferMeta | undefined
+  if (!ft || typeof ft !== 'object') return '是'
+  const outN = typeof ft.outCount === 'number' ? ft.outCount : ft.out ? 1 : 0
+  const inN = typeof ft.inCount === 'number' ? ft.inCount : ft.in ? 1 : 0
+  const outE = typeof ft.outEntries === 'number' ? ft.outEntries : 0
+  const inE = typeof ft.inEntries === 'number' ? ft.inEntries : 0
+  const parts: string[] = []
+  if (outN > 0) {
+    parts.push(outE > 0 ? `发${outN}次/${outE}项` : `发${outN}次`)
+  }
+  if (inN > 0) {
+    parts.push(inE > 0 ? `收${inN}次/${inE}项` : `收${inN}次`)
+  }
+  const items = Array.isArray(ft.items) ? ft.items : []
+  if (items.length) {
+    const labels = items.slice(0, 8).map((it) => {
+      const arrow = it.dir === 'in' ? '←' : '→'
+      const kind = it.isDir ? '目录' : '文件'
+      const name = (it.name || '').trim() || '(未命名)'
+      return `${arrow}${kind}:${name}`
+    })
+    parts.push(labels.join(' '))
+    if (items.length > 8) parts.push(`…+${items.length - 8}`)
+  }
+  return parts.length ? parts.join(' · ') : '是'
+}
+
+function formatFileTransferDetail(row: AuditSession): string {
+  const meta = row.meta && typeof row.meta === 'object' ? row.meta : {}
+  const ft = meta.fileTransfer as FileTransferMeta | undefined
+  const items = ft && Array.isArray(ft.items) ? ft.items : []
+  if (!items.length) return formatFileTransfer(row)
+  return items
+    .map((it) => {
+      const arrow = it.dir === 'in' ? '收' : '发'
+      const kind = it.isDir ? '目录' : '文件'
+      const name = (it.name || '').trim() || '(未命名)'
+      const path = (it.path || '').trim()
+      return path ? `${arrow} ${kind} ${name}\n${path}` : `${arrow} ${kind} ${name}`
+    })
+    .join('\n\n')
 }
 
 export function AuditPage() {
@@ -233,10 +304,21 @@ export function AuditPage() {
       },
       {
         title: '文件',
-        dataIndex: 'usedFileTransfer',
-        width: 56,
-        align: 'center',
-        render: (v: boolean) => (v ? '是' : '—'),
+        key: 'file',
+        width: 200,
+        ellipsis: true,
+        render: (_, r) => {
+          const text = formatFileTransfer(r)
+          if (text === '—') return '—'
+          return (
+            <Tooltip
+              title={<div className="max-w-lg whitespace-pre-wrap text-xs">{formatFileTransferDetail(r)}</div>}
+              placement="topLeft"
+            >
+              <span className="truncate">{text}</span>
+            </Tooltip>
+          )
+        },
       },
       {
         title: '',
