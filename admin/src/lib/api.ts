@@ -113,6 +113,21 @@ export type AuditSession = {
   updatedAt: string
 }
 
+export type AuditEvent = {
+  id: number
+  sessionId: string
+  at: string
+  source: string
+  type: string
+  detail: Record<string, unknown>
+  createdAt: string
+}
+
+export type AuditSessionDetail = {
+  session: AuditSession
+  events: AuditEvent[]
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<LoginResult>('/v1/admin/login', {
@@ -174,7 +189,8 @@ export const api = {
       `/v1/admin/audit/sessions${qs ? `?${qs}` : ''}`,
     )
   },
-  auditSession: (id: string) => request<AuditSession>(`/v1/admin/audit/sessions/${id}`),
+  auditSession: (id: string) =>
+    request<AuditSessionDetail>(`/v1/admin/audit/sessions/${id}`),
   downloadAuditCsv: async (params: {
     from?: string
     to?: string

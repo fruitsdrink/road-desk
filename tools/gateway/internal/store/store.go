@@ -15,11 +15,11 @@ type Store struct {
 }
 
 type Group struct {
-	ID        int64   `json:"id"`
-	ParentID  *int64  `json:"parentId"`
-	Name      string  `json:"name"`
-	SortOrder int     `json:"sortOrder"`
-	IsSystem  bool    `json:"isSystem"`
+	ID        int64  `json:"id"`
+	ParentID  *int64 `json:"parentId"`
+	Name      string `json:"name"`
+	SortOrder int    `json:"sortOrder"`
+	IsSystem  bool   `json:"isSystem"`
 }
 
 type Tag struct {

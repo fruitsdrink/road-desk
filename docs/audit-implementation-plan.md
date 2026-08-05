@@ -1,6 +1,6 @@
 # 接入审计实施方案
 
-Status: **active**（2026-08-05）— 已拍板双源+P1；A0–A4 已落地（ACL 对齐仍延后）  
+Status: **active**（2026-08-05）— 已拍板双源+P1；A0–A4 + `audit_events` 时间线已落地；进程开/关端侧延后；目录 ACL 一期不做  
 Related: [CONTEXT.md](../CONTEXT.md)（审计日志 / 控制面）、[gateway.md](./gateway.md)、[adr/0001-media-plane-vnc-adapter.md](./adr/0001-media-plane-vnc-adapter.md)、[viewer-implementation-plan.md](./viewer-implementation-plan.md)
 
 把远控「话单」落到控制面：可查询、可合规抽查；**不含会话录像**。媒体仍 Viewer↔Agent TLS mux 直连，审计事件由端上报，网关不旁路拆媒体包。
@@ -91,11 +91,44 @@ Related: [CONTEXT.md](../CONTEXT.md)（审计日志 / 控制面）、[gateway.md
 
 索引：`(attempted_at DESC)`、`(agent_id, attempted_at DESC)`、`(operator_user_id, attempted_at DESC)`、`result`。
 
-### 4.2 `audit_events`（可选明细，一期可后置）
+### 4.2 `audit_events`（会话时间线）
 
-若只要列表，可先不做事件表，布尔与结果直接 upsert 主表。需要排障时再加：
+主表仍是「一行一话单」；本表按时间追加过程事件，**同一会话多行**。排障与后续进程开/关审计共用此表，**不改 schema 即可扩展 type**。
 
-`id, session_id, at, source(viewer|agent), type, detail jsonb`
+| 列 | 类型 | 说明 |
+|----|------|------|
+| `id` | bigserial | |
+| `session_id` | uuid FK → `audit_sessions` ON DELETE CASCADE | 随话单保留期一并清理 |
+| `at` | timestamptz | 事件发生时刻（端侧时钟） |
+| `source` | text | `viewer` / `agent` / `gateway` |
+| `type` | text (1–64, `[a-z][a-z0-9_]*`) | 见下表；未知合法 type 亦接受 |
+| `detail` | jsonb | 类型相关细节，默认 `{}` |
+| `created_at` | timestamptz | 入库时刻 |
+
+索引：`(session_id, at, id)`、`(type, at DESC)`（跨会话按类型查，如进程）、`(at DESC)`。
+
+**当前 / 预留 type：**
+
+| type | 来源 | detail 要点 |
+|------|------|-------------|
+| `attempt` / `opened` / `closed` / `failed` / `flag` | upsert `phase` 自动追加 | result、mode、disconnectReason、clipboard 等 |
+| `file_transfer` | upsert 带 `meta.fileTransfer` 时由 `flag` 提升 | 同主表 `meta.fileTransfer` |
+| `process_open` | **预留**；Host 经 `POST /v1/audit/events` | `name`、`path`、`pid`（可靠后再做端侧） |
+| `process_close` | **预留**；同上 | `name`、`path`、`pid`、可选 exit code |
+
+生命周期事件由 `POST /v1/audit/sessions/upsert` **旁路追加**（upsert 失败才拦远控路径；事件插入失败只打网关日志）。进程类事件不改主表布尔，只写本表。
+
+```
+POST /v1/audit/events
+Authorization: Bearer <viewer JWT | viewer.psk | agent PSK>
+{ "events": [ { "sessionId", "at?", "source?", "type", "detail?" } ] }  // 单次 ≤200
+```
+
+```
+GET /v1/admin/audit/sessions/{id} → { "session": …, "events": [ … ] }
+```
+
+管理端：点击话单行打开抽屉时间线（含 process_* 标签，待端侧上报后即可见）。
 
 ## 5. API（草案）
 
@@ -139,9 +172,11 @@ GET /v1/admin/audit/sessions?from=&to=&agent_id=&operator=&result=&department_id
 GET /v1/admin/audit/sessions/export?from=&to=&agent_id=&operator=&result=&department_id=  # CSV，最多 5000 行
 ```
 
-返回分页列表；详情可用 `GET /v1/admin/audit/sessions/{id}`（含 events，若启用）。
+返回分页列表；详情 `GET /v1/admin/audit/sessions/{id}` → `{ session, events }`（见 §4.2）。
 
-部门过滤：按操作员账号所属 `users.department_id`（无 `operator_user_id` 的 PSK 话单不会命中部门筛选）。目录 ACL 尚未落地，A4 不做机器级 ACL。
+批量事件（进程等）：`POST /v1/audit/events`（与 upsert 同鉴权）。
+
+部门过滤：按操作员账号所属 `users.department_id`（无 `operator_user_id` 的 PSK 话单不会命中部门筛选）。**目录 ACL（机器级可见范围）一期不做**；管理员审计仍看全站话单。
 
 **CSV 导出**：管理端「导出 CSV」；UTF-8 BOM，含部门与 `meta`。
 
@@ -182,8 +217,8 @@ GET /v1/admin/audit/sessions/export?from=&to=&agent_id=&operator=&result=&depart
 | **A0** | ✅ 表 + upsert API + admin 只读列表（可用 curl 灌数） | 管理员能查假数据 |
 | **A1** | ✅ Viewer 上报 attempt/opened/closed/fail + mode；无协议改亦可 | 帐号登录远控一条完整话单 |
 | **A2** | ✅ 协议带 `session_id` + Host 上报 auth/容量/peer + 归并 | 错 PSK 可见失败单；容量满拒绝人工暂缓（无 8 路条件） |
-| **A3** | ✅ 剪贴板/文件布尔；只读切换；保留期任务；（可选）events 表延后 | CONTEXT 字段表一期列齐 |
-| **A4** | ✅ CSV 导出、按部门过滤；（目录 ACL 仍延后） | 运维可导出 |
+| **A3** | ✅ 剪贴板/文件布尔；只读切换；保留期；`audit_events` 时间线（进程 type 预留） | CONTEXT 字段表一期列齐 |
+| **A4** | ✅ CSV 导出、按部门过滤；**目录 ACL 明确不做（一期）** | ✅ 人工验收通过（2026-08-05） |
 
 建议落地顺序：**A0 → A1 → A2 → A3**。A1 即可演示；A2 才达到「权威失败可查」。
 
@@ -196,6 +231,7 @@ GET /v1/admin/audit/sessions/export?from=&to=&agent_id=&operator=&result=&depart
 | 旁观 / 控权转移话单字段 | 能力未做；预留 `mode` / `meta` 即可 |
 | 独占互斥拒绝 | 今日共享控制 + 容量上限；勿造假枚举 |
 | 无网关演示树进中心库 | 无控制面身份与 agent_id 契约 |
+| 目录 ACL / 机器级审计裁剪 | 一期管理员看全站；按部门只筛操作员归属；ACL 未做前不对齐 |
 | Sidecar `/logs` 当审计 | 仅实验室 |
 
 ## 9. 风险
@@ -211,14 +247,15 @@ GET /v1/admin/audit/sessions/export?from=&to=&agent_id=&operator=&result=&depart
 - [x] A0 表/API/管理端列表
 - [x] A1 Viewer 上报
 - [x] A2 协议 `session_id` + Host 上报（auth/容量/peer/close）
-- [x] A3 剪贴板/文件/只读 flag + 保留期（`audit_events` 延后）
+- [x] A3 剪贴板/文件/只读 flag + 保留期
+- [x] `audit_events` 明细表 + upsert 旁路追加 + 管理端时间线（进程 type 预留；端侧上报延后）
 - [x] 帐号登录：成功远控一条；错媒体口令一条失败；用户关闭有时长（A1/A2 人工，2026-08-05）
 - [ ]（A2）容量满拒绝可查 — **暂缓**：实验室暂无条件打满 8 路并发
 - [x] 管理端筛选可用；无录像入口
 - [x] `CONTEXT.md` 审计条从「MVP 不上」改为「一期话单已上、不含录像」并链到本文
 - [x] 文件方向 + 顶层名/路径进管理端（人工，同日）
-- [x] A4 CSV 导出 + 按操作员部门过滤（ACL 延后）
-- [ ] 进程开/关审计 — 延后（可靠后再做）
+- [x] A4 CSV 导出 + 按操作员部门过滤（人工验收 2026-08-05；**目录 ACL 一期不做**）
+- [ ] 进程开/关审计 — 延后（可靠后再做；表/API type 已预留 `process_open` / `process_close`）
 
 ---
 

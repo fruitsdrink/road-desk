@@ -13,27 +13,27 @@ import (
 )
 
 type AuditSession struct {
-	ID                string          `json:"id"`
-	OperatorUserID    *int64          `json:"operatorUserId"`
-	OperatorName      string          `json:"operatorName"`
-	ViewerHost        string          `json:"viewerHost"`
-	ViewerIP          string          `json:"viewerIp"`
-	AgentID           string          `json:"agentId"`
-	AgentName         string          `json:"agentName"`
-	AgentEndpoint     string          `json:"agentEndpoint"`
-	Mode              string          `json:"mode"`
-	Result            string          `json:"result"`
-	DisconnectReason  string          `json:"disconnectReason"`
-	UsedClipboard     bool            `json:"usedClipboard"`
-	UsedFileTransfer  bool            `json:"usedFileTransfer"`
-	AttemptedAt       time.Time       `json:"attemptedAt"`
-	OpenedAt          *time.Time      `json:"openedAt"`
-	ClosedAt          *time.Time      `json:"closedAt"`
-	Partial           bool            `json:"partial"`
-	Meta              json.RawMessage `json:"meta"`
-	DepartmentName    string          `json:"departmentName"`
-	CreatedAt         time.Time       `json:"createdAt"`
-	UpdatedAt         time.Time       `json:"updatedAt"`
+	ID               string          `json:"id"`
+	OperatorUserID   *int64          `json:"operatorUserId"`
+	OperatorName     string          `json:"operatorName"`
+	ViewerHost       string          `json:"viewerHost"`
+	ViewerIP         string          `json:"viewerIp"`
+	AgentID          string          `json:"agentId"`
+	AgentName        string          `json:"agentName"`
+	AgentEndpoint    string          `json:"agentEndpoint"`
+	Mode             string          `json:"mode"`
+	Result           string          `json:"result"`
+	DisconnectReason string          `json:"disconnectReason"`
+	UsedClipboard    bool            `json:"usedClipboard"`
+	UsedFileTransfer bool            `json:"usedFileTransfer"`
+	AttemptedAt      time.Time       `json:"attemptedAt"`
+	OpenedAt         *time.Time      `json:"openedAt"`
+	ClosedAt         *time.Time      `json:"closedAt"`
+	Partial          bool            `json:"partial"`
+	Meta             json.RawMessage `json:"meta"`
+	DepartmentName   string          `json:"departmentName"`
+	CreatedAt        time.Time       `json:"createdAt"`
+	UpdatedAt        time.Time       `json:"updatedAt"`
 }
 
 // AuditUpsert is a partial update; empty strings / nil leave existing values

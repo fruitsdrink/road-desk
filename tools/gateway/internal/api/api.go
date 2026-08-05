@@ -61,6 +61,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/admin/users/{id}", s.requireAdmin(s.deleteUser))
 
 	mux.HandleFunc("POST /v1/audit/sessions/upsert", s.requireAuditIngest(s.auditUpsert))
+	mux.HandleFunc("POST /v1/audit/events", s.requireAuditIngest(s.auditIngestEvents))
 	mux.HandleFunc("GET /v1/admin/audit/sessions", s.requireAdmin(s.listAuditSessions))
 	mux.HandleFunc("GET /v1/admin/audit/sessions/export", s.requireAdmin(s.exportAuditSessionsCSV))
 	mux.HandleFunc("GET /v1/admin/audit/sessions/{id}", s.requireAdmin(s.getAuditSession))
@@ -152,11 +153,11 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request, requireRole strin
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"token":          tok,
-		"role":           claims.Role,
-		"username":       claims.Username,
-		"departmentId":   claims.DepartmentID,
-		"userId":         claims.UserID,
+		"token":        tok,
+		"role":         claims.Role,
+		"username":     claims.Username,
+		"departmentId": claims.DepartmentID,
+		"userId":       claims.UserID,
 	})
 }
 
@@ -328,8 +329,8 @@ func (s *Server) getAgent(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		DisplayName *string `json:"displayName"`
-		GroupID     *int64  `json:"groupId"`
+		DisplayName *string  `json:"displayName"`
+		GroupID     *int64   `json:"groupId"`
 		TagIDs      *[]int64 `json:"tagIds"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
@@ -562,9 +563,9 @@ func (s *Server) downloadSecret(w http.ResponseWriter, r *http.Request, name, fi
 }
 
 type treeNode struct {
-	ID       int64       `json:"id"`
-	Name     string      `json:"name"`
-	Children []treeNode  `json:"children"`
+	ID       int64         `json:"id"`
+	Name     string        `json:"name"`
+	Children []treeNode    `json:"children"`
 	Agents   []store.Agent `json:"agents"`
 }
 
@@ -678,4 +679,3 @@ func friendlyErr(msg string) string {
 		return msg
 	}
 }
-

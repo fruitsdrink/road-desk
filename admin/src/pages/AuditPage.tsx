@@ -1,9 +1,22 @@
 import { useMemo, useRef, useState } from 'react'
-import { Button, DatePicker, Input, Select, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
+import {
+  Button,
+  DatePicker,
+  Drawer,
+  Input,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Timeline,
+  Tooltip,
+  Typography,
+  message,
+} from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { useQuery } from '@tanstack/react-query'
 import dayjs, { type Dayjs } from 'dayjs'
-import { api, type AuditSession } from '@/lib/api'
+import { api, type AuditEvent, type AuditSession } from '@/lib/api'
 import { resizableTableComponents } from '@/components/ResizableTitle'
 import { useResizableColumns } from '@/hooks/useResizableColumns'
 import { useTableScrollY } from '@/hooks/useTableScrollY'
@@ -195,6 +208,88 @@ function formatFileTransferDetail(row: AuditSession): string {
     .join('\n\n')
 }
 
+const eventTypeLabel: Record<string, string> = {
+  attempt: '尝试连接',
+  opened: '已接通',
+  closed: '已关闭',
+  failed: '失败',
+  flag: '会话标记',
+  file_transfer: '文件传输',
+  process_open: '进程启动',
+  process_close: '进程退出',
+}
+
+const eventSourceLabel: Record<string, string> = {
+  viewer: '操作端',
+  agent: '被控端',
+  gateway: '网关',
+}
+
+function eventColor(type: string): string {
+  switch (type) {
+    case 'opened':
+      return 'green'
+    case 'failed':
+      return 'red'
+    case 'closed':
+      return 'gray'
+    case 'file_transfer':
+      return 'blue'
+    case 'process_open':
+      return 'cyan'
+    case 'process_close':
+      return 'orange'
+    default:
+      return 'blue'
+  }
+}
+
+function formatEventDetail(ev: AuditEvent): string {
+  const d = ev.detail && typeof ev.detail === 'object' ? ev.detail : {}
+  const parts: string[] = []
+  if (typeof d.result === 'string' && d.result) parts.push(`结果 ${d.result}`)
+  if (typeof d.mode === 'string' && d.mode) parts.push(`模式 ${modeLabel[d.mode] || d.mode}`)
+  if (typeof d.disconnectReason === 'string' && d.disconnectReason) {
+    parts.push(disconnectLabel[d.disconnectReason] || d.disconnectReason)
+  }
+  if (d.usedClipboard === true) parts.push('剪贴板')
+  if (typeof d.name === 'string' && d.name) {
+    const pid = typeof d.pid === 'number' ? ` pid=${d.pid}` : ''
+    parts.push(`${d.name}${pid}`)
+  }
+  if (typeof d.path === 'string' && d.path) parts.push(d.path)
+  if (d.fileTransfer && typeof d.fileTransfer === 'object') {
+    const fake: AuditSession = {
+      id: '',
+      operatorUserId: null,
+      operatorName: '',
+      viewerHost: '',
+      viewerIp: '',
+      agentId: '',
+      agentName: '',
+      agentEndpoint: '',
+      mode: 'unknown',
+      result: 'unknown',
+      disconnectReason: '',
+      usedClipboard: false,
+      usedFileTransfer: true,
+      attemptedAt: '',
+      openedAt: null,
+      closedAt: null,
+      partial: false,
+      meta: { fileTransfer: d.fileTransfer },
+      createdAt: '',
+      updatedAt: '',
+    }
+    parts.push(formatFileTransferDetail(fake))
+  }
+  if (typeof d.viewerIp === 'string' && d.viewerIp) parts.push(`IP ${d.viewerIp}`)
+  if (typeof d.reconnectCount === 'number' && d.reconnectCount > 0) {
+    parts.push(`重连 ${d.reconnectCount}`)
+  }
+  return parts.join(' · ')
+}
+
 export function AuditPage() {
   const tableWrapRef = useRef<HTMLDivElement>(null)
   const [range, setRange] = useState<[Dayjs | null, Dayjs | null] | null>(null)
@@ -203,6 +298,7 @@ export function AuditPage() {
   const [result, setResult] = useState<string | undefined>()
   const [departmentId, setDepartmentId] = useState<number | undefined>()
   const [exporting, setExporting] = useState(false)
+  const [detailId, setDetailId] = useState<string | null>(null)
 
   const filterParams = {
     from: range?.[0]?.startOf('day').toISOString(),
@@ -219,6 +315,12 @@ export function AuditPage() {
   const listQ = useQuery({
     queryKey: ['audit-sessions', filterParams],
     queryFn: () => api.auditSessions(filterParams),
+  })
+
+  const detailQ = useQuery({
+    queryKey: ['audit-session', detailId],
+    queryFn: () => api.auditSession(detailId!),
+    enabled: !!detailId,
   })
 
   const tableScrollY = useTableScrollY(tableWrapRef, [listQ.isLoading, listQ.data?.items?.length])
@@ -412,8 +514,69 @@ export function AuditPage() {
           components={resizableTableComponents}
           pagination={false}
           scroll={{ y: tableScrollY, x: 1600 }}
+          onRow={(r) => ({
+            onClick: () => setDetailId(r.id),
+            className: 'cursor-pointer',
+          })}
         />
       </div>
+      <Drawer
+        open={!!detailId}
+        onClose={() => setDetailId(null)}
+        title="会话时间线"
+        width={520}
+        destroyOnClose
+      >
+        {detailQ.isLoading && <Typography.Text type="secondary">加载中…</Typography.Text>}
+        {detailQ.isError && (
+          <Typography.Text type="danger">
+            {detailQ.error instanceof Error ? detailQ.error.message : '加载失败'}
+          </Typography.Text>
+        )}
+        {detailQ.data && (
+          <div className="flex flex-col gap-4">
+            <div className="text-sm leading-relaxed text-neutral-700">
+              <div>
+                <Typography.Text type="secondary">话单 </Typography.Text>
+                <Typography.Text code copyable>
+                  {detailQ.data.session.id}
+                </Typography.Text>
+              </div>
+              <div className="mt-1">{formatRemark(detailQ.data.session)}</div>
+            </div>
+            {(detailQ.data.events?.length ?? 0) === 0 ? (
+              <Typography.Text type="secondary">暂无事件（升级前的话单可能无时间线）</Typography.Text>
+            ) : (
+              <Timeline
+                items={(detailQ.data.events ?? []).map((ev) => ({
+                  color: eventColor(ev.type),
+                  children: (
+                    <div className="pb-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Typography.Text strong>
+                          {eventTypeLabel[ev.type] || ev.type}
+                        </Typography.Text>
+                        <Tag>{eventSourceLabel[ev.source] || ev.source}</Tag>
+                        <Typography.Text type="secondary" className="text-xs">
+                          {dayjs(ev.at).format('YYYY-MM-DD HH:mm:ss')}
+                        </Typography.Text>
+                      </div>
+                      {formatEventDetail(ev) && (
+                        <Typography.Paragraph
+                          type="secondary"
+                          className="mb-0 mt-1 whitespace-pre-wrap text-xs"
+                        >
+                          {formatEventDetail(ev)}
+                        </Typography.Paragraph>
+                      )}
+                    </div>
+                  ),
+                }))}
+              />
+            )}
+          </div>
+        )}
+      </Drawer>
     </div>
   )
 }
