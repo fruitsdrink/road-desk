@@ -32,7 +32,7 @@ Related: [tech-stack.md](./tech-stack.md), [ADR-0004](./adr/0004-compliant-media
 | DXGI 进仓方式 | **运行时探测 + 动态加载（或独立 TU）**；Win7/2008 进程 **永不进入 DXGI 代码路径**；满足避坑 B7/G5 精神 |
 | 环境变量覆盖 | `ROAD_DESK_CAPTURE` 仍可强制 `mirror` / `gdi` /（后续）`dxgi` / `auto` |
 | 协议 / Viewer | 不变；仍收脏矩形 + BGRA |
-| 多屏 / 硬编 / 音频 / Per-Monitor V2 | **本方案不做** |
+| 多屏选屏 / 硬编 / 音频 / Per-Monitor V2 | **不做**（多屏选屏与 `CONTEXT.md`「主屏远控」一致：暂不实现、未排期） |
 | 提权 | legacy+Mirror 仍 `requireAdministrator`；modern 仅 GDI/DXGI 时是否降权 **另议**，本方案 P0 可保持现状以免分叉行为 |
 
 ## 3. 策略矩阵

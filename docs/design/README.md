@@ -13,3 +13,5 @@
 | Agent 对照 | [agent-gateway-config.pen](./agent-gateway-config.pen) | 顶栏型配置窗，同源色板 |
 
 在 Cursor 中用 Pencil 打开对应 `.pen` 预览。本 Agent 会话若 Tools & MCP 中无 `pencil`，可直接编辑 JSON 或新开对话后再用 MCP 改画布。
+
+后续实现批次见 [viewer-implementation-plan.md](../viewer-implementation-plan.md)（菜单闭环、重连、UI 收口；不含新建连接 / 多屏选屏）。

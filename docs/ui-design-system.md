@@ -301,10 +301,10 @@ MessageBox 使用系统图标类型（`MB_ICONERROR` 等），标题统一为 `R
 ```
 
 - 背景：树/列表 `surface.panel`；外壳 `surface.chrome`
-- **侧栏分割条**：树右缘 4 DIP（`rd.color.splitter`）；悬停/拖动 `accent` + 细握点；光标 `IDC_SIZEWE`；树宽夹取 120 … 客户宽−200（默认 240）。稿见 Frame D。
-- 占位菜单/工具栏：灰显项可用，但可见控件字体与颜色须已是产品字体，避免「半成品系统灰」与登录页割裂
+- 菜单栏（`MIIM_BITMAP` + 加速键）：文件 退出(`log-out`, Alt+F4)；查看 刷新(`refresh-cw`, F5) / 下一标签(Ctrl+Tab) / 上一标签(Ctrl+Shift+Tab) / 切换窗格(F6)；会话 启动(`monitor`, Ctrl+Enter) / 关闭(`x`, Ctrl+W) / 全部断开(`x-circle`, Ctrl+Shift+W)；帮助 关于(`info`, F1)。顶层带 `&` 助记键。树/列表/Tab 条 `WS_TABSTOP` + `IsDialogMessage`；Tab 条方向键切页、Delete 关会话；列表/树 Enter 启动。远控会话持有键鼠时 LL hook 优先转发远端。**会话抢键期间不要求本机全键盘**（无交还热键；见 `viewer-implementation-plan.md`）。
+- 侧栏分割条：树右缘 4 DIP（`rd.color.splitter`）；悬停/拖动 `accent` + 细握点；光标 `IDC_SIZEWE`；树宽夹取 120 … 客户宽−200（默认 240）。稿见 Frame D。
 - 会话 Tab：活动/非活动用 §3.1 Tab 色；关闭「×」热区 18 DIP
-- **Tab 溢出导航**：标签总宽超过可视区时，条两端显示 ◀ / ▶（各 24×24）；未溢出则隐藏。到头侧按钮 `text.muted` 禁用，可滚动侧用 panel+border。新开/激活 Tab 时 `scrollIntoView`。稿见 Frame B / E。现状无滚动应对齐。
+- **Tab 溢出导航**：标签总宽超过可视区时，条两端显示 ◀ / ▶（各 24×24）；未溢出则隐藏。到头侧按钮 `text.muted` 禁用，可滚动侧用 panel+border。新开/激活 Tab 时 `scrollIntoView`。稿见 Frame B / E。
 - **右键菜单**（`CreatePopupMenu` + `MIIM_BITMAP` 图标，非系统灰 MessageBox）：关闭(`x`) / 关闭其他(`copy-x`) / 关闭全部(`x-circle`)；分隔；拖出(`panel-top-open`，已拖出则灰显) / 拖回(`panel-top-close`，停靠则灰显)；分隔；全屏(`maximize`)；只读(`eye`)。顶栏标题；已拖出 Tab 显示角标。稿见 `docs/design/viewer-console.pen` Frame C。
 
 ### 4.4 会话表面（Session Surface）

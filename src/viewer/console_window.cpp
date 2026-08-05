@@ -74,13 +74,20 @@ enum : int {
   IDC_SESSION_HOST = 1006,
 };
 
-// Toolbar command ids.
+// Menu + toolbar command ids (shared where actions overlap).
 constexpr int kCmdRefresh = 10;
-constexpr int kCmdSession = 11;  // start (list selection) / close (active tab)
+constexpr int kCmdSession = 11;       // toolbar: start (list) / close (active tab)
 constexpr int kCmdCloseAll = 12;
 constexpr int kCmdScreenshot = 13;
 constexpr int kCmdFullscreen = 14;
 constexpr int kCmdViewOnly = 15;
+constexpr int kCmdExit = 16;
+constexpr int kCmdAbout = 17;
+constexpr int kCmdStartSession = 18;  // menu: start / focus selected device
+constexpr int kCmdCloseSession = 19;  // menu: close active tab
+constexpr int kCmdNextTab = 20;
+constexpr int kCmdPrevTab = 21;
+constexpr int kCmdCyclePane = 22;
 
 // Toolbar imagelist indices (build_toolbar_images order).
 constexpr int kTbImgRefresh = 0;
@@ -122,6 +129,8 @@ struct ConsoleState {
   HFONT ui_font = nullptr;       // rd.font.body 10pt
   HFONT caption_font = nullptr;  // rd.font.caption 9pt
   HBRUSH menu_chrome_br = nullptr;
+  HACCEL accel = nullptr;
+  HBITMAP menu_icons[6] = {};  // MenuBarIcon order
   ConnectDefaults connect;
   int dpi = 96;
   int toolbar_h = kToolbarHDip;
@@ -425,7 +434,7 @@ void set_status(ConsoleState* st, const wchar_t* text) {
                reinterpret_cast<LPARAM>(text ? text : L""));
 }
 
-void update_toolbar_state(ConsoleState* st);
+void sync_chrome_commands(ConsoleState* st);
 int find_session_by_device(ConsoleState* st, int device_id);
 int selected_list_device_id(ConsoleState* st);
 bool session_toolbar_starts(ConsoleState* st);
@@ -457,7 +466,7 @@ void layout(ConsoleState* st) {
     MoveWindow(st->toolbar, 0, y, cw, st->toolbar_h, TRUE);
     const int btn = st->toolbar_h;
     SendMessageW(st->toolbar, TB_SETBUTTONSIZE, 0, MAKELONG(btn, btn));
-    update_toolbar_state(st);
+    sync_chrome_commands(st);
     y += st->toolbar_h;
   }
   const int body_h = ch - y - st->status_h;
@@ -530,6 +539,21 @@ void layout(ConsoleState* st) {
   }
 }
 
+void ensure_list_selection(ConsoleState* st) {
+  if (!st || !st->list) {
+    return;
+  }
+  if (ListView_GetItemCount(st->list) <= 0) {
+    return;
+  }
+  if (ListView_GetNextItem(st->list, -1, LVNI_SELECTED) >= 0) {
+    return;
+  }
+  ListView_SetItemState(st->list, 0, LVIS_SELECTED | LVIS_FOCUSED,
+                        LVIS_SELECTED | LVIS_FOCUSED);
+  sync_chrome_commands(st);
+}
+
 void fill_list(ConsoleState* st) {
   if (!st || !st->list) {
     return;
@@ -560,7 +584,11 @@ void fill_list(ConsoleState* st) {
     ListView_SetItemText(st->list, row, 4, const_cast<LPWSTR>(d->remark.c_str()));
     ++row;
   }
-  update_toolbar_state(st);
+  if (row > 0) {
+    ListView_SetItemState(st->list, 0, LVIS_SELECTED | LVIS_FOCUSED,
+                          LVIS_SELECTED | LVIS_FOCUSED);
+  }
+  sync_chrome_commands(st);
 }
 
 HTREEITEM insert_tree_recursive(ConsoleState* st, HWND tree, HTREEITEM parent, int node_id) {
@@ -630,8 +658,8 @@ bool session_toolbar_starts(ConsoleState* st) {
   return id >= 0 && find_session_by_device(st, id) < 0;
 }
 
-void update_toolbar_state(ConsoleState* st) {
-  if (!st || !st->toolbar) {
+void sync_chrome_commands(ConsoleState* st) {
+  if (!st) {
     return;
   }
   const bool has_sessions = !st->sessions.empty();
@@ -639,18 +667,36 @@ void update_toolbar_state(ConsoleState* st) {
                           st->active_tab < static_cast<int>(st->sessions.size());
   const bool can_start = session_toolbar_starts(st);
   const bool has_list_sel = selected_list_device_id(st) >= 0;
-  SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdSession,
-               (can_start || has_active || has_list_sel) ? TRUE : FALSE);
-  SendMessageW(st->toolbar, TB_CHANGEBITMAP, kCmdSession,
-               can_start ? kTbImgStart : kTbImgClose);
-  SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdCloseAll, has_sessions ? TRUE : FALSE);
-  SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdScreenshot, has_active ? TRUE : FALSE);
-  SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdFullscreen, has_active ? TRUE : FALSE);
-  SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdViewOnly, has_active ? TRUE : FALSE);
-  const bool view_only =
-      has_active && st->sessions[static_cast<size_t>(st->active_tab)].host &&
-      st->sessions[static_cast<size_t>(st->active_tab)].host->view_only();
-  SendMessageW(st->toolbar, TB_CHECKBUTTON, kCmdViewOnly, view_only ? TRUE : FALSE);
+  const bool can_session_btn = can_start || has_active || has_list_sel;
+
+  if (st->toolbar) {
+    SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdSession, can_session_btn ? TRUE : FALSE);
+    SendMessageW(st->toolbar, TB_CHANGEBITMAP, kCmdSession,
+                 can_start ? kTbImgStart : kTbImgClose);
+    SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdCloseAll, has_sessions ? TRUE : FALSE);
+    SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdScreenshot, has_active ? TRUE : FALSE);
+    SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdFullscreen, has_active ? TRUE : FALSE);
+    SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdViewOnly, has_active ? TRUE : FALSE);
+    const bool view_only =
+        has_active && st->sessions[static_cast<size_t>(st->active_tab)].host &&
+        st->sessions[static_cast<size_t>(st->active_tab)].host->view_only();
+    SendMessageW(st->toolbar, TB_CHECKBUTTON, kCmdViewOnly, view_only ? TRUE : FALSE);
+  }
+
+  if (HMENU menu = st->hwnd ? GetMenu(st->hwnd) : nullptr) {
+    auto set_item = [menu](UINT id, bool on) {
+      EnableMenuItem(menu, id, MF_BYCOMMAND | (on ? MF_ENABLED : MF_GRAYED));
+    };
+    set_item(kCmdRefresh, true);
+    set_item(kCmdExit, true);
+    set_item(kCmdAbout, true);
+    set_item(kCmdStartSession, can_start || has_list_sel);
+    set_item(kCmdCloseSession, has_active);
+    set_item(kCmdCloseAll, has_sessions);
+    set_item(kCmdNextTab, has_sessions);
+    set_item(kCmdPrevTab, has_sessions);
+    set_item(kCmdCyclePane, true);
+  }
 }
 
 void refresh_directory(ConsoleState* st) {
@@ -703,6 +749,83 @@ void select_tab(ConsoleState* st, int tab_index) {
   ensure_tab_visible(st, tab_index);
   if (st->tab_strip) {
     InvalidateRect(st->tab_strip, nullptr, TRUE);
+  }
+}
+
+void focus_after_tab_change(ConsoleState* st) {
+  if (!st) {
+    return;
+  }
+  if (st->active_tab == kTabCatalog) {
+    if (st->list && IsWindowVisible(st->list)) {
+      ensure_list_selection(st);
+      SetFocus(st->list);
+    } else if (st->tree) {
+      SetFocus(st->tree);
+    }
+  } else if (st->tab_strip && IsWindowVisible(st->tab_strip)) {
+    SetFocus(st->tab_strip);
+  }
+}
+
+void cmd_next_tab(ConsoleState* st) {
+  if (!st || st->sessions.empty()) {
+    return;
+  }
+  int next = kTabCatalog;
+  if (st->active_tab == kTabCatalog) {
+    next = 0;
+  } else if (st->active_tab + 1 < static_cast<int>(st->sessions.size())) {
+    next = st->active_tab + 1;
+  } else {
+    next = kTabCatalog;
+  }
+  select_tab(st, next);
+  focus_after_tab_change(st);
+}
+
+void cmd_prev_tab(ConsoleState* st) {
+  if (!st || st->sessions.empty()) {
+    return;
+  }
+  int prev = kTabCatalog;
+  if (st->active_tab == kTabCatalog) {
+    prev = static_cast<int>(st->sessions.size()) - 1;
+  } else if (st->active_tab <= 0) {
+    prev = kTabCatalog;
+  } else {
+    prev = st->active_tab - 1;
+  }
+  select_tab(st, prev);
+  focus_after_tab_change(st);
+}
+
+void cmd_cycle_pane(ConsoleState* st) {
+  if (!st) {
+    return;
+  }
+  const HWND focus = GetFocus();
+  const bool list_ok = st->list && IsWindowVisible(st->list);
+  const bool tabs_ok = st->tab_strip && IsWindowVisible(st->tab_strip);
+  if (focus == st->tree) {
+    if (list_ok) {
+      ensure_list_selection(st);
+      SetFocus(st->list);
+    } else if (tabs_ok) {
+      SetFocus(st->tab_strip);
+    }
+  } else if (focus == st->list) {
+    if (tabs_ok) {
+      SetFocus(st->tab_strip);
+    } else if (st->tree) {
+      SetFocus(st->tree);
+    }
+  } else if (focus == st->tab_strip) {
+    if (st->tree) {
+      SetFocus(st->tree);
+    }
+  } else if (st->tree) {
+    SetFocus(st->tree);
   }
 }
 
@@ -1104,6 +1227,11 @@ void paint_tab_strip(HWND hwnd, ConsoleState* st) {
 
   SelectClipRgn(hdc, nullptr);
   DeleteObject(clip);
+  if (GetFocus() == hwnd) {
+    RECT fr = rc;
+    InflateRect(&fr, -1, -1);
+    DrawFocusRect(hdc, &fr);
+  }
   if (old_font) {
     SelectObject(hdc, old_font);
   }
@@ -1339,7 +1467,7 @@ void run_tab_context_menu(ConsoleState* st, HWND hwnd, int tab_index, int screen
     case kCmdTabCtxViewOnly:
       if (host) {
         host->set_view_only(!host->view_only());
-        update_toolbar_state(st);
+        sync_chrome_commands(st);
         set_status(st, host->view_only() ? L"仅查看模式：键鼠输入已冻结" : L"已恢复键鼠控制");
       }
       break;
@@ -1531,6 +1659,50 @@ HIMAGELIST build_toolbar_images(int icon_px, COLORREF ink) {
 LRESULT CALLBACK TabStripProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
   ConsoleState* st = g_console;
   switch (msg) {
+    case WM_GETDLGCODE:
+      return DLGC_WANTARROWS | DLGC_WANTCHARS;
+    case WM_SETFOCUS:
+    case WM_KILLFOCUS:
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return 0;
+    case WM_KEYDOWN:
+      if (!st) {
+        break;
+      }
+      switch (wparam) {
+        case VK_LEFT:
+        case VK_UP:
+          cmd_prev_tab(st);
+          return 0;
+        case VK_RIGHT:
+        case VK_DOWN:
+          cmd_next_tab(st);
+          return 0;
+        case VK_HOME:
+          select_tab(st, kTabCatalog);
+          focus_after_tab_change(st);
+          return 0;
+        case VK_END:
+          if (!st->sessions.empty()) {
+            select_tab(st, static_cast<int>(st->sessions.size()) - 1);
+            focus_after_tab_change(st);
+          }
+          return 0;
+        case VK_DELETE:
+        case VK_BACK:
+          if (st->active_tab >= 0 &&
+              st->active_tab < static_cast<int>(st->sessions.size())) {
+            close_session_at(st, st->active_tab);
+          }
+          return 0;
+        case VK_RETURN:
+        case VK_SPACE:
+          // Active tab already selected; Space/Enter keep focus here.
+          return 0;
+        default:
+          break;
+      }
+      break;
     case WM_PAINT:
       if (st) {
         paint_tab_strip(hwnd, st);
@@ -1698,24 +1870,236 @@ LRESULT CALLBACK TabStripProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
   return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
-HMENU build_placeholder_menu() {
+HMENU build_console_menu() {
   HMENU menu = CreateMenu();
   HMENU file = CreatePopupMenu();
-  AppendMenuW(file, MF_STRING | MF_GRAYED, 1, L"新建连接…");
-  AppendMenuW(file, MF_STRING | MF_GRAYED, 2, L"退出");
-  AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(file), L"文件");
+  AppendMenuW(file, MF_STRING, kCmdExit, L"退出(&X)\tAlt+F4");
+  AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(file), L"文件(&F)");
   HMENU view = CreatePopupMenu();
-  AppendMenuW(view, MF_STRING | MF_GRAYED, 3, L"刷新");
-  AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(view), L"查看");
+  AppendMenuW(view, MF_STRING, kCmdRefresh, L"刷新(&R)\tF5");
+  AppendMenuW(view, MF_SEPARATOR, 0, nullptr);
+  AppendMenuW(view, MF_STRING, kCmdNextTab, L"下一标签(&N)\tCtrl+Tab");
+  AppendMenuW(view, MF_STRING, kCmdPrevTab, L"上一标签(&P)\tCtrl+Shift+Tab");
+  AppendMenuW(view, MF_STRING, kCmdCyclePane, L"切换窗格(&G)\tF6");
+  AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(view), L"查看(&V)");
   HMENU session = CreatePopupMenu();
-  AppendMenuW(session, MF_STRING | MF_GRAYED, 5, L"启动会话");
-  AppendMenuW(session, MF_STRING | MF_GRAYED, 6, L"关闭会话");
-  AppendMenuW(session, MF_STRING | MF_GRAYED, 7, L"全部断开");
-  AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(session), L"会话");
+  AppendMenuW(session, MF_STRING, kCmdStartSession, L"启动会话(&O)\tCtrl+Enter");
+  AppendMenuW(session, MF_STRING, kCmdCloseSession, L"关闭会话(&W)\tCtrl+W");
+  AppendMenuW(session, MF_STRING, kCmdCloseAll, L"全部断开(&A)\tCtrl+Shift+W");
+  AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(session), L"会话(&S)");
   HMENU help = CreatePopupMenu();
-  AppendMenuW(help, MF_STRING | MF_GRAYED, 4, L"关于");
-  AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(help), L"帮助");
+  AppendMenuW(help, MF_STRING, kCmdAbout, L"关于(&A)\tF1");
+  AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(help), L"帮助(&H)");
   return menu;
+}
+
+enum class MenuBarIcon : int {
+  Exit = 0,
+  Refresh,
+  Start,
+  Close,
+  CloseAll,
+  About,
+  Count,
+};
+
+HBITMAP make_menu_bar_bitmap(MenuBarIcon which, int icon_px, COLORREF ink) {
+  if (icon_px < 12) {
+    icon_px = 12;
+  }
+  ULONG_PTR token = 0;
+  gdip::GdiplusStartupInput gsi;
+  if (gdip::GdiplusStartup(&token, &gsi, nullptr) != gdip::Ok) {
+    return nullptr;
+  }
+  HBITMAP hbmp = nullptr;
+  {
+    gdip::Bitmap bmp(icon_px, icon_px, PixelFormat32bppPARGB);
+    gdip::Graphics g(&bmp);
+    g.SetSmoothingMode(gdip::SmoothingModeAntiAlias);
+    g.SetPixelOffsetMode(gdip::PixelOffsetModeHalf);
+    g.Clear(gdip::Color(0, 0, 0, 0));
+    constexpr float kMargin = 1.5f;
+    const float inner = static_cast<float>(icon_px) - 2.f * kMargin;
+    const float scale = inner / 24.f;
+    g.TranslateTransform(kMargin, kMargin);
+    g.ScaleTransform(scale, scale);
+    gdip::Pen pen(gdip_rgb(ink), 2.f);
+    pen.SetStartCap(gdip::LineCapRound);
+    pen.SetEndCap(gdip::LineCapRound);
+    pen.SetLineJoin(gdip::LineJoinRound);
+
+    switch (which) {
+      case MenuBarIcon::Exit:
+        // lucide log-out — door + arrow
+        g.DrawRectangle(&pen, 9.f, 3.f, 11.f, 18.f);
+        g.DrawLine(&pen, 3.f, 12.f, 14.f, 12.f);
+        {
+          gdip::PointF tip[] = {{11.f, 8.f}, {15.f, 12.f}, {11.f, 16.f}};
+          g.DrawLines(&pen, tip, 3);
+        }
+        break;
+      case MenuBarIcon::Refresh:
+        g.DrawArc(&pen, 4.f, 4.f, 16.f, 16.f, -50.f, 200.f);
+        {
+          gdip::PointF tip[] = {{16.5f, 4.f}, {20.f, 4.f}, {20.f, 7.5f}};
+          g.DrawLines(&pen, tip, 3);
+        }
+        g.DrawArc(&pen, 4.f, 4.f, 16.f, 16.f, 130.f, 200.f);
+        {
+          gdip::PointF tip[] = {{7.5f, 20.f}, {4.f, 20.f}, {4.f, 16.5f}};
+          g.DrawLines(&pen, tip, 3);
+        }
+        break;
+      case MenuBarIcon::Start:
+        g.DrawRectangle(&pen, 2.f, 3.f, 20.f, 14.f);
+        g.DrawLine(&pen, 12.f, 17.f, 12.f, 21.f);
+        g.DrawLine(&pen, 8.f, 21.f, 16.f, 21.f);
+        break;
+      case MenuBarIcon::Close:
+        g.DrawLine(&pen, 18.f, 6.f, 6.f, 18.f);
+        g.DrawLine(&pen, 6.f, 6.f, 18.f, 18.f);
+        break;
+      case MenuBarIcon::CloseAll:
+        g.DrawEllipse(&pen, 3.f, 3.f, 18.f, 18.f);
+        g.DrawLine(&pen, 15.f, 9.f, 9.f, 15.f);
+        g.DrawLine(&pen, 9.f, 9.f, 15.f, 15.f);
+        break;
+      case MenuBarIcon::About:
+        // lucide info
+        g.DrawEllipse(&pen, 3.f, 3.f, 18.f, 18.f);
+        g.DrawLine(&pen, 12.f, 11.f, 12.f, 16.f);
+        g.DrawEllipse(&pen, 11.f, 7.f, 2.f, 2.f);
+        break;
+      default:
+        break;
+    }
+    bmp.GetHBITMAP(gdip::Color(0, 0, 0, 0), &hbmp);
+  }
+  gdip::GdiplusShutdown(token);
+  return hbmp;
+}
+
+void attach_console_menu_icons(ConsoleState* st) {
+  if (!st || !st->hwnd) {
+    return;
+  }
+  HMENU menu = GetMenu(st->hwnd);
+  if (!menu) {
+    return;
+  }
+  const int icon_px = dip(14, st->dpi);
+  for (int i = 0; i < static_cast<int>(MenuBarIcon::Count); ++i) {
+    if (st->menu_icons[i]) {
+      DeleteObject(st->menu_icons[i]);
+      st->menu_icons[i] = nullptr;
+    }
+    st->menu_icons[i] =
+        make_menu_bar_bitmap(static_cast<MenuBarIcon>(i), icon_px, kTextSecondary);
+  }
+
+  struct Item {
+    UINT cmd;
+    MenuBarIcon icon;
+  };
+  const Item items[] = {
+      {kCmdExit, MenuBarIcon::Exit},
+      {kCmdRefresh, MenuBarIcon::Refresh},
+      {kCmdStartSession, MenuBarIcon::Start},
+      {kCmdCloseSession, MenuBarIcon::Close},
+      {kCmdCloseAll, MenuBarIcon::CloseAll},
+      {kCmdAbout, MenuBarIcon::About},
+  };
+  for (const Item& it : items) {
+    MENUITEMINFOW mii{};
+    mii.cbSize = sizeof(mii);
+    mii.fMask = MIIM_BITMAP;
+    mii.hbmpItem = st->menu_icons[static_cast<int>(it.icon)];
+    SetMenuItemInfoW(menu, it.cmd, FALSE, &mii);
+  }
+
+  MENUINFO mi{};
+  mi.cbSize = sizeof(mi);
+  mi.fMask = MIM_BACKGROUND | MIM_STYLE;
+  mi.dwStyle = MNS_CHECKORBMP;
+  mi.hbrBack = st->menu_chrome_br;
+  SetMenuInfo(menu, &mi);
+  DrawMenuBar(st->hwnd);
+}
+
+HACCEL create_console_accel() {
+  // Local chrome shortcuts (directory / shell). Session grab is out of scope.
+  ACCEL accels[] = {
+      {FVIRTKEY | FNOINVERT, VK_F5, static_cast<WORD>(kCmdRefresh)},
+      {FVIRTKEY | FCONTROL | FNOINVERT, VK_RETURN, static_cast<WORD>(kCmdStartSession)},
+      {FVIRTKEY | FCONTROL | FNOINVERT, 'W', static_cast<WORD>(kCmdCloseSession)},
+      {FVIRTKEY | FCONTROL | FSHIFT | FNOINVERT, 'W', static_cast<WORD>(kCmdCloseAll)},
+      {FVIRTKEY | FNOINVERT, VK_F1, static_cast<WORD>(kCmdAbout)},
+      {FVIRTKEY | FCONTROL | FNOINVERT, VK_TAB, static_cast<WORD>(kCmdNextTab)},
+      {FVIRTKEY | FCONTROL | FSHIFT | FNOINVERT, VK_TAB, static_cast<WORD>(kCmdPrevTab)},
+      {FVIRTKEY | FNOINVERT, VK_F6, static_cast<WORD>(kCmdCyclePane)},
+  };
+  return CreateAcceleratorTableW(accels, static_cast<int>(ARRAYSIZE(accels)));
+}
+
+void show_about_dialog(HWND owner) {
+  wchar_t buf[320] = {};
+  _snwprintf_s(buf, _TRUNCATE,
+               L"Road Desk Viewer\n"
+               L"版本 %hs\n"
+               L"操作端 — 连接目录并远控被控端桌面\n\n"
+               L"编译 %hs %hs",
+               ROAD_DESK_VERSION_STRING, ROAD_DESK_BUILD_DATE, ROAD_DESK_BUILD_TIME);
+  MessageBoxW(owner, buf, L"Road Desk", MB_OK | MB_ICONINFORMATION);
+}
+
+bool confirm_exit_if_sessions(ConsoleState* st) {
+  if (!st || st->sessions.empty()) {
+    return true;
+  }
+  const int r = MessageBoxW(st->hwnd,
+                            L"有活动远控会话，退出将全部断开。确定退出？", L"Road Desk",
+                            MB_OKCANCEL | MB_ICONQUESTION | MB_DEFBUTTON2);
+  return r == IDOK;
+}
+
+void cmd_start_session(ConsoleState* st) {
+  if (!st) {
+    return;
+  }
+  if (session_toolbar_starts(st)) {
+    open_session_for_device(st, selected_list_device_id(st));
+    return;
+  }
+  const int device_id = selected_list_device_id(st);
+  if (device_id >= 0) {
+    open_session_for_device(st, device_id);  // focus existing
+  } else {
+    set_status(st, L"请先在列表中选择被控端");
+  }
+}
+
+void cmd_close_active_session(ConsoleState* st) {
+  if (!st) {
+    return;
+  }
+  if (st->active_tab >= 0 && st->active_tab < static_cast<int>(st->sessions.size())) {
+    close_session_at(st, st->active_tab);
+  }
+}
+
+void cmd_session_toolbar(ConsoleState* st) {
+  if (!st) {
+    return;
+  }
+  if (session_toolbar_starts(st)) {
+    open_session_for_device(st, selected_list_device_id(st));
+  } else if (st->active_tab >= 0 &&
+             st->active_tab < static_cast<int>(st->sessions.size())) {
+    close_session_at(st, st->active_tab);
+  } else {
+    cmd_start_session(st);
+  }
 }
 
 LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
@@ -1747,14 +2131,7 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
       SendMessageW(hwnd, WM_SETFONT, reinterpret_cast<WPARAM>(st->ui_font), TRUE);
 
       st->menu_chrome_br = CreateSolidBrush(kChrome);
-      if (HMENU menu = GetMenu(hwnd)) {
-        MENUINFO mi{};
-        mi.cbSize = sizeof(mi);
-        mi.fMask = MIM_BACKGROUND;
-        mi.hbrBack = st->menu_chrome_br;
-        SetMenuInfo(menu, &mi);
-        DrawMenuBar(hwnd);
-      }
+      attach_console_menu_icons(st);
 
       const DWORD tb_style = WS_CHILD | WS_VISIBLE | CCS_NODIVIDER | CCS_NOPARENTALIGN |
                              CCS_NORESIZE | TBSTYLE_FLAT | TBSTYLE_TOOLTIPS | TBSTYLE_TRANSPARENT;
@@ -1805,8 +2182,9 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
       SendMessageW(st->toolbar, TB_SETBUTTONSIZE, 0, MAKELONG(btn, btn));
       // Intentionally no TB_AUTOSIZE — layout() sizes the strip to full client width.
       st->tree = CreateWindowExW(0, WC_TREEVIEWW, L"",
-                                 WS_CHILD | WS_VISIBLE | TVS_HASLINES | TVS_LINESATROOT |
-                                     TVS_HASBUTTONS | TVS_SHOWSELALWAYS | TVS_FULLROWSELECT,
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | TVS_HASLINES |
+                                     TVS_LINESATROOT | TVS_HASBUTTONS | TVS_SHOWSELALWAYS |
+                                     TVS_FULLROWSELECT,
                                  0, 0, 100, 100, hwnd, reinterpret_cast<HMENU>(IDC_TREE),
                                  st->instance, nullptr);
       TreeView_SetBkColor(st->tree, kPanel);
@@ -1814,13 +2192,14 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
       TreeView_SetLineColor(st->tree, kBorderStrong);
 
       st->tab_strip =
-          CreateWindowExW(0, kTabStripClass, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0,
-                          100, st->tab_h, hwnd, reinterpret_cast<HMENU>(IDC_TABSTRIP),
-                          st->instance, nullptr);
+          CreateWindowExW(0, kTabStripClass, L"",
+                          WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_CLIPSIBLINGS, 0, 0, 100,
+                          st->tab_h, hwnd, reinterpret_cast<HMENU>(IDC_TABSTRIP), st->instance,
+                          nullptr);
 
       st->list = CreateWindowExW(0, WC_LISTVIEWW, L"",
-                                 WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL |
-                                     LVS_SHOWSELALWAYS,
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT |
+                                     LVS_SINGLESEL | LVS_SHOWSELALWAYS,
                                  0, 0, 100, 100, hwnd, reinterpret_cast<HMENU>(IDC_LIST),
                                  st->instance, nullptr);
       ListView_SetExtendedListViewStyle(st->list, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
@@ -1865,6 +2244,9 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
 
       fill_tree(st);
       layout(st);
+      if (st->tree) {
+        SetFocus(st->tree);
+      }
       return 0;
     }
     case WM_SIZE:
@@ -1933,24 +2315,32 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
       }
       return 0;
     }
+    case WM_CLOSE:
+      if (!confirm_exit_if_sessions(st)) {
+        return 0;
+      }
+      DestroyWindow(hwnd);
+      return 0;
     case WM_COMMAND: {
       const int cmd = LOWORD(wparam);
       if (cmd == kCmdRefresh) {
         refresh_directory(st);
+      } else if (cmd == kCmdExit) {
+        SendMessageW(hwnd, WM_CLOSE, 0, 0);
+      } else if (cmd == kCmdAbout) {
+        show_about_dialog(hwnd);
+      } else if (cmd == kCmdStartSession) {
+        cmd_start_session(st);
+      } else if (cmd == kCmdCloseSession) {
+        cmd_close_active_session(st);
+      } else if (cmd == kCmdNextTab) {
+        cmd_next_tab(st);
+      } else if (cmd == kCmdPrevTab) {
+        cmd_prev_tab(st);
+      } else if (cmd == kCmdCyclePane) {
+        cmd_cycle_pane(st);
       } else if (cmd == kCmdSession) {
-        if (session_toolbar_starts(st)) {
-          open_session_for_device(st, selected_list_device_id(st));
-        } else if (st->active_tab >= 0 &&
-                   st->active_tab < static_cast<int>(st->sessions.size())) {
-          close_session_at(st, st->active_tab);
-        } else {
-          const int device_id = selected_list_device_id(st);
-          if (device_id >= 0) {
-            open_session_for_device(st, device_id);  // focus existing
-          } else {
-            set_status(st, L"请先在列表中选择被控端");
-          }
-        }
+        cmd_session_toolbar(st);
       } else if (cmd == kCmdCloseAll) {
         close_all_sessions(st);
       } else if (cmd == kCmdScreenshot || cmd == kCmdFullscreen || cmd == kCmdViewOnly) {
@@ -1981,7 +2371,7 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
             }
           } else if (cmd == kCmdViewOnly && host) {
             host->set_view_only(!host->view_only());
-            update_toolbar_state(st);
+            sync_chrome_commands(st);
             set_status(st, host->view_only() ? L"仅查看模式：键鼠输入已冻结"
                                              : L"已恢复键鼠控制");
           }
@@ -2049,11 +2439,27 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
           }
         }
       }
+      if (hdr->hwndFrom == st->tree && hdr->code == NM_RETURN) {
+        HTREEITEM h = TreeView_GetSelection(st->tree);
+        if (h) {
+          TVITEMW it{};
+          it.mask = TVIF_PARAM;
+          it.hItem = h;
+          if (TreeView_GetItem(st->tree, &it)) {
+            open_session_for_device(st, static_cast<int>(it.lParam));
+          }
+        }
+        return TRUE;
+      }
+      if (hdr->hwndFrom == st->list && hdr->code == NM_SETFOCUS) {
+        ensure_list_selection(st);
+        return 0;
+      }
       if (hdr->hwndFrom == st->list && hdr->code == LVN_ITEMCHANGED) {
         const auto* lv = reinterpret_cast<NMLISTVIEW*>(lparam);
         if ((lv->uChanged & LVIF_STATE) &&
             ((lv->uOldState ^ lv->uNewState) & LVIS_SELECTED)) {
-          update_toolbar_state(st);
+          sync_chrome_commands(st);
         }
       }
       if (hdr->hwndFrom == st->list && hdr->code == NM_DBLCLK) {
@@ -2065,6 +2471,17 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
           ListView_GetItem(st->list, &it);
           open_session_for_device(st, static_cast<int>(it.lParam));
         }
+      }
+      if (hdr->hwndFrom == st->list && hdr->code == NM_RETURN) {
+        int i = ListView_GetNextItem(st->list, -1, LVNI_SELECTED);
+        if (i >= 0) {
+          LVITEMW it{};
+          it.mask = LVIF_PARAM;
+          it.iItem = i;
+          ListView_GetItem(st->list, &it);
+          open_session_for_device(st, static_cast<int>(it.lParam));
+        }
+        return TRUE;
       }
       if (hdr->hwndFrom == st->toolbar && hdr->code == TBN_GETINFOTIP) {
         auto* info = reinterpret_cast<NMTBGETINFOTIPW*>(lparam);
@@ -2163,6 +2580,12 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
         DeleteObject(st->menu_chrome_br);
         st->menu_chrome_br = nullptr;
       }
+      for (HBITMAP& bmp : st->menu_icons) {
+        if (bmp) {
+          DeleteObject(bmp);
+          bmp = nullptr;
+        }
+      }
       if (st->toolbar_il) {
         ImageList_Destroy(st->toolbar_il);
         st->toolbar_il = nullptr;
@@ -2238,7 +2661,7 @@ int run_console(HINSTANCE instance, int /*show_cmd*/, const ConnectDefaults& con
   state.connect = connect;
   g_console = &state;
 
-  HMENU menu = build_placeholder_menu();
+  HMENU menu = build_console_menu();
   constexpr int kConsoleW = 1100;
   constexpr int kConsoleH = 720;
   HWND hwnd = CreateWindowExW(0, kConsoleClass, L"Road Desk Viewer", WS_OVERLAPPEDWINDOW, 0, 0,
@@ -2246,6 +2669,7 @@ int run_console(HINSTANCE instance, int /*show_cmd*/, const ConnectDefaults& con
   if (!hwnd) {
     return 1;
   }
+  state.accel = create_console_accel();
   // Center restore bounds on the work area. Do not pass WinMain's show_cmd
   // (often SW_SHOWDEFAULT): Explorer STARTUPINFO would otherwise place the
   // window at the cascade top-left. Always open maximized for the console.
@@ -2264,11 +2688,21 @@ int run_console(HINSTANCE instance, int /*show_cmd*/, const ConnectDefaults& con
 
   MSG msg{};
   while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+    if (state.accel && TranslateAcceleratorW(hwnd, state.accel, &msg)) {
+      continue;
+    }
+    if (IsDialogMessageW(hwnd, &msg)) {
+      continue;
+    }
     TranslateMessage(&msg);
     DispatchMessageW(&msg);
   }
 
   SessionHost::uninstall_keyboard_hook();
+  if (state.accel) {
+    DestroyAcceleratorTable(state.accel);
+    state.accel = nullptr;
+  }
   g_console = nullptr;
   return 0;
 }

@@ -7,7 +7,7 @@
 
 namespace road_desk::viewer {
 
-// Radmin-style console: menu/toolbar/status placeholders, demo tree, list, session tabs.
+// Radmin-style console: menu/toolbar/status, directory tree, list, session tabs.
 int run_console(HINSTANCE instance, int show_cmd, const ConnectDefaults& connect);
 
 // Legacy single session window (CLI host:port).
