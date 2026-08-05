@@ -413,6 +413,16 @@ void SessionHost::set_view_only(bool on) {
   }
 }
 
+void SessionHost::notify_chrome_changed() {
+  if (!hwnd_) {
+    return;
+  }
+  HWND root = GetAncestor(hwnd_, GA_ROOT);
+  if (root) {
+    PostMessageW(root, WM_SESSION_META, 0, reinterpret_cast<LPARAM>(this));
+  }
+}
+
 bool SessionHost::toggle_fullscreen() {
   if (!hwnd_) {
     return false;
@@ -425,23 +435,50 @@ bool SessionHost::toggle_fullscreen() {
                  fullscreen_restore_rect_.bottom - fullscreen_restore_rect_.top,
                  SWP_FRAMECHANGED | SWP_SHOWWINDOW);
     fullscreen_ = false;
+
+    // Docked → fullscreen detaches first; Esc must put the session back in the console.
+    if (fullscreen_dock_parent_ && IsWindow(fullscreen_dock_parent_)) {
+      HWND parent = fullscreen_dock_parent_;
+      fullscreen_dock_parent_ = nullptr;
+      if (attach_to_parent(parent)) {
+        RECT prc{};
+        GetClientRect(parent, &prc);
+        SetWindowPos(hwnd_, nullptr, 0, 0, prc.right - prc.left, prc.bottom - prc.top,
+                     SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+      }
+    } else {
+      fullscreen_dock_parent_ = nullptr;
+    }
+    notify_chrome_changed();
     InvalidateRect(hwnd_, nullptr, TRUE);
     return true;
   }
+
   // Docked sessions detach first so the session can cover the whole monitor.
+  fullscreen_dock_parent_ = nullptr;
   if (!floating_) {
+    HWND parent = GetParent(hwnd_);
     const HINSTANCE inst =
         reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd_, GWLP_HINSTANCE));
-    if (!detach_to_floating(inst)) {
+    if (!parent || !detach_to_floating(inst)) {
       return false;
     }
+    fullscreen_dock_parent_ = parent;
   }
+
   GetWindowRect(hwnd_, &fullscreen_restore_rect_);
   fullscreen_restore_style_ = GetWindowLongPtrW(hwnd_, GWL_STYLE);
   HMONITOR mon = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST);
   MONITORINFO mi{};
   mi.cbSize = sizeof(mi);
   if (!GetMonitorInfoW(mon, &mi)) {
+    // Roll back detach if we failed after tearing out of the console.
+    if (fullscreen_dock_parent_) {
+      HWND parent = fullscreen_dock_parent_;
+      fullscreen_dock_parent_ = nullptr;
+      attach_to_parent(parent);
+      notify_chrome_changed();
+    }
     return false;
   }
   const LONG_PTR style =
@@ -453,6 +490,7 @@ bool SessionHost::toggle_fullscreen() {
                SWP_FRAMECHANGED | SWP_SHOWWINDOW);
   fullscreen_ = true;
   SetFocus(hwnd_);
+  notify_chrome_changed();
   InvalidateRect(hwnd_, nullptr, TRUE);
   return true;
 }
@@ -472,19 +510,33 @@ bool SessionHost::save_screenshot(const std::wstring& path) {
   if (desk_w_ <= 0 || desk_h_ <= 0 || desk_bgra_.empty()) {
     return false;
   }
+  const size_t need =
+      static_cast<size_t>(desk_w_) * static_cast<size_t>(desk_h_) * 4u;
+  if (desk_bgra_.size() < need) {
+    return false;
+  }
   std::vector<uint8_t> bgra = desk_bgra_;
   client_.composite_software_cursor(bgra, desk_w_, desk_h_);
+
+  // Force opaque alpha — remote FB often leaves A=0; PNG would look empty.
+  for (size_t i = 3; i < bgra.size(); i += 4) {
+    bgra[i] = 255;
+  }
 
   gdip::GdiplusStartupInput gsi;
   ULONG_PTR token = 0;
   if (gdip::GdiplusStartup(&token, &gsi, nullptr) != gdip::Ok) {
     return false;
   }
-  gdip::Bitmap bmp(desk_w_, desk_h_, desk_w_ * 4, PixelFormat32bppARGB, bgra.data());
-  // PNG encoder CLSID {557cf406-1a04-11d3-9a73-0000f81ef32e}.
-  CLSID png_clsid = {0x557cf406, 0x1a04, 0x11d3,
-                     {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}};
-  const gdip::Status st = bmp.Save(path.c_str(), &png_clsid, nullptr);
+  // Bitmap must be destroyed before GdiplusShutdown or the dtor AVs.
+  gdip::Status st = gdip::GenericError;
+  {
+    gdip::Bitmap bmp(desk_w_, desk_h_, desk_w_ * 4, PixelFormat32bppARGB, bgra.data());
+    // PNG encoder CLSID {557cf406-1a04-11d3-9a73-0000f81ef32e}.
+    CLSID png_clsid = {0x557cf406, 0x1a04, 0x11d3,
+                       {0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e}};
+    st = bmp.Save(path.c_str(), &png_clsid, nullptr);
+  }
   gdip::GdiplusShutdown(token);
   return st == gdip::Ok;
 }
@@ -607,10 +659,54 @@ void SessionHost::paint() {
     StretchDIBits(back_dc_, dest.left, dest.top, dest.right - dest.left, dest.bottom - dest.top,
                   0, 0, w, h, bgra.data(), &bmi, DIB_RGB_COLORS, SRCCOPY);
   } else {
-    const wchar_t* msg = L"Connecting / waiting for framebuffer…";
+    // Design Frame B: monitor icon + 「正在连接被控端…」+ sessionHint + body font.
+    HDC screen = GetDC(nullptr);
+    const int dpi = screen ? GetDeviceCaps(screen, LOGPIXELSY) : 96;
+    if (screen) {
+      ReleaseDC(nullptr, screen);
+    }
+    LOGFONTW lf{};
+    lf.lfHeight = -MulDiv(10, dpi > 0 ? dpi : 96, 72);
+    lf.lfWeight = FW_NORMAL;
+    lf.lfCharSet = DEFAULT_CHARSET;
+    lf.lfQuality = CLEARTYPE_QUALITY;
+    wcscpy_s(lf.lfFaceName, L"Segoe UI");
+    HFONT font = CreateFontIndirectW(&lf);
+    HGDIOBJ old_font = font ? SelectObject(back_dc_, font) : nullptr;
     SetBkMode(back_dc_, TRANSPARENT);
-    SetTextColor(back_dc_, RGB(220, 220, 220));
-    DrawTextW(back_dc_, msg, -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SetTextColor(back_dc_, RGB(220, 220, 220));  // rd.color.text.sessionHint
+
+    const wchar_t* msg = L"正在连接被控端…";
+    SIZE tsz{};
+    GetTextExtentPoint32W(back_dc_, msg, static_cast<int>(wcslen(msg)), &tsz);
+    const int icon = MulDiv(22, dpi > 0 ? dpi : 96, 96);
+    const int gap = MulDiv(10, dpi > 0 ? dpi : 96, 96);
+    const int block_h = icon + gap + tsz.cy;
+    const int top = rc.top + (ch - block_h) / 2;
+    const int cx = rc.left + cw / 2;
+
+    HPEN pen = CreatePen(PS_SOLID, 2, RGB(220, 220, 220));
+    HGDIOBJ old_pen = SelectObject(back_dc_, pen);
+    HGDIOBJ old_br = SelectObject(back_dc_, GetStockObject(NULL_BRUSH));
+    const int ml = cx - icon / 2;
+    const int mt = top;
+    RoundRect(back_dc_, ml, mt, ml + icon, mt + icon * 3 / 4, 2, 2);
+    MoveToEx(back_dc_, cx, mt + icon * 3 / 4, nullptr);
+    LineTo(back_dc_, cx, mt + icon);
+    MoveToEx(back_dc_, cx - icon / 4, mt + icon, nullptr);
+    LineTo(back_dc_, cx + icon / 4, mt + icon);
+    SelectObject(back_dc_, old_pen);
+    SelectObject(back_dc_, old_br);
+    DeleteObject(pen);
+
+    RECT text_rc{rc.left, top + icon + gap, rc.right, top + icon + gap + tsz.cy};
+    DrawTextW(back_dc_, msg, -1, &text_rc, DT_CENTER | DT_TOP | DT_SINGLELINE);
+    if (old_font) {
+      SelectObject(back_dc_, old_font);
+    }
+    if (font) {
+      DeleteObject(font);
+    }
   }
 
   BitBlt(hdc, 0, 0, cw, ch, back_dc_, 0, 0, SRCCOPY);

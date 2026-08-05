@@ -1,0 +1,3462 @@
+{
+  "version": "2.15",
+  "children": [
+    {
+      "type": "note",
+      "id": "noteBrief",
+      "x": 40,
+      "y": -266,
+      "width": 1100,
+      "height": 100,
+      "content": "Viewer 管理台 · 布局：左列 Frame A/B + 实现注；右列 C 右键菜单 / D 侧栏调宽 / E Tab 溢出导航。\n对照 docs/ui-design-system.md 与 src/viewer/console_window.cpp。S1 登录见 viewer-login.pen。\nToken：chrome/panel/accent；树默认 240；分割条 4 DIP；Tab 溢出 ◀▶ 24×24。"
+    },
+    {
+      "type": "text",
+      "id": "lblDir",
+      "x": 40,
+      "y": 20,
+      "fill": "$rd.color.text.secondary",
+      "content": "A · 目录模式（1100×700）— 未开会话",
+      "fontFamily": "Segoe UI",
+      "fontSize": 14,
+      "fontWeight": "600"
+    },
+    {
+      "type": "frame",
+      "id": "consoleDir",
+      "x": 40,
+      "y": 50,
+      "name": "Console / Directory",
+      "clip": true,
+      "width": 1100,
+      "height": 700,
+      "fill": "$rd.color.surface.app",
+      "effect": {
+        "type": "shadow",
+        "shadowType": "outer",
+        "color": "#161E2E22",
+        "offset": {
+          "x": 0,
+          "y": 8
+        },
+        "blur": 24
+      },
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "menuBarA",
+          "name": "Menu Bar",
+          "width": "fill_container",
+          "height": 28,
+          "fill": "$rd.color.surface.chrome",
+          "gap": 20,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "mFileA",
+              "fill": "$rd.color.text.primary",
+              "content": "文件",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "mViewA",
+              "fill": "$rd.color.text.primary",
+              "content": "查看",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "mSessionA",
+              "fill": "$rd.color.text.primary",
+              "content": "会话",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "mHelpA",
+              "fill": "$rd.color.text.primary",
+              "content": "帮助",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "toolbarA",
+          "name": "Toolbar",
+          "width": "fill_container",
+          "height": 32,
+          "fill": "$rd.color.surface.chrome",
+          "gap": 4,
+          "padding": [
+            0,
+            8
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "tbRefreshA",
+              "width": 32,
+              "height": 28,
+              "fill": "$rd.color.surface.panel",
+              "cornerRadius": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "tbRefreshIconA",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "refresh-cw",
+                  "library": "lucide",
+                  "fill": "$rd.color.text.secondary"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "tbSep1A",
+              "width": 1,
+              "height": 18,
+              "fill": "$rd.color.border.subtle"
+            },
+            {
+              "type": "frame",
+              "id": "tbCloseA",
+              "width": 32,
+              "height": 28,
+              "fill": "$rd.color.surface.chrome",
+              "cornerRadius": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "tbCloseIconA",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "x",
+                  "library": "lucide",
+                  "fill": "$rd.color.text.muted"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "tbCloseAllA",
+              "width": 32,
+              "height": 28,
+              "fill": "$rd.color.surface.chrome",
+              "cornerRadius": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "tbCloseAllIconA",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "x-circle",
+                  "library": "lucide",
+                  "fill": "$rd.color.text.muted"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "tbSep2A",
+              "width": 1,
+              "height": 18,
+              "fill": "$rd.color.border.subtle"
+            },
+            {
+              "type": "frame",
+              "id": "tbShotA",
+              "width": 32,
+              "height": 28,
+              "fill": "$rd.color.surface.chrome",
+              "cornerRadius": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "tbShotIconA",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "camera",
+                  "library": "lucide",
+                  "fill": "$rd.color.text.muted"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "tbFullA",
+              "width": 32,
+              "height": 28,
+              "fill": "$rd.color.surface.chrome",
+              "cornerRadius": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "tbFullIconA",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "maximize",
+                  "library": "lucide",
+                  "fill": "$rd.color.text.muted"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "tbViewA",
+              "width": 32,
+              "height": 28,
+              "fill": "$rd.color.surface.chrome",
+              "cornerRadius": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "tbViewIconA",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "eye",
+                  "library": "lucide",
+                  "fill": "$rd.color.text.muted"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "bodyA",
+          "name": "Body",
+          "width": "fill_container",
+          "height": "fill_container",
+          "children": [
+            {
+              "type": "frame",
+              "id": "treeA",
+              "name": "Tree",
+              "width": 240,
+              "height": "fill_container",
+              "fill": "$rd.color.surface.panel",
+              "layout": "vertical",
+              "gap": 2,
+              "padding": 8,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "treeRootA",
+                  "fill": "$rd.color.text.primary",
+                  "content": "▾ 演示高速",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "treeStaA",
+                  "fill": "$rd.color.text.primary",
+                  "content": "  ▾ 收费站甲",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "treeLeafSelA",
+                  "width": "fill_container",
+                  "height": 24,
+                  "fill": "$rd.color.row.selected",
+                  "cornerRadius": 2,
+                  "padding": [
+                    0,
+                    8
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "treeLeafSelT",
+                      "fill": "$rd.color.text.primary",
+                      "content": "    车道01",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "treeLeaf2A",
+                  "fill": "$rd.color.text.primary",
+                  "content": "    车道02",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "treeLeaf3A",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "    车道03（离线）",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "treeStaB",
+                  "fill": "$rd.color.text.primary",
+                  "content": "  ▾ 收费站乙",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "treeLeaf4A",
+                  "fill": "$rd.color.text.primary",
+                  "content": "    车道11",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "splitterA",
+              "name": "Sidebar Splitter",
+              "width": 4,
+              "height": "fill_container",
+              "fill": "$rd.color.splitter",
+              "layout": "vertical",
+              "gap": 3,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "splitGripA1",
+                  "width": 2,
+                  "height": 2,
+                  "fill": "$rd.color.border.strong",
+                  "cornerRadius": 1
+                },
+                {
+                  "type": "frame",
+                  "id": "splitGripA2",
+                  "width": 2,
+                  "height": 2,
+                  "fill": "$rd.color.border.strong",
+                  "cornerRadius": 1
+                },
+                {
+                  "type": "frame",
+                  "id": "splitGripA3",
+                  "width": 2,
+                  "height": 2,
+                  "fill": "$rd.color.border.strong",
+                  "cornerRadius": 1
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "listPaneA",
+              "name": "List Pane",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "$rd.color.surface.panel",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "listHeaderA",
+                  "width": "fill_container",
+                  "height": 28,
+                  "fill": "$rd.color.surface.chrome",
+                  "padding": [
+                    0,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "colNameA",
+                      "fill": "$rd.color.text.secondary",
+                      "content": "名称",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 11,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "colIpA",
+                      "fill": "$rd.color.text.secondary",
+                      "content": "IP地址",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 11,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "colVerA",
+                      "fill": "$rd.color.text.secondary",
+                      "content": "版本",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 11,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "colRoleA",
+                      "fill": "$rd.color.text.secondary",
+                      "content": "角色",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 11,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "colNoteA",
+                      "fill": "$rd.color.text.secondary",
+                      "content": "备注",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 11,
+                      "fontWeight": "600"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "row1A",
+                  "width": "fill_container",
+                  "height": 28,
+                  "fill": "$rd.color.row.selected",
+                  "padding": [
+                    0,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "r1n",
+                      "fill": "$rd.color.text.primary",
+                      "content": "车道01",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "r1i",
+                      "fill": "$rd.color.text.primary",
+                      "content": "10.0.0.11",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "r1v",
+                      "fill": "$rd.color.text.secondary",
+                      "content": "1.0.0",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "r1r",
+                      "fill": "$rd.color.text.secondary",
+                      "content": "Host",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "r1o",
+                      "fill": "$rd.color.text.muted",
+                      "content": "入口车道",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "row2A",
+                  "width": "fill_container",
+                  "height": 28,
+                  "fill": "$rd.color.surface.panel",
+                  "padding": [
+                    0,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "r2n",
+                      "fill": "$rd.color.text.primary",
+                      "content": "车道02",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "r2i",
+                      "fill": "$rd.color.text.primary",
+                      "content": "10.0.0.12",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "r2v",
+                      "fill": "$rd.color.text.secondary",
+                      "content": "1.0.0",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "r2r",
+                      "fill": "$rd.color.text.secondary",
+                      "content": "Host",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "r2o",
+                      "fill": "$rd.color.text.muted",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "row3A",
+                  "width": "fill_container",
+                  "height": 28,
+                  "fill": "$rd.color.row.hover",
+                  "padding": [
+                    0,
+                    12
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "r3n",
+                      "fill": "$rd.color.text.muted",
+                      "content": "车道03",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "r3i",
+                      "fill": "$rd.color.text.muted",
+                      "content": "10.0.0.13",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "r3v",
+                      "fill": "$rd.color.text.muted",
+                      "content": "—",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "r3r",
+                      "fill": "$rd.color.text.muted",
+                      "content": "Host",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "r3o",
+                      "fill": "$rd.color.text.muted",
+                      "content": "离线",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "statusA",
+          "name": "Status Bar",
+          "width": "fill_container",
+          "height": 24,
+          "fill": "$rd.color.surface.chrome",
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "statusTextA",
+              "fill": "$rd.color.text.secondary",
+              "content": "已连接目录 · 4 台被控端 · 左侧分割条可拖动调宽（默认 240）",
+              "fontFamily": "Segoe UI",
+              "fontSize": 11,
+              "fontWeight": "normal"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "lblSess",
+      "x": 40,
+      "y": 780,
+      "fill": "$rd.color.text.secondary",
+      "content": "B · 会话模式（1100×700）— Tab + letterbox",
+      "fontFamily": "Segoe UI",
+      "fontSize": 14,
+      "fontWeight": "600"
+    },
+    {
+      "type": "frame",
+      "id": "consoleSess",
+      "x": 40,
+      "y": 810,
+      "name": "Console / Session",
+      "clip": true,
+      "width": 1100,
+      "height": 700,
+      "fill": "$rd.color.surface.app",
+      "effect": {
+        "type": "shadow",
+        "shadowType": "outer",
+        "color": "#161E2E22",
+        "offset": {
+          "x": 0,
+          "y": 8
+        },
+        "blur": 24
+      },
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "menuBarB",
+          "width": "fill_container",
+          "height": 28,
+          "fill": "$rd.color.surface.chrome",
+          "gap": 20,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "mFileB",
+              "fill": "$rd.color.text.primary",
+              "content": "文件",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "mViewB",
+              "fill": "$rd.color.text.primary",
+              "content": "查看",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "mSessionB",
+              "fill": "$rd.color.text.primary",
+              "content": "会话",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "mHelpB",
+              "fill": "$rd.color.text.primary",
+              "content": "帮助",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "toolbarB",
+          "width": "fill_container",
+          "height": 32,
+          "fill": "$rd.color.surface.chrome",
+          "gap": 4,
+          "padding": [
+            0,
+            8
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "tbRefreshB",
+              "width": 32,
+              "height": 28,
+              "fill": "$rd.color.surface.panel",
+              "cornerRadius": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "tbRefreshIconB",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "refresh-cw",
+                  "library": "lucide",
+                  "fill": "$rd.color.text.secondary"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "tbSep1B",
+              "width": 1,
+              "height": 18,
+              "fill": "$rd.color.border.subtle"
+            },
+            {
+              "type": "frame",
+              "id": "tbCloseB",
+              "width": 32,
+              "height": 28,
+              "fill": "$rd.color.surface.panel",
+              "cornerRadius": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "tbCloseIconB",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "x",
+                  "library": "lucide",
+                  "fill": "$rd.color.text.secondary"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "tbCloseAllB",
+              "width": 32,
+              "height": 28,
+              "fill": "$rd.color.surface.panel",
+              "cornerRadius": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "tbCloseAllIconB",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "x-circle",
+                  "library": "lucide",
+                  "fill": "$rd.color.text.secondary"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "tbSep2B",
+              "width": 1,
+              "height": 18,
+              "fill": "$rd.color.border.subtle"
+            },
+            {
+              "type": "frame",
+              "id": "tbShotB",
+              "width": 32,
+              "height": 28,
+              "fill": "$rd.color.surface.panel",
+              "cornerRadius": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "tbShotIconB",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "camera",
+                  "library": "lucide",
+                  "fill": "$rd.color.text.secondary"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "tbFullB",
+              "width": 32,
+              "height": 28,
+              "fill": "$rd.color.surface.panel",
+              "cornerRadius": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "tbFullIconB",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "maximize",
+                  "library": "lucide",
+                  "fill": "$rd.color.text.secondary"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "tbViewB",
+              "width": 32,
+              "height": 28,
+              "fill": "$rd.color.accent",
+              "cornerRadius": 4,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "tbViewIconB",
+                  "width": 16,
+                  "height": 16,
+                  "icon": "eye",
+                  "library": "lucide",
+                  "fill": "#FFFFFF"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "bodyB",
+          "width": "fill_container",
+          "height": "fill_container",
+          "children": [
+            {
+              "type": "frame",
+              "id": "treeB",
+              "width": 240,
+              "height": "fill_container",
+              "fill": "$rd.color.surface.panel",
+              "layout": "vertical",
+              "gap": 2,
+              "padding": 8,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "treeRootB",
+                  "fill": "$rd.color.text.primary",
+                  "content": "▾ 演示高速",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "treeStaAB",
+                  "fill": "$rd.color.text.primary",
+                  "content": "  ▾ 收费站甲",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "treeLeafLiveB",
+                  "width": "fill_container",
+                  "height": 24,
+                  "fill": "$rd.color.row.selected",
+                  "cornerRadius": 2,
+                  "gap": 6,
+                  "padding": [
+                    0,
+                    8
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "dotLive",
+                      "width": 6,
+                      "height": 6,
+                      "fill": "$rd.color.success",
+                      "cornerRadius": 3
+                    },
+                    {
+                      "type": "text",
+                      "id": "treeLeafLiveT",
+                      "fill": "$rd.color.text.primary",
+                      "content": "车道01",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "treeLeaf2B",
+                  "fill": "$rd.color.text.primary",
+                  "content": "    车道02",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "splitterB",
+              "name": "Sidebar Splitter",
+              "width": 4,
+              "height": "fill_container",
+              "fill": "$rd.color.accent",
+              "layout": "vertical",
+              "gap": 3,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "splitGripB1",
+                  "width": 2,
+                  "height": 2,
+                  "fill": "#FFFFFF",
+                  "cornerRadius": 1
+                },
+                {
+                  "type": "frame",
+                  "id": "splitGripB2",
+                  "width": 2,
+                  "height": 2,
+                  "fill": "#FFFFFF",
+                  "cornerRadius": 1
+                },
+                {
+                  "type": "frame",
+                  "id": "splitGripB3",
+                  "width": 2,
+                  "height": 2,
+                  "fill": "#FFFFFF",
+                  "cornerRadius": 1
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "sessionPaneB",
+              "width": "fill_container",
+              "height": "fill_container",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "tabStripB",
+                  "name": "Tab Strip Overflow",
+                  "width": "fill_container",
+                  "height": 30,
+                  "fill": "$rd.color.surface.chrome",
+                  "padding": [
+                    0,
+                    2
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "tabNavLeftB",
+                      "name": "Tab Nav Prev",
+                      "width": 24,
+                      "height": 24,
+                      "fill": "$rd.color.surface.chrome",
+                      "cornerRadius": 2,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "tabNavLeftIconB",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "chevron-left",
+                          "library": "lucide",
+                          "fill": "$rd.color.text.muted"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "tabScrollB",
+                      "name": "Tab Scroll Viewport",
+                      "clip": true,
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "gap": 2,
+                      "padding": [
+                        0,
+                        2
+                      ],
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "tabCatB",
+                          "height": 28,
+                          "fill": "$rd.color.tab.inactive",
+                          "cornerRadius": [
+                            4,
+                            4,
+                            0,
+                            0
+                          ],
+                          "padding": [
+                            0,
+                            10
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "tabCatBT",
+                              "fill": "$rd.color.text.secondary",
+                              "content": "目录",
+                              "fontFamily": "Segoe UI",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "tabActiveB",
+                          "height": 28,
+                          "fill": "$rd.color.tab.active",
+                          "cornerRadius": [
+                            4,
+                            4,
+                            0,
+                            0
+                          ],
+                          "gap": 8,
+                          "padding": [
+                            0,
+                            10
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "tabActiveT",
+                              "fill": "$rd.color.text.primary",
+                              "content": "车道01",
+                              "fontFamily": "Segoe UI",
+                              "fontSize": 12,
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "icon",
+                              "id": "tabCloseActiveIcon",
+                              "width": 12,
+                              "height": 12,
+                              "icon": "x",
+                              "library": "lucide",
+                              "fill": "$rd.color.text.muted"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "tabIdleB",
+                          "height": 28,
+                          "fill": "$rd.color.tab.inactive",
+                          "cornerRadius": [
+                            4,
+                            4,
+                            0,
+                            0
+                          ],
+                          "gap": 6,
+                          "padding": [
+                            0,
+                            10
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "tabFloatBadge",
+                              "width": 12,
+                              "height": 12,
+                              "icon": "panel-top-open",
+                              "library": "lucide",
+                              "fill": "$rd.color.accent"
+                            },
+                            {
+                              "type": "text",
+                              "id": "tabIdleT",
+                              "fill": "$rd.color.text.secondary",
+                              "content": "车道02",
+                              "fontFamily": "Segoe UI",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "icon",
+                              "id": "tabCloseIdleIcon",
+                              "width": 12,
+                              "height": 12,
+                              "icon": "x",
+                              "library": "lucide",
+                              "fill": "$rd.color.text.muted"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "tab3B",
+                          "height": 28,
+                          "fill": "$rd.color.tab.inactive",
+                          "cornerRadius": [
+                            4,
+                            4,
+                            0,
+                            0
+                          ],
+                          "gap": 6,
+                          "padding": [
+                            0,
+                            10
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "tab3BT",
+                              "fill": "$rd.color.text.secondary",
+                              "content": "车道11",
+                              "fontFamily": "Segoe UI",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "icon",
+                              "id": "tab3BClose",
+                              "width": 12,
+                              "height": 12,
+                              "icon": "x",
+                              "library": "lucide",
+                              "fill": "$rd.color.text.muted"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "tab4B",
+                          "height": 28,
+                          "fill": "$rd.color.tab.inactive",
+                          "cornerRadius": [
+                            4,
+                            4,
+                            0,
+                            0
+                          ],
+                          "gap": 6,
+                          "padding": [
+                            0,
+                            10
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "tab4BT",
+                              "fill": "$rd.color.text.secondary",
+                              "content": "机电室A",
+                              "fontFamily": "Segoe UI",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "icon",
+                              "id": "tab4BClose",
+                              "width": 12,
+                              "height": 12,
+                              "icon": "x",
+                              "library": "lucide",
+                              "fill": "$rd.color.text.muted"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "tab5B",
+                          "height": 28,
+                          "fill": "$rd.color.tab.inactive",
+                          "cornerRadius": [
+                            4,
+                            4,
+                            0,
+                            0
+                          ],
+                          "gap": 6,
+                          "padding": [
+                            0,
+                            10
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "tab5BT",
+                              "fill": "$rd.color.text.secondary",
+                              "content": "监控中心",
+                              "fontFamily": "Segoe UI",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "icon",
+                              "id": "tab5BClose",
+                              "width": 12,
+                              "height": 12,
+                              "icon": "x",
+                              "library": "lucide",
+                              "fill": "$rd.color.text.muted"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "tab6B",
+                          "height": 28,
+                          "fill": "$rd.color.tab.inactive",
+                          "cornerRadius": [
+                            4,
+                            4,
+                            0,
+                            0
+                          ],
+                          "gap": 6,
+                          "padding": [
+                            0,
+                            10
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "tab6BT",
+                              "fill": "$rd.color.text.secondary",
+                              "content": "服务器01",
+                              "fontFamily": "Segoe UI",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "icon",
+                              "id": "tab6BClose",
+                              "width": 12,
+                              "height": 12,
+                              "icon": "x",
+                              "library": "lucide",
+                              "fill": "$rd.color.text.muted"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "tabNavRightB",
+                      "name": "Tab Nav Next",
+                      "width": 24,
+                      "height": 24,
+                      "fill": "$rd.color.surface.panel",
+                      "cornerRadius": 2,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "tabNavRightIconB",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "chevron-right",
+                          "library": "lucide",
+                          "fill": "$rd.color.text.secondary"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "sessionSurfaceB",
+                  "name": "Session Surface",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "fill": "$rd.color.surface.session",
+                  "layout": "vertical",
+                  "gap": 12,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "letterboxDemo",
+                      "width": 640,
+                      "height": 360,
+                      "fill": "#0A0A0A",
+                      "layout": "vertical",
+                      "gap": 8,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "waitIcon",
+                          "width": 28,
+                          "height": 28,
+                          "icon": "monitor",
+                          "library": "lucide",
+                          "fill": "$rd.color.text.sessionHint"
+                        },
+                        {
+                          "type": "text",
+                          "id": "waitText",
+                          "fill": "$rd.color.text.sessionHint",
+                          "content": "正在连接被控端…",
+                          "fontFamily": "Segoe UI",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "statusB",
+          "width": "fill_container",
+          "height": 24,
+          "fill": "$rd.color.surface.chrome",
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "statusTextB",
+              "fill": "$rd.color.text.secondary",
+              "content": "会话中 · 车道01 · 多标签溢出时用 ◀ ▶ 滚动 · 车道02 已拖出",
+              "fontFamily": "Segoe UI",
+              "fontSize": 11,
+              "fontWeight": "normal"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "tabCtxOverlay",
+      "x": 1680,
+      "y": 190,
+      "name": "Tab Context Menu Overlay",
+      "width": 200,
+      "height": 236,
+      "fill": "$rd.color.surface.panel",
+      "cornerRadius": 4,
+      "effect": {
+        "type": "shadow",
+        "shadowType": "outer",
+        "color": "#161E2E33",
+        "offset": {
+          "x": 0,
+          "y": 6
+        },
+        "blur": 16
+      },
+      "layout": "vertical",
+      "padding": [
+        4,
+        0
+      ],
+      "children": [
+        {
+          "type": "frame",
+          "id": "ctxClose",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "ctxCloseIcon",
+              "width": 14,
+              "height": 14,
+              "icon": "x",
+              "library": "lucide",
+              "fill": "$rd.color.text.secondary"
+            },
+            {
+              "type": "text",
+              "id": "ctxCloseT",
+              "fill": "$rd.color.text.primary",
+              "content": "关闭",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ],
+          "gap": 8
+        },
+        {
+          "type": "frame",
+          "id": "ctxCloseOthers",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "ctxCloseOthersIcon",
+              "width": 14,
+              "height": 14,
+              "icon": "copy-x",
+              "library": "lucide",
+              "fill": "$rd.color.text.secondary"
+            },
+            {
+              "type": "text",
+              "id": "ctxCloseOthersT",
+              "fill": "$rd.color.text.primary",
+              "content": "关闭其他",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ],
+          "gap": 8
+        },
+        {
+          "type": "frame",
+          "id": "ctxCloseAll",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "ctxCloseAllIcon",
+              "width": 14,
+              "height": 14,
+              "icon": "x-circle",
+              "library": "lucide",
+              "fill": "$rd.color.text.secondary"
+            },
+            {
+              "type": "text",
+              "id": "ctxCloseAllT",
+              "fill": "$rd.color.text.primary",
+              "content": "关闭全部",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ],
+          "gap": 8
+        },
+        {
+          "type": "frame",
+          "id": "ctxSep1",
+          "width": "fill_container",
+          "height": 9,
+          "padding": [
+            4,
+            8
+          ],
+          "justifyContent": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "ctxSep1Line",
+              "width": "fill_container",
+              "height": 1,
+              "fill": "$rd.color.border.subtle"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "ctxTear",
+          "width": "fill_container",
+          "height": 28,
+          "fill": "$rd.color.row.hover",
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "ctxTearIcon",
+              "width": 14,
+              "height": 14,
+              "icon": "panel-top-open",
+              "library": "lucide",
+              "fill": "$rd.color.text.secondary"
+            },
+            {
+              "type": "text",
+              "id": "ctxTearT",
+              "fill": "$rd.color.text.primary",
+              "content": "拖出为独立窗口",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ],
+          "gap": 8
+        },
+        {
+          "type": "frame",
+          "id": "ctxDock",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "ctxDockIcon",
+              "width": 14,
+              "height": 14,
+              "icon": "panel-top-close",
+              "library": "lucide",
+              "fill": "$rd.color.text.muted"
+            },
+            {
+              "type": "text",
+              "id": "ctxDockT",
+              "fill": "$rd.color.text.muted",
+              "content": "拖回工作区",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ],
+          "gap": 8
+        },
+        {
+          "type": "frame",
+          "id": "ctxSep2",
+          "width": "fill_container",
+          "height": 9,
+          "padding": [
+            4,
+            8
+          ],
+          "justifyContent": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "ctxSep2Line",
+              "width": "fill_container",
+              "height": 1,
+              "fill": "$rd.color.border.subtle"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "ctxFull",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "ctxFullIcon",
+              "width": 14,
+              "height": 14,
+              "icon": "maximize",
+              "library": "lucide",
+              "fill": "$rd.color.text.secondary"
+            },
+            {
+              "type": "text",
+              "id": "ctxFullT",
+              "fill": "$rd.color.text.primary",
+              "content": "全屏",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ],
+          "gap": 8
+        },
+        {
+          "type": "frame",
+          "id": "ctxViewOnly",
+          "width": "fill_container",
+          "height": 28,
+          "gap": 8,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "ctxViewOnlyIcon",
+              "width": 14,
+              "height": 14,
+              "icon": "eye",
+              "library": "lucide",
+              "fill": "$rd.color.text.muted"
+            },
+            {
+              "type": "text",
+              "id": "ctxViewOnlyT",
+              "fill": "$rd.color.text.primary",
+              "content": "只读",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "ctxViewOnlyHint",
+              "fill": "$rd.color.text.muted",
+              "content": "切换",
+              "fontFamily": "Segoe UI",
+              "fontSize": 11,
+              "fontWeight": "normal"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "lblCtx",
+      "x": 1200,
+      "y": 20,
+      "fill": "$rd.color.text.secondary",
+      "content": "C · Tab 右键菜单（详稿）",
+      "fontFamily": "Segoe UI",
+      "fontSize": 14,
+      "fontWeight": "600"
+    },
+    {
+      "type": "note",
+      "id": "noteCtx",
+      "x": 1200,
+      "y": -90,
+      "width": 560,
+      "height": 110,
+      "content": "触发：会话 Tab 上右键（非 × 热区）。\n· 停靠：「拖出」可用；「拖回」灰显\n· 已拖出（角标）：「拖回」可用；「拖出」灰显\n右侧小浮层 = 弹出菜单示意。\n现状代码浮出 Tab 右键直接拖回 — 应对齐本菜单。"
+    },
+    {
+      "type": "frame",
+      "id": "tabCtxDetail",
+      "x": 1200,
+      "y": 190,
+      "name": "Tab Context Menu Detail",
+      "width": 220,
+      "height": 268,
+      "fill": "$rd.color.surface.panel",
+      "cornerRadius": 4,
+      "effect": {
+        "type": "shadow",
+        "shadowType": "outer",
+        "color": "#161E2E33",
+        "offset": {
+          "x": 0,
+          "y": 6
+        },
+        "blur": 16
+      },
+      "layout": "vertical",
+      "padding": [
+        4,
+        0
+      ],
+      "children": [
+        {
+          "type": "frame",
+          "id": "dCtxHdr",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "dCtxHdrT",
+              "fill": "$rd.color.text.muted",
+              "content": "车道01",
+              "fontFamily": "Segoe UI",
+              "fontSize": 11,
+              "fontWeight": "600"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "dCtxSep0",
+          "width": "fill_container",
+          "height": 1,
+          "fill": "$rd.color.border.subtle"
+        },
+        {
+          "type": "frame",
+          "id": "dCtxClose",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "dCtxCloseIcon",
+              "width": 14,
+              "height": 14,
+              "icon": "x",
+              "library": "lucide",
+              "fill": "$rd.color.text.secondary"
+            },
+            {
+              "type": "text",
+              "id": "dCtxCloseT",
+              "fill": "$rd.color.text.primary",
+              "content": "关闭",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ],
+          "gap": 8
+        },
+        {
+          "type": "frame",
+          "id": "dCtxCloseOthers",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "dCtxCloseOthersIcon",
+              "width": 14,
+              "height": 14,
+              "icon": "copy-x",
+              "library": "lucide",
+              "fill": "$rd.color.text.secondary"
+            },
+            {
+              "type": "text",
+              "id": "dCtxCloseOthersT",
+              "fill": "$rd.color.text.primary",
+              "content": "关闭其他",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ],
+          "gap": 8
+        },
+        {
+          "type": "frame",
+          "id": "dCtxCloseAll",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "dCtxCloseAllIcon",
+              "width": 14,
+              "height": 14,
+              "icon": "x-circle",
+              "library": "lucide",
+              "fill": "$rd.color.text.secondary"
+            },
+            {
+              "type": "text",
+              "id": "dCtxCloseAllT",
+              "fill": "$rd.color.text.primary",
+              "content": "关闭全部",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ],
+          "gap": 8
+        },
+        {
+          "type": "frame",
+          "id": "dCtxSep1",
+          "width": "fill_container",
+          "height": 9,
+          "padding": [
+            4,
+            8
+          ],
+          "justifyContent": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "dCtxSep1Line",
+              "width": "fill_container",
+              "height": 1,
+              "fill": "$rd.color.border.subtle"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "dCtxTear",
+          "width": "fill_container",
+          "height": 28,
+          "fill": "$rd.color.row.selected",
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "dCtxTearIcon",
+              "width": 14,
+              "height": 14,
+              "icon": "panel-top-open",
+              "library": "lucide",
+              "fill": "$rd.color.text.secondary"
+            },
+            {
+              "type": "text",
+              "id": "dCtxTearT",
+              "fill": "$rd.color.text.primary",
+              "content": "拖出为独立窗口",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ],
+          "gap": 8
+        },
+        {
+          "type": "frame",
+          "id": "dCtxDock",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "dCtxDockIcon",
+              "width": 14,
+              "height": 14,
+              "icon": "panel-top-close",
+              "library": "lucide",
+              "fill": "$rd.color.text.muted"
+            },
+            {
+              "type": "text",
+              "id": "dCtxDockT",
+              "fill": "$rd.color.text.muted",
+              "content": "拖回工作区",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ],
+          "gap": 8
+        },
+        {
+          "type": "frame",
+          "id": "dCtxSep2",
+          "width": "fill_container",
+          "height": 9,
+          "padding": [
+            4,
+            8
+          ],
+          "justifyContent": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "dCtxSep2Line",
+              "width": "fill_container",
+              "height": 1,
+              "fill": "$rd.color.border.subtle"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "dCtxFull",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "dCtxFullIcon",
+              "width": 14,
+              "height": 14,
+              "icon": "maximize",
+              "library": "lucide",
+              "fill": "$rd.color.text.secondary"
+            },
+            {
+              "type": "text",
+              "id": "dCtxFullT",
+              "fill": "$rd.color.text.primary",
+              "content": "全屏",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ],
+          "gap": 8
+        },
+        {
+          "type": "frame",
+          "id": "dCtxViewOnly",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "dCtxViewOnlyIcon",
+              "width": 14,
+              "height": 14,
+              "icon": "eye",
+              "library": "lucide",
+              "fill": "$rd.color.text.secondary"
+            },
+            {
+              "type": "text",
+              "id": "dCtxViewOnlyT",
+              "fill": "$rd.color.text.primary",
+              "content": "只读",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ],
+          "gap": 8
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "tabCtxFloatVariant",
+      "x": 1440,
+      "y": 190,
+      "name": "Tab Context Menu · Floating Tab",
+      "width": 220,
+      "height": 236,
+      "fill": "$rd.color.surface.panel",
+      "cornerRadius": 4,
+      "effect": {
+        "type": "shadow",
+        "shadowType": "outer",
+        "color": "#161E2E33",
+        "offset": {
+          "x": 0,
+          "y": 6
+        },
+        "blur": 16
+      },
+      "layout": "vertical",
+      "padding": [
+        4,
+        0
+      ],
+      "children": [
+        {
+          "type": "frame",
+          "id": "fCtxHdr",
+          "width": "fill_container",
+          "height": 28,
+          "gap": 6,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "fCtxHdrIcon",
+              "width": 12,
+              "height": 12,
+              "icon": "panel-top-open",
+              "library": "lucide",
+              "fill": "$rd.color.accent"
+            },
+            {
+              "type": "text",
+              "id": "fCtxHdrT",
+              "fill": "$rd.color.text.muted",
+              "content": "车道02 · 已拖出",
+              "fontFamily": "Segoe UI",
+              "fontSize": 11,
+              "fontWeight": "600"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "fCtxSep0",
+          "width": "fill_container",
+          "height": 1,
+          "fill": "$rd.color.border.subtle"
+        },
+        {
+          "type": "frame",
+          "id": "fCtxClose",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "fCtxCloseIcon",
+              "width": 14,
+              "height": 14,
+              "icon": "x",
+              "library": "lucide",
+              "fill": "$rd.color.text.secondary"
+            },
+            {
+              "type": "text",
+              "id": "fCtxCloseT",
+              "fill": "$rd.color.text.primary",
+              "content": "关闭",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ],
+          "gap": 8
+        },
+        {
+          "type": "frame",
+          "id": "fCtxCloseOthers",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "fCtxCloseOthersIcon",
+              "width": 14,
+              "height": 14,
+              "icon": "copy-x",
+              "library": "lucide",
+              "fill": "$rd.color.text.secondary"
+            },
+            {
+              "type": "text",
+              "id": "fCtxCloseOthersT",
+              "fill": "$rd.color.text.primary",
+              "content": "关闭其他",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ],
+          "gap": 8
+        },
+        {
+          "type": "frame",
+          "id": "fCtxCloseAll",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "fCtxCloseAllIcon",
+              "width": 14,
+              "height": 14,
+              "icon": "x-circle",
+              "library": "lucide",
+              "fill": "$rd.color.text.secondary"
+            },
+            {
+              "type": "text",
+              "id": "fCtxCloseAllT",
+              "fill": "$rd.color.text.primary",
+              "content": "关闭全部",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ],
+          "gap": 8
+        },
+        {
+          "type": "frame",
+          "id": "fCtxSep1",
+          "width": "fill_container",
+          "height": 9,
+          "padding": [
+            4,
+            8
+          ],
+          "justifyContent": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "fCtxSep1Line",
+              "width": "fill_container",
+              "height": 1,
+              "fill": "$rd.color.border.subtle"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "fCtxTear",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "fCtxTearIcon",
+              "width": 14,
+              "height": 14,
+              "icon": "panel-top-open",
+              "library": "lucide",
+              "fill": "$rd.color.text.muted"
+            },
+            {
+              "type": "text",
+              "id": "fCtxTearT",
+              "fill": "$rd.color.text.muted",
+              "content": "拖出为独立窗口",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ],
+          "gap": 8
+        },
+        {
+          "type": "frame",
+          "id": "fCtxDock",
+          "width": "fill_container",
+          "height": 28,
+          "fill": "$rd.color.row.selected",
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "fCtxDockIcon",
+              "width": 14,
+              "height": 14,
+              "icon": "panel-top-close",
+              "library": "lucide",
+              "fill": "$rd.color.text.secondary"
+            },
+            {
+              "type": "text",
+              "id": "fCtxDockT",
+              "fill": "$rd.color.text.primary",
+              "content": "拖回工作区",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ],
+          "gap": 8
+        },
+        {
+          "type": "frame",
+          "id": "fCtxSep2",
+          "width": "fill_container",
+          "height": 9,
+          "padding": [
+            4,
+            8
+          ],
+          "justifyContent": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "fCtxSep2Line",
+              "width": "fill_container",
+              "height": 1,
+              "fill": "$rd.color.border.subtle"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "fCtxFull",
+          "width": "fill_container",
+          "height": 28,
+          "padding": [
+            0,
+            12
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "fCtxFullIcon",
+              "width": 14,
+              "height": 14,
+              "icon": "maximize",
+              "library": "lucide",
+              "fill": "$rd.color.text.secondary"
+            },
+            {
+              "type": "text",
+              "id": "fCtxFullT",
+              "fill": "$rd.color.text.primary",
+              "content": "全屏",
+              "fontFamily": "Segoe UI",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ],
+          "gap": 8
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "lblSplit",
+      "x": 1200,
+      "y": 500,
+      "fill": "$rd.color.text.secondary",
+      "content": "D · 左侧 sidebar 拖动调宽",
+      "fontFamily": "Segoe UI",
+      "fontSize": 14,
+      "fontWeight": "600"
+    },
+    {
+      "type": "note",
+      "id": "noteSplit",
+      "x": 1729,
+      "y": 500,
+      "width": 560,
+      "height": 90,
+      "content": "热区：树右缘 4 DIP（kSplitterW）。\n光标：IDC_SIZEWE（悬停/拖动）。\n态：默认 splitter #C8D0DA → 悬停/拖动 accent #2F6BA8 + 握点。\n夹取：120 … 客户宽−200；默认 240。\n拖动时可在分割条旁显示宽度芯片（可选，下图）。"
+    },
+    {
+      "type": "frame",
+      "id": "splitStates",
+      "x": 1200,
+      "y": 594,
+      "name": "Splitter States",
+      "width": 560,
+      "height": 72,
+      "gap": 16,
+      "alignItems": "center",
+      "children": [
+        {
+          "type": "frame",
+          "id": "splitStateIdle",
+          "width": 120,
+          "height": 64,
+          "fill": "$rd.color.surface.app",
+          "cornerRadius": 4,
+          "layout": "vertical",
+          "gap": 8,
+          "padding": 8,
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "splitSampleIdle",
+              "width": 4,
+              "height": 28,
+              "fill": "$rd.color.splitter"
+            },
+            {
+              "type": "text",
+              "id": "splitSampleIdleT",
+              "fill": "$rd.color.text.muted",
+              "content": "默认",
+              "fontFamily": "Segoe UI",
+              "fontSize": 11,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "splitStateHover",
+          "width": 120,
+          "height": 64,
+          "fill": "$rd.color.surface.app",
+          "cornerRadius": 4,
+          "layout": "vertical",
+          "gap": 8,
+          "padding": 8,
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "splitSampleHover",
+              "width": 4,
+              "height": 28,
+              "fill": "$rd.color.accent",
+              "layout": "vertical",
+              "gap": 3,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "gH1",
+                  "width": 2,
+                  "height": 2,
+                  "fill": "#FFFFFF",
+                  "cornerRadius": 1
+                },
+                {
+                  "type": "frame",
+                  "id": "gH2",
+                  "width": 2,
+                  "height": 2,
+                  "fill": "#FFFFFF",
+                  "cornerRadius": 1
+                },
+                {
+                  "type": "frame",
+                  "id": "gH3",
+                  "width": 2,
+                  "height": 2,
+                  "fill": "#FFFFFF",
+                  "cornerRadius": 1
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "splitSampleHoverT",
+              "fill": "$rd.color.text.muted",
+              "content": "悬停 / 拖动",
+              "fontFamily": "Segoe UI",
+              "fontSize": 11,
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "splitCursorHint",
+          "width": 140,
+          "height": 64,
+          "fill": "$rd.color.surface.app",
+          "cornerRadius": 4,
+          "layout": "vertical",
+          "gap": 6,
+          "padding": 8,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "splitCursorIcon",
+              "width": 20,
+              "height": 20,
+              "icon": "move-horizontal",
+              "library": "lucide",
+              "fill": "$rd.color.text.secondary"
+            },
+            {
+              "type": "text",
+              "id": "splitCursorT",
+              "fill": "$rd.color.text.muted",
+              "content": "IDC_SIZEWE",
+              "fontFamily": "Segoe UI",
+              "fontSize": 11,
+              "fontWeight": "normal"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "consoleResizeDemo",
+      "x": 1200,
+      "y": 740,
+      "name": "Console / Resizing Sidebar",
+      "clip": true,
+      "width": 560,
+      "height": 280,
+      "fill": "$rd.color.surface.app",
+      "cornerRadius": 4,
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "resizeTb",
+          "width": "fill_container",
+          "height": 28,
+          "fill": "$rd.color.surface.chrome",
+          "padding": [
+            0,
+            10
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "resizeTbT",
+              "fill": "$rd.color.text.secondary",
+              "content": "拖动中 · 树宽 320",
+              "fontFamily": "Segoe UI",
+              "fontSize": 11,
+              "fontWeight": "600"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "resizeBody",
+          "width": "fill_container",
+          "height": "fill_container",
+          "children": [
+            {
+              "type": "frame",
+              "id": "resizeTree",
+              "width": 320,
+              "height": "fill_container",
+              "fill": "$rd.color.surface.panel",
+              "layout": "vertical",
+              "gap": 4,
+              "padding": [
+                8,
+                10
+              ],
+              "children": [
+                {
+                  "type": "text",
+                  "id": "resizeTreeRoot",
+                  "fill": "$rd.color.text.primary",
+                  "content": "▾ 演示高速",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "resizeTreeLeaf",
+                  "fill": "$rd.color.text.primary",
+                  "content": "    车道01",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "resizeTreeHint",
+                  "fill": "$rd.color.text.muted",
+                  "content": "侧栏已加宽…",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "resizeSplitter",
+              "width": 4,
+              "height": "fill_container",
+              "fill": "$rd.color.accent",
+              "layout": "vertical",
+              "gap": 3,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "rg1",
+                  "width": 2,
+                  "height": 2,
+                  "fill": "#FFFFFF",
+                  "cornerRadius": 1
+                },
+                {
+                  "type": "frame",
+                  "id": "rg2",
+                  "width": 2,
+                  "height": 2,
+                  "fill": "#FFFFFF",
+                  "cornerRadius": 1
+                },
+                {
+                  "type": "frame",
+                  "id": "rg3",
+                  "width": 2,
+                  "height": 2,
+                  "fill": "#FFFFFF",
+                  "cornerRadius": 1
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "resizeWork",
+              "width": "fill_container",
+              "height": "fill_container",
+              "fill": "$rd.color.surface.panel",
+              "padding": 12,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "widthChip",
+                  "name": "Width Chip",
+                  "width": 72,
+                  "height": 24,
+                  "fill": "$rd.color.brand.bg",
+                  "cornerRadius": 4,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "widthChipT",
+                      "fill": "#FFFFFF",
+                      "content": "320 px",
+                      "fontFamily": "Segoe UI",
+                      "fontSize": 11,
+                      "fontWeight": "600"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "lblTabOverflow",
+      "x": 1200,
+      "y": 1060,
+      "fill": "$rd.color.text.secondary",
+      "content": "E · Tab 溢出左右导航",
+      "fontFamily": "Segoe UI",
+      "fontSize": 14,
+      "fontWeight": "600"
+    },
+    {
+      "type": "note",
+      "id": "noteTabOverflow",
+      "x": 1806,
+      "y": 1169,
+      "width": 560,
+      "height": 110,
+      "content": "仅当标签总宽 > 可视区时显示 ◀ ▶（各 24×24）。\n未溢出时隐藏导航钮，Tab 条铺满。\n· 左端：◀ 灰显（muted）；▶ 可点（panel + border）\n· 中段：两侧均可点\n· 右端：▶ 灰显；◀ 可点\n点击一次滚动约一个 Tab 宽（或保证活动 Tab 入视口）。\n新开会话 / 激活已有 Tab 时自动 scrollIntoView。\n现状 paint_tab_strip 无滚动 — 实现对齐本稿。"
+    },
+    {
+      "type": "frame",
+      "id": "tabOverflowIdle",
+      "x": 1200,
+      "y": 1220,
+      "name": "Tab Overflow · At Start",
+      "width": 560,
+      "height": 36,
+      "fill": "$rd.color.surface.chrome",
+      "cornerRadius": 4,
+      "padding": [
+        0,
+        2
+      ],
+      "alignItems": "center",
+      "children": [
+        {
+          "type": "frame",
+          "id": "navL1",
+          "width": 24,
+          "height": 24,
+          "cornerRadius": 2,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "navL1Icon",
+              "width": 14,
+              "height": 14,
+              "icon": "chevron-left",
+              "library": "lucide",
+              "fill": "$rd.color.text.muted"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "scroll1",
+          "clip": true,
+          "width": "fill_container",
+          "height": "fill_container",
+          "gap": 2,
+          "padding": 2,
+          "children": [
+            {
+              "type": "frame",
+              "id": "t1a",
+              "height": 28,
+              "fill": "$rd.color.tab.active",
+              "cornerRadius": [
+                4,
+                4,
+                0,
+                0
+              ],
+              "padding": [
+                0,
+                10
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "t1aT",
+                  "fill": "$rd.color.text.primary",
+                  "content": "目录",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "t1b",
+              "height": 28,
+              "fill": "$rd.color.tab.inactive",
+              "cornerRadius": [
+                4,
+                4,
+                0,
+                0
+              ],
+              "padding": [
+                0,
+                10
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "t1bT",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "车道01 ×",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "t1c",
+              "height": 28,
+              "fill": "$rd.color.tab.inactive",
+              "cornerRadius": [
+                4,
+                4,
+                0,
+                0
+              ],
+              "padding": [
+                0,
+                10
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "t1cT",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "车道02 ×",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "t1d",
+              "height": 28,
+              "fill": "$rd.color.tab.inactive",
+              "cornerRadius": [
+                4,
+                4,
+                0,
+                0
+              ],
+              "padding": [
+                0,
+                10
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "t1dT",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "机电室A ×",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "t1e",
+              "height": 28,
+              "fill": "$rd.color.tab.inactive",
+              "cornerRadius": [
+                4,
+                4,
+                0,
+                0
+              ],
+              "padding": [
+                0,
+                10
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "t1eT",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "监控中心 ×",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "t1f",
+              "height": 28,
+              "fill": "$rd.color.tab.inactive",
+              "cornerRadius": [
+                4,
+                4,
+                0,
+                0
+              ],
+              "padding": [
+                0,
+                10
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "t1fT",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "…",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "navR1",
+          "width": 24,
+          "height": 24,
+          "fill": "$rd.color.surface.panel",
+          "cornerRadius": 2,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "navR1Icon",
+              "width": 14,
+              "height": 14,
+              "icon": "chevron-right",
+              "library": "lucide",
+              "fill": "$rd.color.text.secondary"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "lblTabOverflow1",
+      "x": 1200,
+      "y": 1266,
+      "fill": "$rd.color.text.muted",
+      "content": "左端：◀ 禁用 · ▶ 可点",
+      "fontFamily": "Segoe UI",
+      "fontSize": 11,
+      "fontWeight": "normal"
+    },
+    {
+      "type": "frame",
+      "id": "tabOverflowMid",
+      "x": 1200,
+      "y": 1294,
+      "name": "Tab Overflow · Mid",
+      "width": 560,
+      "height": 36,
+      "fill": "$rd.color.surface.chrome",
+      "cornerRadius": 4,
+      "padding": [
+        0,
+        2
+      ],
+      "alignItems": "center",
+      "children": [
+        {
+          "type": "frame",
+          "id": "navL2",
+          "width": 24,
+          "height": 24,
+          "fill": "$rd.color.surface.panel",
+          "cornerRadius": 2,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "navL2Icon",
+              "width": 14,
+              "height": 14,
+              "icon": "chevron-left",
+              "library": "lucide",
+              "fill": "$rd.color.text.secondary"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "scroll2",
+          "clip": true,
+          "width": "fill_container",
+          "height": "fill_container",
+          "gap": 2,
+          "padding": 2,
+          "children": [
+            {
+              "type": "frame",
+              "id": "t2a",
+              "height": 28,
+              "fill": "$rd.color.tab.inactive",
+              "cornerRadius": [
+                4,
+                4,
+                0,
+                0
+              ],
+              "padding": [
+                0,
+                10
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "t2aT",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "车道02 ×",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "t2b",
+              "height": 28,
+              "fill": "$rd.color.tab.active",
+              "cornerRadius": [
+                4,
+                4,
+                0,
+                0
+              ],
+              "padding": [
+                0,
+                10
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "t2bT",
+                  "fill": "$rd.color.text.primary",
+                  "content": "机电室A ×",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "t2c",
+              "height": 28,
+              "fill": "$rd.color.tab.inactive",
+              "cornerRadius": [
+                4,
+                4,
+                0,
+                0
+              ],
+              "padding": [
+                0,
+                10
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "t2cT",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "监控中心 ×",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "t2d",
+              "height": 28,
+              "fill": "$rd.color.tab.inactive",
+              "cornerRadius": [
+                4,
+                4,
+                0,
+                0
+              ],
+              "padding": [
+                0,
+                10
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "t2dT",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "服务器01 ×",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "navR2",
+          "width": 24,
+          "height": 24,
+          "fill": "$rd.color.surface.panel",
+          "cornerRadius": 2,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "navR2Icon",
+              "width": 14,
+              "height": 14,
+              "icon": "chevron-right",
+              "library": "lucide",
+              "fill": "$rd.color.text.secondary"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "lblTabOverflow2",
+      "x": 1200,
+      "y": 1340,
+      "fill": "$rd.color.text.muted",
+      "content": "中段：◀ ▶ 均可点 · 活动 Tab 已滚入视口",
+      "fontFamily": "Segoe UI",
+      "fontSize": 11,
+      "fontWeight": "normal"
+    },
+    {
+      "type": "frame",
+      "id": "tabOverflowEnd",
+      "x": 1200,
+      "y": 1368,
+      "name": "Tab Overflow · At End",
+      "width": 560,
+      "height": 36,
+      "fill": "$rd.color.surface.chrome",
+      "cornerRadius": 4,
+      "padding": [
+        0,
+        2
+      ],
+      "alignItems": "center",
+      "children": [
+        {
+          "type": "frame",
+          "id": "navL3",
+          "width": 24,
+          "height": 24,
+          "fill": "$rd.color.surface.panel",
+          "cornerRadius": 2,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "navL3Icon",
+              "width": 14,
+              "height": 14,
+              "icon": "chevron-left",
+              "library": "lucide",
+              "fill": "$rd.color.text.secondary"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "scroll3",
+          "clip": true,
+          "width": "fill_container",
+          "height": "fill_container",
+          "gap": 2,
+          "padding": 2,
+          "children": [
+            {
+              "type": "frame",
+              "id": "t3a",
+              "height": 28,
+              "fill": "$rd.color.tab.inactive",
+              "cornerRadius": [
+                4,
+                4,
+                0,
+                0
+              ],
+              "padding": [
+                0,
+                10
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "t3aT",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "监控中心 ×",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "t3b",
+              "height": 28,
+              "fill": "$rd.color.tab.inactive",
+              "cornerRadius": [
+                4,
+                4,
+                0,
+                0
+              ],
+              "padding": [
+                0,
+                10
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "t3bT",
+                  "fill": "$rd.color.text.secondary",
+                  "content": "服务器01 ×",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "t3c",
+              "height": 28,
+              "fill": "$rd.color.tab.active",
+              "cornerRadius": [
+                4,
+                4,
+                0,
+                0
+              ],
+              "padding": [
+                0,
+                10
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "t3cT",
+                  "fill": "$rd.color.text.primary",
+                  "content": "备份机 ×",
+                  "fontFamily": "Segoe UI",
+                  "fontSize": 12,
+                  "fontWeight": "600"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "navR3",
+          "width": 24,
+          "height": 24,
+          "cornerRadius": 2,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "navR3Icon",
+              "width": 14,
+              "height": 14,
+              "icon": "chevron-right",
+              "library": "lucide",
+              "fill": "$rd.color.text.muted"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "lblTabOverflow3",
+      "x": 1200,
+      "y": 1414,
+      "fill": "$rd.color.text.muted",
+      "content": "右端：▶ 禁用 · ◀ 可点",
+      "fontFamily": "Segoe UI",
+      "fontSize": 11,
+      "fontWeight": "normal"
+    },
+    {
+      "type": "note",
+      "id": "noteImpl",
+      "x": 40,
+      "y": 1560,
+      "width": 1100,
+      "height": 150,
+      "content": "实现要点（console_window.cpp P1 + Tab 菜单 + 分割条 + 溢出导航）\n\n1. 菜单/工具栏/状态栏底 → surface.chrome；树/列表 → surface.panel\n2. 树与工作区 4 DIP 分割条；悬停/拖动 accent；IDC_SIZEWE；树宽 120…客户宽-200\n3. TabStrip：活动 accent 条；浮出角标；× 热区 18 DIP\n4. 标签总宽超可视区 → 两端 ◀▶（24×24）；未溢出隐藏；到头侧 muted 禁用；激活 Tab scrollIntoView\n5. WM_RBUTTONUP → CreatePopupMenu（勿静默拖回）；项见 Frame C\n6. 会话区 surface.session；等待文案 text.sessionHint"
+    }
+  ],
+  "themes": {
+    "mode": [
+      "light"
+    ]
+  },
+  "variables": {
+    "rd.color.brand.bg": {
+      "type": "color",
+      "value": "#161E2E"
+    },
+    "rd.color.brand.fg": {
+      "type": "color",
+      "value": "#FFFFFF"
+    },
+    "rd.color.brand.fgMuted": {
+      "type": "color",
+      "value": "#A0B0C8"
+    },
+    "rd.color.surface.app": {
+      "type": "color",
+      "value": "#F6F8FB"
+    },
+    "rd.color.surface.panel": {
+      "type": "color",
+      "value": "#FFFFFF"
+    },
+    "rd.color.surface.chrome": {
+      "type": "color",
+      "value": "#ECF0F5"
+    },
+    "rd.color.surface.session": {
+      "type": "color",
+      "value": "#000000"
+    },
+    "rd.color.text.primary": {
+      "type": "color",
+      "value": "#1C222E"
+    },
+    "rd.color.text.secondary": {
+      "type": "color",
+      "value": "#586272"
+    },
+    "rd.color.text.muted": {
+      "type": "color",
+      "value": "#8C96A4"
+    },
+    "rd.color.text.sessionHint": {
+      "type": "color",
+      "value": "#DCDCDC"
+    },
+    "rd.color.border.subtle": {
+      "type": "color",
+      "value": "#DCE2EA"
+    },
+    "rd.color.border.strong": {
+      "type": "color",
+      "value": "#B4BECC"
+    },
+    "rd.color.accent": {
+      "type": "color",
+      "value": "#2F6BA8"
+    },
+    "rd.color.success": {
+      "type": "color",
+      "value": "#2E7D5A"
+    },
+    "rd.color.row.hover": {
+      "type": "color",
+      "value": "#E8EEF6"
+    },
+    "rd.color.row.selected": {
+      "type": "color",
+      "value": "#D2E2F4"
+    },
+    "rd.color.tab.active": {
+      "type": "color",
+      "value": "#FFFFFF"
+    },
+    "rd.color.tab.inactive": {
+      "type": "color",
+      "value": "#ECF0F5"
+    },
+    "rd.color.splitter": {
+      "type": "color",
+      "value": "#C8D0DA"
+    },
+    "rd.color.splitter.hover": {
+      "type": "color",
+      "value": "#2F6BA8"
+    },
+    "rd.size.consoleW": {
+      "type": "number",
+      "value": 1100
+    },
+    "rd.size.consoleH": {
+      "type": "number",
+      "value": 700
+    },
+    "rd.size.treeW": {
+      "type": "number",
+      "value": 240
+    },
+    "rd.size.treeWMin": {
+      "type": "number",
+      "value": 120
+    },
+    "rd.size.splitterW": {
+      "type": "number",
+      "value": 4
+    },
+    "rd.size.toolbarH": {
+      "type": "number",
+      "value": 32
+    },
+    "rd.size.statusH": {
+      "type": "number",
+      "value": 24
+    },
+    "rd.size.tabH": {
+      "type": "number",
+      "value": 30
+    },
+    "rd.size.tabNav": {
+      "type": "number",
+      "value": 24
+    }
+  },
+  "fileToken": "331aac37-c5c5-4815-9860-cbc04feab067"
+}

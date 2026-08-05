@@ -187,11 +187,11 @@ Agent 网关配置窗仍用标准顶栏配置尺寸；Viewer 登录用上表分�
 |------|----|------|
 | 单行 EDIT | 28 | 含边框视觉 |
 | BUTTON 主/次 | 30 | 最小点击高 |
-| 工具栏条 | 32 | 纯图标圆角按钮（panel 面 + border；hover/press/checked）；tooltip 保留文案 |
-| Tab 条 | max(30, 字体高+10) | 与现逻辑一致 |
+| 工具栏条 | 32 | 启用：白 `panel` + `border.subtle` 圆角面（32×28）；悬停加强 `border.strong`；按下 `row.selected`；勾选（只读）`accent` 实心 + 白图标；禁用无面、`text.muted` 图标。会话钮：列表选中未连接设备 → 显示器图标「启动会话」；否则 ×「关闭会话」。左右 pad 8 DIP；全部断开 = lucide x-circle |
+| Tab 条 | max(30, 字体高+10) | 与现逻辑一致；溢出时两端导航钮各 24×24（lucide chevron） |
 | 状态栏 | 24 | |
-| 树默认宽 | 240 | 夹取 160 … 客户宽-200 |
-| 分割条宽 | 4 | |
+| 树默认宽 | 240 | 夹取 120 … 客户宽-200；拖动调宽（见 `docs/design/viewer-console.pen` Frame D） |
+| 分割条宽 | 4 | 树/工作区之间；悬停与拖动用 accent + 握点；光标 `IDC_SIZEWE` |
 | Tab 关闭热区 | 18×18 | |
 | 列表列表示例 | 160 / 130 / 70 / 70 / 140 | 可按内容调，保持整数 DIP |
 
@@ -301,8 +301,11 @@ MessageBox 使用系统图标类型（`MB_ICONERROR` 等），标题统一为 `R
 ```
 
 - 背景：树/列表 `surface.panel`；外壳 `surface.chrome`
+- **侧栏分割条**：树右缘 4 DIP（`rd.color.splitter`）；悬停/拖动 `accent` + 细握点；光标 `IDC_SIZEWE`；树宽夹取 120 … 客户宽−200（默认 240）。稿见 Frame D。
 - 占位菜单/工具栏：灰显项可用，但可见控件字体与颜色须已是产品字体，避免「半成品系统灰」与登录页割裂
 - 会话 Tab：活动/非活动用 §3.1 Tab 色；关闭「×」热区 18 DIP
+- **Tab 溢出导航**：标签总宽超过可视区时，条两端显示 ◀ / ▶（各 24×24）；未溢出则隐藏。到头侧按钮 `text.muted` 禁用，可滚动侧用 panel+border。新开/激活 Tab 时 `scrollIntoView`。稿见 Frame B / E。现状无滚动应对齐。
+- **右键菜单**（`CreatePopupMenu` + `MIIM_BITMAP` 图标，非系统灰 MessageBox）：关闭(`x`) / 关闭其他(`copy-x`) / 关闭全部(`x-circle`)；分隔；拖出(`panel-top-open`，已拖出则灰显) / 拖回(`panel-top-close`，停靠则灰显)；分隔；全屏(`maximize`)；只读(`eye`)。顶栏标题；已拖出 Tab 显示角标。稿见 `docs/design/viewer-console.pen` Frame C。
 
 ### 4.4 会话表面（Session Surface）
 

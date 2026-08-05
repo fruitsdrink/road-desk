@@ -82,6 +82,7 @@ class SessionHost {
   void release_backbuffer();
   bool ensure_backbuffer(HDC hdc, int cw, int ch);
   void on_destroy();
+  void notify_chrome_changed();
 
   road_desk::media::MediaClient client_;
   HWND hwnd_ = nullptr;
@@ -91,6 +92,8 @@ class SessionHost {
   int device_id_ = -1;
   bool view_only_ = false;
   bool fullscreen_ = false;
+  // If non-null, fullscreen was entered from a docked child; Esc should re-attach here.
+  HWND fullscreen_dock_parent_ = nullptr;
   RECT fullscreen_restore_rect_{};
   LONG_PTR fullscreen_restore_style_ = 0;
   ClosedFn on_closed_;

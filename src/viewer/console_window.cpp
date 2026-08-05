@@ -31,19 +31,23 @@ constexpr wchar_t kTabStripClass[] = L"RoadDeskTabStrip";
 constexpr wchar_t kDragGhostClass[] = L"RoadDeskDragGhost";
 constexpr int kToolbarHDip = 32;  // rd: 工具栏条
 constexpr int kToolbarIconDip = 16;
-constexpr int kToolbarPadXDip = 10;  // 工具栏左右内边距
-constexpr int kStatusH = 24;
+constexpr int kToolbarPadXDip = 8;  // design padding [0,8]
+constexpr int kStatusHDip = 24;
 constexpr int kTabHDefault = 30;
-constexpr int kCloseBtnW = 18;
-constexpr int kSplitterW = 4;
+constexpr int kCloseBtnWDip = 18;
+constexpr int kSplitterWDip = 4;
+constexpr int kTabNavWDip = 24;  // overflow ◀▶ (design Frame E)
+constexpr int kFloatBadgeWDip = 14;
 constexpr int kMaxSessions = 8;
 constexpr int kTabCatalog = -1;
 constexpr int kTabHitClose = -3;  // session close button (drag_tab_index holds session idx)
+constexpr int kTabHitNavLeft = -4;
+constexpr int kTabHitNavRight = -5;
 constexpr int kGhostW = 260;
 constexpr int kGhostH = 160;
 constexpr int kGhostTitleH = 28;
 
-// Design tokens (docs/ui-design-system.md).
+// Design tokens (docs/ui-design-system.md / docs/design/viewer-console.pen).
 constexpr COLORREF kChrome = RGB(236, 240, 245);       // rd.color.surface.chrome
 constexpr COLORREF kPanel = RGB(255, 255, 255);         // rd.color.surface.panel
 constexpr COLORREF kBorderSubtle = RGB(220, 226, 234);  // rd.color.border.subtle
@@ -57,6 +61,9 @@ constexpr COLORREF kRowSelected = RGB(210, 226, 244);   // rd.color.row.selected
 constexpr COLORREF kAccent = RGB(47, 107, 168);         // rd.color.accent
 constexpr COLORREF kAccentHover = RGB(38, 90, 145);     // rd.color.accent.hover
 constexpr COLORREF kAccentPressed = RGB(30, 74, 122);   // rd.color.accent.pressed
+constexpr COLORREF kSplitter = RGB(200, 208, 218);      // rd.color.splitter
+constexpr COLORREF kTabActive = RGB(255, 255, 255);     // rd.color.tab.active
+constexpr COLORREF kTabInactive = RGB(236, 240, 245);   // rd.color.tab.inactive
 
 enum : int {
   IDC_TREE = 1001,
@@ -69,11 +76,29 @@ enum : int {
 
 // Toolbar command ids.
 constexpr int kCmdRefresh = 10;
-constexpr int kCmdCloseSession = 11;
+constexpr int kCmdSession = 11;  // start (list selection) / close (active tab)
 constexpr int kCmdCloseAll = 12;
 constexpr int kCmdScreenshot = 13;
 constexpr int kCmdFullscreen = 14;
 constexpr int kCmdViewOnly = 15;
+
+// Toolbar imagelist indices (build_toolbar_images order).
+constexpr int kTbImgRefresh = 0;
+constexpr int kTbImgClose = 1;
+constexpr int kTbImgCloseAll = 2;
+constexpr int kTbImgScreenshot = 3;
+constexpr int kTbImgFullscreen = 4;
+constexpr int kTbImgViewOnly = 5;
+constexpr int kTbImgStart = 6;
+
+// Tab context menu (design Frame C).
+constexpr int kCmdTabCtxClose = 2001;
+constexpr int kCmdTabCtxCloseOthers = 2002;
+constexpr int kCmdTabCtxCloseAll = 2003;
+constexpr int kCmdTabCtxTear = 2004;
+constexpr int kCmdTabCtxDock = 2005;
+constexpr int kCmdTabCtxFullscreen = 2006;
+constexpr int kCmdTabCtxViewOnly = 2007;
 
 struct SessionTab {
   int device_id = -1;
@@ -87,15 +112,24 @@ struct ConsoleState {
   HWND hwnd = nullptr;
   HWND toolbar = nullptr;
   HIMAGELIST toolbar_il = nullptr;
+  HIMAGELIST toolbar_il_on_accent = nullptr;  // white glyphs for checked (accent) face
+  HIMAGELIST toolbar_il_muted = nullptr;      // text.muted for disabled
   HWND tree = nullptr;
   HWND list = nullptr;
   HWND tab_strip = nullptr;
   HWND status = nullptr;
   HWND session_area = nullptr;
-  HFONT ui_font = nullptr;
+  HFONT ui_font = nullptr;       // rd.font.body 10pt
+  HFONT caption_font = nullptr;  // rd.font.caption 9pt
+  HBRUSH menu_chrome_br = nullptr;
   ConnectDefaults connect;
   int dpi = 96;
   int toolbar_h = kToolbarHDip;
+  int status_h = kStatusHDip;
+  int splitter_w = kSplitterWDip;
+  int close_btn_w = kCloseBtnWDip;
+  int tab_nav_w = kTabNavWDip;
+  int float_badge_w = kFloatBadgeWDip;
   int tree_width = 240;
   int tab_h = kTabHDefault;
   int selected_group_id = 0;
@@ -103,6 +137,9 @@ struct ConsoleState {
   int toolbar_hot_cmd = -1;      // for hover transition invalidate
   std::vector<SessionTab> sessions;
   bool dragging_splitter = false;
+  bool splitter_hot = false;
+  int body_top = 0;  // below toolbar; for splitter paint/hit
+  int tab_scroll_x = 0;
   bool dragging_tab = false;
   bool drag_tear_armed = false;  // moved far enough; detach only on LBUTTONUP
   int drag_tab_index = -1;
@@ -155,12 +192,16 @@ void paint_toolbar_separator(HDC hdc, const RECT& rc, int dpi) {
   DeleteObject(pen);
 }
 
-// Draw chrome face; default handler still paints the glyph.
+// Design (viewer-console.pen Frame A/B):
+// - disabled: no face, muted glyph (TB_SETDISABLEDIMAGELIST)
+// - enabled idle: white panel + border.subtle, 32×28, radius 4
+// - hover: panel + border.strong
+// - pressed: row.selected + accent.pressed border
+// - checked (只读): accent fill + white glyph
 LRESULT paint_toolbar_button(ConsoleState* st, LPNMTBCUSTOMDRAW cd) {
   if (!st || !cd) {
     return CDRF_DODEFAULT;
   }
-  // Separators use idCommand 0; real cmds start at kCmdRefresh.
   if (cd->nmcd.dwItemSpec == 0) {
     paint_toolbar_separator(cd->nmcd.hdc, cd->nmcd.rc, st->dpi);
     return CDRF_SKIPDEFAULT;
@@ -171,46 +212,50 @@ LRESULT paint_toolbar_button(ConsoleState* st, LPNMTBCUSTOMDRAW cd) {
   const bool pressed = (state & CDIS_SELECTED) != 0;
   const bool hot = (state & CDIS_HOT) != 0;
   const bool checked = (state & CDIS_CHECKED) != 0;
-  const bool focused = (state & CDIS_FOCUS) != 0;
 
   RECT face = cd->nmcd.rc;
-  const int ix = dip(2, st->dpi);
-  const int iy = dip(3, st->dpi);
-  face.left += ix;
-  face.right -= ix;
+  // Design face 32×28 inside 32-tall strip → 2 DIP vertical inset, full button width.
+  const int iy = dip(2, st->dpi);
   face.top += iy;
   face.bottom -= iy;
 
-  COLORREF fill = kPanel;
-  COLORREF border = kBorderSubtle;
-  if (disabled) {
-    fill = kChrome;
-    border = kBorderSubtle;
-  } else if (pressed) {
-    fill = kRowSelected;
-    border = kAccentPressed;
-    OffsetRect(&face, dip(1, st->dpi), dip(1, st->dpi));
-  } else if (checked && hot) {
-    fill = kRowSelected;
-    border = kAccentHover;
-  } else if (checked) {
-    fill = kRowSelected;
-    border = kAccent;
-  } else if (hot) {
-    fill = kRowHover;
-    border = kBorderStrong;
-  }
-
   const int diameter = dip(4, st->dpi) * 2;  // rd.radius.md
-  fill_round_rect(cd->nmcd.hdc, face, fill, border, diameter);
 
-  if (focused && !disabled) {
-    RECT focus = face;
-    InflateRect(&focus, -dip(1, st->dpi), -dip(1, st->dpi));
-    fill_round_rect(cd->nmcd.hdc, focus, fill, kAccent, diameter);
+  if (!disabled) {
+    COLORREF fill = kPanel;
+    COLORREF border = kBorderSubtle;
+    if (checked) {
+      fill = kAccent;
+      border = kAccent;
+    } else if (pressed) {
+      fill = kRowSelected;
+      border = kAccentPressed;
+      OffsetRect(&face, dip(1, st->dpi), dip(1, st->dpi));
+    } else if (hot) {
+      fill = kPanel;
+      border = kBorderStrong;
+    }
+    fill_round_rect(cd->nmcd.hdc, face, fill, border, diameter);
   }
 
-  // Let toolbar draw the icon; skip stock bevel / flat fill.
+  if (checked && !disabled && st->toolbar_il_on_accent) {
+    TBBUTTONINFOW bi{};
+    bi.cbSize = sizeof(bi);
+    bi.dwMask = TBIF_IMAGE;
+    if (SendMessageW(st->toolbar, TB_GETBUTTONINFOW, cd->nmcd.dwItemSpec,
+                     reinterpret_cast<LPARAM>(&bi)) >= 0 &&
+        bi.iImage >= 0) {
+      HIMAGELIST il = st->toolbar_il_on_accent;
+      int iw = 0;
+      int ih = 0;
+      ImageList_GetIconSize(il, &iw, &ih);
+      const int ix = (cd->nmcd.rc.left + cd->nmcd.rc.right - iw) / 2;
+      const int iy_icon = (cd->nmcd.rc.top + cd->nmcd.rc.bottom - ih) / 2;
+      ImageList_Draw(il, bi.iImage, cd->nmcd.hdc, ix, iy_icon, ILD_TRANSPARENT);
+      return CDRF_SKIPDEFAULT;
+    }
+  }
+
   return TBCDRF_NOBACKGROUND | TBCDRF_NOEDGES;
 }
 
@@ -318,25 +363,34 @@ void ensure_drag_ghost(ConsoleState* st, const std::wstring& title) {
   ShowWindow(st->drag_ghost, SW_SHOWNOACTIVATE);
 }
 
-HFONT create_ui_font() {
-  NONCLIENTMETRICSW ncm{};
-  ncm.cbSize = sizeof(ncm);
-  if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0)) {
-    // lfWidth!=0 forces non-square glyphs ("压扁"); keep natural aspect.
-    ncm.lfMessageFont.lfWidth = 0;
-    if (HFONT font = CreateFontIndirectW(&ncm.lfMessageFont)) {
-      return font;
-    }
-  }
+HFONT create_ui_font(int dpi, int pt) {
   LOGFONTW lf{};
-  GetObjectW(GetStockObject(DEFAULT_GUI_FONT), sizeof(lf), &lf);
-  lf.lfWidth = 0;
+  lf.lfHeight = -MulDiv(pt, dpi > 0 ? dpi : 96, 72);
+  lf.lfWeight = FW_NORMAL;
+  lf.lfCharSet = DEFAULT_CHARSET;
+  lf.lfQuality = CLEARTYPE_QUALITY;
+  lf.lfPitchAndFamily = DEFAULT_PITCH | FF_SWISS;
+  wcscpy_s(lf.lfFaceName, L"Segoe UI");
+  if (HFONT font = CreateFontIndirectW(&lf)) {
+    return font;
+  }
+  wcscpy_s(lf.lfFaceName, L"Microsoft YaHei UI");
+  if (HFONT font = CreateFontIndirectW(&lf)) {
+    return font;
+  }
+  wcscpy_s(lf.lfFaceName, L"Tahoma");
   return CreateFontIndirectW(&lf);
 }
 
 void apply_ui_font(ConsoleState* st, HWND child) {
   if (st && st->ui_font && child) {
     SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(st->ui_font), TRUE);
+  }
+}
+
+void apply_caption_font(ConsoleState* st, HWND child) {
+  if (st && st->caption_font && child) {
+    SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(st->caption_font), TRUE);
   }
 }
 
@@ -357,42 +411,41 @@ void layout_status_parts(ConsoleState* st, int client_w) {
   if (!st || !st->status) {
     return;
   }
-  // message | viewer version (right, no label)
-  constexpr int kVerPartW = 72;
-  int parts[2];
-  if (client_w > kVerPartW + 40) {
-    parts[0] = client_w - kVerPartW;
-  } else {
-    parts[0] = 120;
-  }
-  parts[1] = -1;
-  SendMessageW(st->status, SB_SETPARTS, 2, reinterpret_cast<LPARAM>(parts));
-}
-
-void refresh_status_fixed(ConsoleState* st) {
-  if (!st || !st->status) {
-    return;
-  }
-  wchar_t buf[64];
-  _snwprintf_s(buf, _TRUNCATE, L"%hs", ROAD_DESK_VERSION_STRING);
-  SendMessageW(st->status, SB_SETTEXTW, 1, reinterpret_cast<LPARAM>(buf));
+  (void)client_w;
+  // Design: single chrome caption strip (no version pane / size grip).
+  int parts[1] = {-1};
+  SendMessageW(st->status, SB_SETPARTS, 1, reinterpret_cast<LPARAM>(parts));
 }
 
 void set_status(ConsoleState* st, const wchar_t* text) {
   if (!st || !st->status) {
     return;
   }
-  refresh_status_fixed(st);
-  SendMessageW(st->status, SB_SETTEXTW, 0,
+  SendMessageW(st->status, SB_SETTEXTW, 0 | SBT_NOBORDERS,
                reinterpret_cast<LPARAM>(text ? text : L""));
 }
 
 void update_toolbar_state(ConsoleState* st);
+int find_session_by_device(ConsoleState* st, int device_id);
+int selected_list_device_id(ConsoleState* st);
+bool session_toolbar_starts(ConsoleState* st);
+
+void sync_session_floating_flags(ConsoleState* st) {
+  if (!st) {
+    return;
+  }
+  for (SessionTab& tab : st->sessions) {
+    if (tab.host) {
+      tab.floating = tab.host->floating();
+    }
+  }
+}
 
 void layout(ConsoleState* st) {
   if (!st || !st->hwnd) {
     return;
   }
+  sync_session_floating_flags(st);
   RECT rc{};
   GetClientRect(st->hwnd, &rc);
   const int cw = rc.right - rc.left;
@@ -400,12 +453,14 @@ void layout(ConsoleState* st) {
   const int menu_pad = 0;
   int y = menu_pad;
   if (st->toolbar) {
+    // Full-width chrome strip (do not TB_AUTOSIZE — that shrinks HWND to button cluster).
     MoveWindow(st->toolbar, 0, y, cw, st->toolbar_h, TRUE);
-    SendMessageW(st->toolbar, TB_SETBUTTONSIZE, 0, MAKELONG(st->toolbar_h, st->toolbar_h));
+    const int btn = st->toolbar_h;
+    SendMessageW(st->toolbar, TB_SETBUTTONSIZE, 0, MAKELONG(btn, btn));
     update_toolbar_state(st);
     y += st->toolbar_h;
   }
-  const int body_h = ch - y - kStatusH;
+  const int body_h = ch - y - st->status_h;
   if (body_h < 1) {
     return;
   }
@@ -417,9 +472,16 @@ void layout(ConsoleState* st) {
     tw = cw - 200;
   }
   st->tree_width = tw;
+  st->body_top = y;
   MoveWindow(st->tree, 0, y, tw, body_h, TRUE);
 
-  const int work_x = tw + kSplitterW;
+  // Splitter strip between tree and work area.
+  {
+    RECT split_rc{tw, y, tw + st->splitter_w, y + body_h};
+    InvalidateRect(st->hwnd, &split_rc, FALSE);
+  }
+
+  const int work_x = tw + st->splitter_w;
   const int work_w = cw - work_x;
   const bool show_tabs = !st->sessions.empty();
   int content_y = y;
@@ -463,9 +525,8 @@ void layout(ConsoleState* st) {
     }
   }
   if (st->status) {
-    MoveWindow(st->status, 0, ch - kStatusH, cw, kStatusH, TRUE);
+    MoveWindow(st->status, 0, ch - st->status_h, cw, st->status_h, TRUE);
     layout_status_parts(st, cw);
-    refresh_status_fixed(st);
   }
 }
 
@@ -499,6 +560,7 @@ void fill_list(ConsoleState* st) {
     ListView_SetItemText(st->list, row, 4, const_cast<LPWSTR>(d->remark.c_str()));
     ++row;
   }
+  update_toolbar_state(st);
 }
 
 HTREEITEM insert_tree_recursive(ConsoleState* st, HWND tree, HTREEITEM parent, int node_id) {
@@ -541,6 +603,33 @@ void fill_tree(ConsoleState* st) {
   fill_list(st);
 }
 
+int selected_list_device_id(ConsoleState* st) {
+  if (!st || !st->list) {
+    return -1;
+  }
+  const int i = ListView_GetNextItem(st->list, -1, LVNI_SELECTED);
+  if (i < 0) {
+    return -1;
+  }
+  LVITEMW it{};
+  it.mask = LVIF_PARAM;
+  it.iItem = i;
+  if (!ListView_GetItem(st->list, &it)) {
+    return -1;
+  }
+  const BookNode* n = address_book_find(static_cast<int>(it.lParam));
+  if (!n || n->kind != BookNodeKind::kDevice) {
+    return -1;
+  }
+  return n->id;
+}
+
+// Prefer start when a list device is selected and not yet connected.
+bool session_toolbar_starts(ConsoleState* st) {
+  const int id = selected_list_device_id(st);
+  return id >= 0 && find_session_by_device(st, id) < 0;
+}
+
 void update_toolbar_state(ConsoleState* st) {
   if (!st || !st->toolbar) {
     return;
@@ -548,7 +637,12 @@ void update_toolbar_state(ConsoleState* st) {
   const bool has_sessions = !st->sessions.empty();
   const bool has_active = st->active_tab >= 0 &&
                           st->active_tab < static_cast<int>(st->sessions.size());
-  SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdCloseSession, has_sessions ? TRUE : FALSE);
+  const bool can_start = session_toolbar_starts(st);
+  const bool has_list_sel = selected_list_device_id(st) >= 0;
+  SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdSession,
+               (can_start || has_active || has_list_sel) ? TRUE : FALSE);
+  SendMessageW(st->toolbar, TB_CHANGEBITMAP, kCmdSession,
+               can_start ? kTbImgStart : kTbImgClose);
   SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdCloseAll, has_sessions ? TRUE : FALSE);
   SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdScreenshot, has_active ? TRUE : FALSE);
   SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdFullscreen, has_active ? TRUE : FALSE);
@@ -593,6 +687,8 @@ int find_session_by_device(ConsoleState* st, int device_id) {
   return -1;
 }
 
+void ensure_tab_visible(ConsoleState* st, int tab_index);
+
 void select_tab(ConsoleState* st, int tab_index) {
   st->active_tab = tab_index;
   if (tab_index >= 0 && tab_index < static_cast<int>(st->sessions.size())) {
@@ -604,6 +700,7 @@ void select_tab(ConsoleState* st, int tab_index) {
     SessionHost::set_keyboard_target(nullptr);
   }
   layout(st);
+  ensure_tab_visible(st, tab_index);
   if (st->tab_strip) {
     InvalidateRect(st->tab_strip, nullptr, TRUE);
   }
@@ -689,34 +786,145 @@ std::wstring session_tab_label(const SessionTab& tab) {
       label += L"]";
     }
   }
-  if (tab.floating) {
-    label += L" ↗";
-  }
   return label;
 }
 
-int session_tab_width(HDC hdc, const SessionTab& tab) {
+int catalog_tab_width(HDC hdc) {
+  SIZE sz{};
+  GetTextExtentPoint32W(hdc, L"目录", 2, &sz);
+  return sz.cx + 24;
+}
+
+int session_tab_width(HDC hdc, const SessionTab& tab, ConsoleState* st) {
   const std::wstring label = session_tab_label(tab);
   SIZE sz{};
   GetTextExtentPoint32W(hdc, label.c_str(), static_cast<int>(label.size()), &sz);
-  return sz.cx + 16 + kCloseBtnW;
+  int w = sz.cx + 16 + (st ? st->close_btn_w : kCloseBtnWDip);
+  if (tab.floating && st) {
+    w += st->float_badge_w + 4;
+  }
+  return w;
 }
 
-// Returns kTabCatalog, session index, or -2 (miss).
-// If click is on a session close button, sets *out_close_index and returns kTabHitClose.
+int tabs_content_width(ConsoleState* st, HDC hdc) {
+  if (!st) {
+    return 0;
+  }
+  int w = catalog_tab_width(hdc);
+  for (const SessionTab& tab : st->sessions) {
+    w += session_tab_width(hdc, tab, st);
+  }
+  return w;
+}
+
+bool tab_strip_needs_nav(ConsoleState* st, int strip_w, HDC hdc) {
+  return tabs_content_width(st, hdc) > strip_w;
+}
+
+void clamp_tab_scroll(ConsoleState* st, int strip_w, HDC hdc) {
+  if (!st) {
+    return;
+  }
+  const bool nav = tab_strip_needs_nav(st, strip_w, hdc);
+  const int vp = strip_w - (nav ? 2 * st->tab_nav_w : 0);
+  const int content = tabs_content_width(st, hdc);
+  const int max_scroll = (std::max)(0, content - (std::max)(0, vp));
+  if (st->tab_scroll_x < 0) {
+    st->tab_scroll_x = 0;
+  }
+  if (st->tab_scroll_x > max_scroll) {
+    st->tab_scroll_x = max_scroll;
+  }
+}
+
+void ensure_tab_visible(ConsoleState* st, int tab_index) {
+  if (!st || !st->tab_strip) {
+    return;
+  }
+  RECT rc{};
+  GetClientRect(st->tab_strip, &rc);
+  const int strip_w = rc.right - rc.left;
+  HDC hdc = GetDC(st->tab_strip);
+  HGDIOBJ old = st->ui_font ? SelectObject(hdc, st->ui_font) : nullptr;
+  clamp_tab_scroll(st, strip_w, hdc);
+  const bool nav = tab_strip_needs_nav(st, strip_w, hdc);
+  const int vp_left = nav ? st->tab_nav_w : 0;
+  const int vp_right = strip_w - (nav ? st->tab_nav_w : 0);
+  const int vp_w = (std::max)(0, vp_right - vp_left);
+
+  int tab_l = 4;
+  int tab_r = tab_l;
+  if (tab_index == kTabCatalog) {
+    tab_r = tab_l + catalog_tab_width(hdc);
+  } else if (tab_index >= 0 && tab_index < static_cast<int>(st->sessions.size())) {
+    tab_l += catalog_tab_width(hdc);
+    for (int i = 0; i < tab_index; ++i) {
+      tab_l += session_tab_width(hdc, st->sessions[static_cast<size_t>(i)], st);
+    }
+    tab_r = tab_l + session_tab_width(hdc, st->sessions[static_cast<size_t>(tab_index)], st);
+  } else {
+    if (old) {
+      SelectObject(hdc, old);
+    }
+    ReleaseDC(st->tab_strip, hdc);
+    return;
+  }
+
+  const int vis_l = st->tab_scroll_x;
+  const int vis_r = st->tab_scroll_x + vp_w;
+  if (tab_l < vis_l) {
+    st->tab_scroll_x = tab_l;
+  } else if (tab_r > vis_r) {
+    st->tab_scroll_x = tab_r - vp_w;
+  }
+  clamp_tab_scroll(st, strip_w, hdc);
+  if (old) {
+    SelectObject(hdc, old);
+  }
+  ReleaseDC(st->tab_strip, hdc);
+  InvalidateRect(st->tab_strip, nullptr, FALSE);
+}
+
+// Returns kTabCatalog, session index, kTabHitClose/Nav*, or -2 (miss).
 int tab_hit_test(ConsoleState* st, int x, int* out_close_index, RECT* out_tab_rc) {
   if (out_close_index) {
     *out_close_index = -1;
   }
+  if (!st || !st->tab_strip) {
+    return -2;
+  }
+  RECT rc{};
+  GetClientRect(st->tab_strip, &rc);
+  const int strip_w = rc.right - rc.left;
   HDC hdc = GetDC(st->tab_strip);
   HGDIOBJ old = st->ui_font ? SelectObject(hdc, st->ui_font) : nullptr;
+  clamp_tab_scroll(st, strip_w, hdc);
+  const bool nav = tab_strip_needs_nav(st, strip_w, hdc);
+  if (nav) {
+    if (x >= 0 && x < st->tab_nav_w) {
+      if (old) {
+        SelectObject(hdc, old);
+      }
+      ReleaseDC(st->tab_strip, hdc);
+      return kTabHitNavLeft;
+    }
+    if (x >= strip_w - st->tab_nav_w && x < strip_w) {
+      if (old) {
+        SelectObject(hdc, old);
+      }
+      ReleaseDC(st->tab_strip, hdc);
+      return kTabHitNavRight;
+    }
+  }
+
+  const int vp_left = nav ? st->tab_nav_w : 0;
+  const int content_x = x - vp_left + st->tab_scroll_x;
   int cx = 4;
-  SIZE cat_sz{};
-  GetTextExtentPoint32W(hdc, L"目录", 2, &cat_sz);
-  const int cat_w = cat_sz.cx + 24;
-  if (x >= cx && x < cx + cat_w) {
+  const int cat_w = catalog_tab_width(hdc);
+  if (content_x >= cx && content_x < cx + cat_w) {
     if (out_tab_rc) {
-      *out_tab_rc = {cx, 0, cx + cat_w, st->tab_h};
+      *out_tab_rc = {vp_left + cx - st->tab_scroll_x, 0,
+                     vp_left + cx - st->tab_scroll_x + cat_w, st->tab_h};
     }
     if (old) {
       SelectObject(hdc, old);
@@ -727,13 +935,14 @@ int tab_hit_test(ConsoleState* st, int x, int* out_close_index, RECT* out_tab_rc
   cx += cat_w;
   for (int i = 0; i < static_cast<int>(st->sessions.size()); ++i) {
     const SessionTab& tab = st->sessions[static_cast<size_t>(i)];
-    const int tw = session_tab_width(hdc, tab);
-    if (x >= cx && x < cx + tw) {
+    const int tw = session_tab_width(hdc, tab, st);
+    if (content_x >= cx && content_x < cx + tw) {
       if (out_tab_rc) {
-        *out_tab_rc = {cx, 0, cx + tw, st->tab_h};
+        *out_tab_rc = {vp_left + cx - st->tab_scroll_x, 0,
+                       vp_left + cx - st->tab_scroll_x + tw, st->tab_h};
       }
-      const int close_left = cx + tw - kCloseBtnW - 2;
-      if (out_close_index && x >= close_left) {
+      const int close_left = cx + tw - st->close_btn_w - 2;
+      if (out_close_index && content_x >= close_left) {
         *out_close_index = i;
         if (old) {
           SelectObject(hdc, old);
@@ -754,6 +963,389 @@ int tab_hit_test(ConsoleState* st, int x, int* out_close_index, RECT* out_tab_rc
   }
   ReleaseDC(st->tab_strip, hdc);
   return -2;
+}
+
+void paint_tab_nav_btn(HDC hdc, const RECT& rc, bool enabled, bool left, int dpi) {
+  if (enabled) {
+    fill_round_rect(hdc, rc, kPanel, kBorderSubtle, dip(4, dpi) * 2);
+  }
+  const COLORREF ink = enabled ? kTextSecondary : kTextMuted;
+  HPEN pen = CreatePen(PS_SOLID, 2, ink);
+  HGDIOBJ old = SelectObject(hdc, pen);
+  const int cx = (rc.left + rc.right) / 2;
+  const int cy = (rc.top + rc.bottom) / 2;
+  if (left) {
+    MoveToEx(hdc, cx + 3, cy - 5, nullptr);
+    LineTo(hdc, cx - 2, cy);
+    LineTo(hdc, cx + 3, cy + 5);
+  } else {
+    MoveToEx(hdc, cx - 3, cy - 5, nullptr);
+    LineTo(hdc, cx + 2, cy);
+    LineTo(hdc, cx - 3, cy + 5);
+  }
+  SelectObject(hdc, old);
+  DeleteObject(pen);
+}
+
+// Lucide-ish panel-top-open mark for torn-out session tabs.
+void paint_float_badge(HDC hdc, int left, int top, int size) {
+  if (size < 8) {
+    return;
+  }
+  HPEN pen = CreatePen(PS_SOLID, 1, kAccent);
+  HBRUSH br = CreateSolidBrush(kAccent);
+  HGDIOBJ old_pen = SelectObject(hdc, pen);
+  HGDIOBJ old_br = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+  const int r = size;
+  RoundRect(hdc, left, top, left + r, top + r * 3 / 4, 2, 2);
+  SelectObject(hdc, br);
+  Rectangle(hdc, left, top, left + r, top + r / 4);
+  SelectObject(hdc, old_pen);
+  SelectObject(hdc, old_br);
+  DeleteObject(pen);
+  DeleteObject(br);
+}
+
+void paint_tab_strip(HWND hwnd, ConsoleState* st) {
+  PAINTSTRUCT ps{};
+  HDC hdc = BeginPaint(hwnd, &ps);
+  RECT rc{};
+  GetClientRect(hwnd, &rc);
+  HBRUSH chrome = CreateSolidBrush(kChrome);
+  FillRect(hdc, &rc, chrome);
+  DeleteObject(chrome);
+  HPEN edge = CreatePen(PS_SOLID, 1, kBorderSubtle);
+  HGDIOBJ old_pen = SelectObject(hdc, edge);
+  MoveToEx(hdc, rc.left, rc.bottom - 1, nullptr);
+  LineTo(hdc, rc.right, rc.bottom - 1);
+  SelectObject(hdc, old_pen);
+  DeleteObject(edge);
+
+  HGDIOBJ old_font = st->ui_font ? SelectObject(hdc, st->ui_font) : nullptr;
+  SetBkMode(hdc, TRANSPARENT);
+  const int strip_w = rc.right - rc.left;
+  clamp_tab_scroll(st, strip_w, hdc);
+  const bool nav = tab_strip_needs_nav(st, strip_w, hdc);
+  const int nav_w = st->tab_nav_w;
+  const int vp_left = nav ? nav_w : 0;
+  const int vp_right = strip_w - (nav ? nav_w : 0);
+  const int diameter = dip(4, st->dpi) * 2;
+
+  if (nav) {
+    const int max_scroll =
+        (std::max)(0, tabs_content_width(st, hdc) - (vp_right - vp_left));
+    const int ny = (rc.bottom - nav_w) / 2;
+    RECT left_rc{2, ny, 2 + nav_w, ny + nav_w};
+    RECT right_rc{strip_w - nav_w - 2, ny, strip_w - 2, ny + nav_w};
+    paint_tab_nav_btn(hdc, left_rc, st->tab_scroll_x > 0, true, st->dpi);
+    paint_tab_nav_btn(hdc, right_rc, st->tab_scroll_x < max_scroll, false, st->dpi);
+  }
+
+  HRGN clip = CreateRectRgn(vp_left, 0, vp_right, rc.bottom);
+  SelectClipRgn(hdc, clip);
+
+  auto draw_catalog = [&](int x) {
+    const int w = catalog_tab_width(hdc);
+    RECT tr{x, 2, x + w, rc.bottom - 1};
+    const bool active = st->active_tab == kTabCatalog;
+    fill_round_rect(hdc, tr, active ? kTabActive : kTabInactive,
+                    active ? kTabActive : kTabInactive, diameter);
+    if (active) {
+      HPEN ap = CreatePen(PS_SOLID, 2, kAccent);
+      HGDIOBJ op = SelectObject(hdc, ap);
+      MoveToEx(hdc, tr.left + 2, 2, nullptr);
+      LineTo(hdc, tr.right - 2, 2);
+      SelectObject(hdc, op);
+      DeleteObject(ap);
+    }
+    SetTextColor(hdc, active ? kTextPrimary : kTextSecondary);
+    DrawTextW(hdc, L"目录", -1, &tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    return w;
+  };
+
+  auto draw_session = [&](int x, int index) {
+    const SessionTab& tab = st->sessions[static_cast<size_t>(index)];
+    const std::wstring label = session_tab_label(tab);
+    const int w = session_tab_width(hdc, tab, st);
+    RECT tr{x, 2, x + w, rc.bottom - 1};
+    const bool active = st->active_tab == index;
+    fill_round_rect(hdc, tr, active ? kTabActive : kTabInactive,
+                    active ? kTabActive : kTabInactive, diameter);
+    if (active) {
+      HPEN ap = CreatePen(PS_SOLID, 2, kAccent);
+      HGDIOBJ op = SelectObject(hdc, ap);
+      MoveToEx(hdc, tr.left + 2, 2, nullptr);
+      LineTo(hdc, tr.right - 2, 2);
+      SelectObject(hdc, op);
+      DeleteObject(ap);
+    }
+    RECT text_rc = tr;
+    text_rc.right -= st->close_btn_w;
+    if (tab.floating) {
+      text_rc.right -= st->float_badge_w + 4;
+      const int bx = tr.right - st->close_btn_w - st->float_badge_w - 4;
+      const int by = tr.top + (tr.bottom - tr.top - st->float_badge_w * 3 / 4) / 2;
+      paint_float_badge(hdc, bx, by, st->float_badge_w);
+    }
+    SetTextColor(hdc, active ? kTextPrimary : kTextSecondary);
+    DrawTextW(hdc, label.c_str(), -1, &text_rc,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    RECT close_rc{tr.right - st->close_btn_w - 2, tr.top, tr.right - 2, tr.bottom};
+    SetTextColor(hdc, kTextMuted);
+    DrawTextW(hdc, L"×", -1, &close_rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    return w;
+  };
+
+  int cx = vp_left + 4 - st->tab_scroll_x;
+  cx += draw_catalog(cx);
+  for (int i = 0; i < static_cast<int>(st->sessions.size()); ++i) {
+    cx += draw_session(cx, i);
+  }
+
+  SelectClipRgn(hdc, nullptr);
+  DeleteObject(clip);
+  if (old_font) {
+    SelectObject(hdc, old_font);
+  }
+  EndPaint(hwnd, &ps);
+}
+
+void close_session_at(ConsoleState* st, int index);  // defined below
+void close_all_sessions(ConsoleState* st);
+
+enum class CtxIcon : int {
+  Close = 0,
+  CloseOthers,
+  CloseAll,
+  Tear,
+  Dock,
+  Fullscreen,
+  Eye,
+  Count,
+};
+
+HBITMAP make_ctx_menu_bitmap(CtxIcon which, int icon_px, COLORREF ink) {
+  if (icon_px < 12) {
+    icon_px = 12;
+  }
+  ULONG_PTR token = 0;
+  gdip::GdiplusStartupInput gsi;
+  if (gdip::GdiplusStartup(&token, &gsi, nullptr) != gdip::Ok) {
+    return nullptr;
+  }
+  HBITMAP hbmp = nullptr;
+  {
+    gdip::Bitmap bmp(icon_px, icon_px, PixelFormat32bppPARGB);
+    gdip::Graphics g(&bmp);
+    g.SetSmoothingMode(gdip::SmoothingModeAntiAlias);
+    g.SetPixelOffsetMode(gdip::PixelOffsetModeHalf);
+    g.Clear(gdip::Color(0, 0, 0, 0));
+    constexpr float kMargin = 1.5f;
+    const float inner = static_cast<float>(icon_px) - 2.f * kMargin;
+    const float scale = inner / 24.f;
+    g.TranslateTransform(kMargin, kMargin);
+    g.ScaleTransform(scale, scale);
+    gdip::Pen pen(gdip_rgb(ink), 2.f);
+    pen.SetStartCap(gdip::LineCapRound);
+    pen.SetEndCap(gdip::LineCapRound);
+    pen.SetLineJoin(gdip::LineJoinRound);
+
+    switch (which) {
+      case CtxIcon::Close:
+        g.DrawLine(&pen, 18.f, 6.f, 6.f, 18.f);
+        g.DrawLine(&pen, 6.f, 6.f, 18.f, 18.f);
+        break;
+      case CtxIcon::CloseOthers:
+        // lucide copy-x — stacked frames + x
+        g.DrawRectangle(&pen, 8.f, 8.f, 12.f, 12.f);
+        g.DrawRectangle(&pen, 4.f, 4.f, 12.f, 12.f);
+        g.DrawLine(&pen, 7.f, 7.f, 13.f, 13.f);
+        g.DrawLine(&pen, 13.f, 7.f, 7.f, 13.f);
+        break;
+      case CtxIcon::CloseAll:
+        g.DrawEllipse(&pen, 3.f, 3.f, 18.f, 18.f);
+        g.DrawLine(&pen, 15.f, 9.f, 9.f, 15.f);
+        g.DrawLine(&pen, 9.f, 9.f, 15.f, 15.f);
+        break;
+      case CtxIcon::Tear:
+        // lucide panel-top-open
+        g.DrawRectangle(&pen, 3.f, 4.f, 18.f, 16.f);
+        g.DrawLine(&pen, 3.f, 9.f, 21.f, 9.f);
+        g.DrawLine(&pen, 12.f, 14.f, 12.f, 19.f);
+        {
+          gdip::PointF tip[] = {{9.f, 16.5f}, {12.f, 13.5f}, {15.f, 16.5f}};
+          g.DrawLines(&pen, tip, 3);
+        }
+        break;
+      case CtxIcon::Dock:
+        // lucide panel-top-close
+        g.DrawRectangle(&pen, 3.f, 4.f, 18.f, 16.f);
+        g.DrawLine(&pen, 3.f, 9.f, 21.f, 9.f);
+        g.DrawLine(&pen, 12.f, 12.f, 12.f, 17.f);
+        {
+          gdip::PointF tip[] = {{9.f, 14.5f}, {12.f, 17.5f}, {15.f, 14.5f}};
+          g.DrawLines(&pen, tip, 3);
+        }
+        break;
+      case CtxIcon::Fullscreen: {
+        gdip::PointF tl[] = {{8.f, 3.f}, {5.f, 3.f}, {5.f, 6.f}};
+        gdip::PointF tr[] = {{16.f, 3.f}, {19.f, 3.f}, {19.f, 6.f}};
+        gdip::PointF bl[] = {{5.f, 16.f}, {5.f, 19.f}, {8.f, 19.f}};
+        gdip::PointF br[] = {{19.f, 16.f}, {19.f, 19.f}, {16.f, 19.f}};
+        g.DrawLines(&pen, tl, 3);
+        g.DrawLines(&pen, tr, 3);
+        g.DrawLines(&pen, bl, 3);
+        g.DrawLines(&pen, br, 3);
+        break;
+      }
+      case CtxIcon::Eye: {
+        gdip::GraphicsPath eye;
+        eye.AddBezier(2.f, 12.f, 6.f, 6.5f, 18.f, 6.5f, 22.f, 12.f);
+        eye.AddBezier(22.f, 12.f, 18.f, 17.5f, 6.f, 17.5f, 2.f, 12.f);
+        g.DrawPath(&pen, &eye);
+        g.DrawEllipse(&pen, 9.f, 9.f, 6.f, 6.f);
+        break;
+      }
+      default:
+        break;
+    }
+    bmp.GetHBITMAP(gdip::Color(0, 0, 0, 0), &hbmp);
+  }  // Bitmap/Graphics destroyed before GdiplusShutdown
+  gdip::GdiplusShutdown(token);
+  return hbmp;
+}
+
+void append_ctx_menu_item(HMENU menu, UINT id, const wchar_t* text, HBITMAP bmp, bool enabled) {
+  MENUITEMINFOW mii{};
+  mii.cbSize = sizeof(mii);
+  mii.fMask = MIIM_ID | MIIM_STRING | MIIM_BITMAP | MIIM_STATE | MIIM_FTYPE;
+  mii.fType = MFT_STRING;
+  mii.fState = enabled ? MFS_ENABLED : (MFS_DISABLED | MFS_GRAYED);
+  mii.wID = id;
+  mii.dwTypeData = const_cast<LPWSTR>(text);
+  mii.cch = static_cast<UINT>(wcslen(text));
+  mii.hbmpItem = bmp;
+  InsertMenuItemW(menu, GetMenuItemCount(menu), TRUE, &mii);
+}
+
+void run_tab_context_menu(ConsoleState* st, HWND hwnd, int tab_index, int screen_x, int screen_y) {
+  if (!st || tab_index < 0 || tab_index >= static_cast<int>(st->sessions.size())) {
+    return;
+  }
+  SessionTab& tab = st->sessions[static_cast<size_t>(tab_index)];
+  const int icon_px = dip(14, st->dpi);
+  HBITMAP bmps[static_cast<int>(CtxIcon::Count)] = {};
+  auto bmp_for = [&](CtxIcon ic, bool enabled) -> HBITMAP {
+    const int idx = static_cast<int>(ic);
+    if (!bmps[idx]) {
+      bmps[idx] = make_ctx_menu_bitmap(ic, icon_px, enabled ? kTextSecondary : kTextMuted);
+    }
+    return bmps[idx];
+  };
+
+  HMENU menu = CreatePopupMenu();
+  // Optional title row (design Frame C header).
+  {
+    std::wstring hdr = tab.title;
+    if (tab.floating) {
+      hdr += L" · 已拖出";
+    }
+    MENUITEMINFOW mii{};
+    mii.cbSize = sizeof(mii);
+    mii.fMask = MIIM_STRING | MIIM_STATE | MIIM_FTYPE | MIIM_ID;
+    mii.fType = MFT_STRING;
+    mii.fState = MFS_DISABLED;
+    mii.wID = 0;
+    mii.dwTypeData = hdr.data();
+    mii.cch = static_cast<UINT>(hdr.size());
+    InsertMenuItemW(menu, 0, TRUE, &mii);
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+  }
+  append_ctx_menu_item(menu, kCmdTabCtxClose, L"关闭", bmp_for(CtxIcon::Close, true), true);
+  append_ctx_menu_item(menu, kCmdTabCtxCloseOthers, L"关闭其他", bmp_for(CtxIcon::CloseOthers, true),
+                       true);
+  append_ctx_menu_item(menu, kCmdTabCtxCloseAll, L"关闭全部", bmp_for(CtxIcon::CloseAll, true), true);
+  AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+  append_ctx_menu_item(menu, kCmdTabCtxTear, L"拖出为独立窗口",
+                       bmp_for(CtxIcon::Tear, !tab.floating), !tab.floating);
+  append_ctx_menu_item(menu, kCmdTabCtxDock, L"拖回工作区", bmp_for(CtxIcon::Dock, tab.floating),
+                       tab.floating);
+  AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+  append_ctx_menu_item(menu, kCmdTabCtxFullscreen, L"全屏", bmp_for(CtxIcon::Fullscreen, true),
+                       true);
+  append_ctx_menu_item(menu, kCmdTabCtxViewOnly, L"只读", bmp_for(CtxIcon::Eye, true), true);
+
+  const int cmd =
+      TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screen_x, screen_y, 0, hwnd, nullptr);
+  DestroyMenu(menu);
+  for (HBITMAP b : bmps) {
+    if (b) {
+      DeleteObject(b);
+    }
+  }
+  if (!cmd) {
+    return;
+  }
+
+  SessionHost* host = tab.host.get();
+  switch (cmd) {
+    case kCmdTabCtxClose:
+      close_session_at(st, tab_index);
+      break;
+    case kCmdTabCtxCloseOthers: {
+      std::vector<SessionHost*> victims;
+      for (int i = 0; i < static_cast<int>(st->sessions.size()); ++i) {
+        if (i == tab_index) {
+          continue;
+        }
+        if (st->sessions[static_cast<size_t>(i)].host) {
+          victims.push_back(st->sessions[static_cast<size_t>(i)].host.get());
+        }
+      }
+      for (SessionHost* h : victims) {
+        if (h) {
+          h->close();
+        }
+      }
+      break;
+    }
+    case kCmdTabCtxCloseAll:
+      close_all_sessions(st);
+      break;
+    case kCmdTabCtxTear:
+      if (host && !tab.floating) {
+        host->detach_to_floating(st->instance);
+        tab.floating = true;
+        select_tab(st, kTabCatalog);
+        SessionHost::set_keyboard_target(host);
+        set_status(st, L"会话已拖出为独立窗口");
+        InvalidateRect(st->tab_strip, nullptr, FALSE);
+      }
+      break;
+    case kCmdTabCtxDock:
+      if (host && tab.floating) {
+        host->attach_to_parent(st->session_area);
+        tab.floating = false;
+        select_tab(st, tab_index);
+        set_status(st, L"会话已拖回工作区");
+        InvalidateRect(st->tab_strip, nullptr, FALSE);
+      }
+      break;
+    case kCmdTabCtxFullscreen:
+      if (host) {
+        host->toggle_fullscreen();
+      }
+      break;
+    case kCmdTabCtxViewOnly:
+      if (host) {
+        host->set_view_only(!host->view_only());
+        update_toolbar_state(st);
+        set_status(st, host->view_only() ? L"仅查看模式：键鼠输入已冻结" : L"已恢复键鼠控制");
+      }
+      break;
+    default:
+      break;
+  }
 }
 
 void close_session_at(ConsoleState* st, int index) {
@@ -802,7 +1394,7 @@ std::wstring default_screenshot_path(const std::wstring& title) {
   return std::wstring(dir) + L"\\" + name;
 }
 
-HIMAGELIST build_toolbar_images(int icon_px) {
+HIMAGELIST build_toolbar_images(int icon_px, COLORREF ink) {
   if (icon_px < 12) {
     icon_px = 12;
   }
@@ -813,7 +1405,7 @@ HIMAGELIST build_toolbar_images(int icon_px) {
     return nullptr;
   }
 
-  HIMAGELIST il = ImageList_Create(icon_px, icon_px, ILC_COLOR32, 6, 1);
+  HIMAGELIST il = ImageList_Create(icon_px, icon_px, ILC_COLOR32, 7, 1);
   if (!il) {
     gdip::GdiplusShutdown(gdip_token);
     return nullptr;
@@ -822,10 +1414,11 @@ HIMAGELIST build_toolbar_images(int icon_px) {
   enum class TbIcon : int {
     Refresh = 0,
     Close,
-    PowerOff,
+    CloseAll,
     Camera,
     Maximize,
     Eye,
+    Monitor,
   };
 
   auto draw_icon = [&](TbIcon which, gdip::Graphics* g) {
@@ -839,7 +1432,7 @@ HIMAGELIST build_toolbar_images(int icon_px) {
     g->TranslateTransform(kMargin, kMargin);
     g->ScaleTransform(scale, scale);
 
-    gdip::Pen pen(gdip_rgb(kIconInk), 2.f);
+    gdip::Pen pen(gdip_rgb(ink), 2.f);
     pen.SetStartCap(gdip::LineCapRound);
     pen.SetEndCap(gdip::LineCapRound);
     pen.SetLineJoin(gdip::LineJoinRound);
@@ -864,14 +1457,11 @@ HIMAGELIST build_toolbar_images(int icon_px) {
         g->DrawLine(&pen, 18.f, 6.f, 6.f, 18.f);
         g->DrawLine(&pen, 6.f, 6.f, 18.f, 18.f);
         break;
-      case TbIcon::PowerOff:
-        // lucide power
-        g->DrawLine(&pen, 12.f, 3.f, 12.f, 12.f);
-        {
-          gdip::GraphicsPath arc;
-          arc.AddArc(4.f, 5.f, 16.f, 16.f, -55.f, 290.f);
-          g->DrawPath(&pen, &arc);
-        }
+      case TbIcon::CloseAll:
+        // lucide x-circle
+        g->DrawEllipse(&pen, 3.f, 3.f, 18.f, 18.f);
+        g->DrawLine(&pen, 15.f, 9.f, 9.f, 15.f);
+        g->DrawLine(&pen, 9.f, 9.f, 15.f, 15.f);
         break;
       case TbIcon::Camera: {
         // lucide camera (body + lens)
@@ -913,10 +1503,17 @@ HIMAGELIST build_toolbar_images(int icon_px) {
         g->DrawEllipse(&pen, 9.f, 9.f, 6.f, 6.f);
         break;
       }
+      case TbIcon::Monitor: {
+        // lucide monitor — screen + stand (start session)
+        g->DrawRectangle(&pen, 2.f, 3.f, 20.f, 14.f);
+        g->DrawLine(&pen, 12.f, 17.f, 12.f, 21.f);
+        g->DrawLine(&pen, 8.f, 21.f, 16.f, 21.f);
+        break;
+      }
     }
   };
 
-  for (int i = 0; i < 6; ++i) {
+  for (int i = 0; i < 7; ++i) {
     gdip::Bitmap bmp(icon_px, icon_px, PixelFormat32bppPARGB);
     gdip::Graphics g(&bmp);
     draw_icon(static_cast<TbIcon>(i), &g);
@@ -929,57 +1526,6 @@ HIMAGELIST build_toolbar_images(int icon_px) {
 
   gdip::GdiplusShutdown(gdip_token);
   return il;
-}
-
-void paint_tab_strip(HWND hwnd, ConsoleState* st) {
-  PAINTSTRUCT ps{};
-  HDC hdc = BeginPaint(hwnd, &ps);
-  RECT rc{};
-  GetClientRect(hwnd, &rc);
-  HBRUSH chrome = CreateSolidBrush(kChrome);
-  FillRect(hdc, &rc, chrome);
-  DeleteObject(chrome);
-  HGDIOBJ old = st->ui_font ? SelectObject(hdc, st->ui_font) : nullptr;
-  SetBkMode(hdc, TRANSPARENT);
-
-  auto draw_catalog = [&](int x) {
-    SIZE sz{};
-    GetTextExtentPoint32W(hdc, L"目录", 2, &sz);
-    const int w = sz.cx + 24;
-    RECT tr{x, 2, x + w, rc.bottom - 1};
-    if (st->active_tab == kTabCatalog) {
-      FillRect(hdc, &tr, reinterpret_cast<HBRUSH>(GetSysColorBrush(COLOR_WINDOW)));
-    }
-    DrawTextW(hdc, L"目录", -1, &tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    return w;
-  };
-
-  auto draw_session = [&](int x, int index) {
-    const SessionTab& tab = st->sessions[static_cast<size_t>(index)];
-    const std::wstring label = session_tab_label(tab);
-    const int w = session_tab_width(hdc, tab);
-    RECT tr{x, 2, x + w, rc.bottom - 1};
-    if (st->active_tab == index) {
-      FillRect(hdc, &tr, reinterpret_cast<HBRUSH>(GetSysColorBrush(COLOR_WINDOW)));
-    }
-    RECT text_rc = tr;
-    text_rc.right -= kCloseBtnW;
-    DrawTextW(hdc, label.c_str(), -1, &text_rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-
-    RECT close_rc{tr.right - kCloseBtnW - 2, tr.top, tr.right - 2, tr.bottom};
-    DrawTextW(hdc, L"×", -1, &close_rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    return w;
-  };
-
-  int cx = 4;
-  cx += draw_catalog(cx);
-  for (int i = 0; i < static_cast<int>(st->sessions.size()); ++i) {
-    cx += draw_session(cx, i);
-  }
-  if (old) {
-    SelectObject(hdc, old);
-  }
-  EndPaint(hwnd, &ps);
 }
 
 LRESULT CALLBACK TabStripProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
@@ -1016,6 +1562,26 @@ LRESULT CALLBACK TabStripProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
       const int x = GET_X_LPARAM(lparam);
       int close_idx = -1;
       const int hit = tab_hit_test(st, x, &close_idx, nullptr);
+      if (hit == kTabHitNavLeft || hit == kTabHitNavRight) {
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        const int strip_w = rc.right - rc.left;
+        HDC hdc = GetDC(hwnd);
+        HGDIOBJ old = st->ui_font ? SelectObject(hdc, st->ui_font) : nullptr;
+        const int step = catalog_tab_width(hdc) + 40;
+        if (hit == kTabHitNavLeft) {
+          st->tab_scroll_x -= step;
+        } else {
+          st->tab_scroll_x += step;
+        }
+        clamp_tab_scroll(st, strip_w, hdc);
+        if (old) {
+          SelectObject(hdc, old);
+        }
+        ReleaseDC(hwnd, hdc);
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+      }
       if (hit == kTabHitClose && close_idx >= 0) {
         st->close_hit_index = close_idx;
         st->dragging_tab = false;
@@ -1097,7 +1663,8 @@ LRESULT CALLBACK TabStripProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
             SessionHost* floated = tab.host.get();
             select_tab(st, kTabCatalog);
             SessionHost::set_keyboard_target(floated);
-            set_status(st, L"会话已拖出为独立窗口（右键标签可拖回；或关闭后从列表重开）");
+            set_status(st, L"会话已拖出为独立窗口");
+            InvalidateRect(st->tab_strip, nullptr, FALSE);
           }
         }
       }
@@ -1113,20 +1680,15 @@ LRESULT CALLBACK TabStripProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
       }
       return 0;
     case WM_RBUTTONUP: {
-      // Right-click floating tab → dock back
       if (!st) {
         break;
       }
       int close_idx = -1;
       const int hit = tab_hit_test(st, GET_X_LPARAM(lparam), &close_idx, nullptr);
       if (hit >= 0 && hit < static_cast<int>(st->sessions.size())) {
-        SessionTab& tab = st->sessions[static_cast<size_t>(hit)];
-        if (tab.floating && tab.host) {
-          tab.host->attach_to_parent(st->session_area);
-          tab.floating = false;
-          select_tab(st, hit);
-          set_status(st, L"会话已拖回工作区");
-        }
+        POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        ClientToScreen(hwnd, &pt);
+        run_tab_context_menu(st, hwnd, hit, pt.x, pt.y);
       }
       return 0;
     }
@@ -1145,6 +1707,11 @@ HMENU build_placeholder_menu() {
   HMENU view = CreatePopupMenu();
   AppendMenuW(view, MF_STRING | MF_GRAYED, 3, L"刷新");
   AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(view), L"查看");
+  HMENU session = CreatePopupMenu();
+  AppendMenuW(session, MF_STRING | MF_GRAYED, 5, L"启动会话");
+  AppendMenuW(session, MF_STRING | MF_GRAYED, 6, L"关闭会话");
+  AppendMenuW(session, MF_STRING | MF_GRAYED, 7, L"全部断开");
+  AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(session), L"会话");
   HMENU help = CreatePopupMenu();
   AppendMenuW(help, MF_STRING | MF_GRAYED, 4, L"关于");
   AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(help), L"帮助");
@@ -1167,11 +1734,27 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
 
   switch (msg) {
     case WM_CREATE: {
-      st->ui_font = create_ui_font();
       st->dpi = system_dpi();
+      st->ui_font = create_ui_font(st->dpi, 10);       // rd.font.body
+      st->caption_font = create_ui_font(st->dpi, 9);   // rd.font.caption
       st->toolbar_h = dip(kToolbarHDip, st->dpi);
+      st->status_h = dip(kStatusHDip, st->dpi);
+      st->splitter_w = dip(kSplitterWDip, st->dpi);
+      st->close_btn_w = dip(kCloseBtnWDip, st->dpi);
+      st->tab_nav_w = dip(kTabNavWDip, st->dpi);
+      st->float_badge_w = dip(kFloatBadgeWDip, st->dpi);
       st->tab_h = measure_tab_height(st->ui_font);
       SendMessageW(hwnd, WM_SETFONT, reinterpret_cast<WPARAM>(st->ui_font), TRUE);
+
+      st->menu_chrome_br = CreateSolidBrush(kChrome);
+      if (HMENU menu = GetMenu(hwnd)) {
+        MENUINFO mi{};
+        mi.cbSize = sizeof(mi);
+        mi.fMask = MIM_BACKGROUND;
+        mi.hbrBack = st->menu_chrome_br;
+        SetMenuInfo(menu, &mi);
+        DrawMenuBar(hwnd);
+      }
 
       const DWORD tb_style = WS_CHILD | WS_VISIBLE | CCS_NODIVIDER | CCS_NOPARENTALIGN |
                              CCS_NORESIZE | TBSTYLE_FLAT | TBSTYLE_TOOLTIPS | TBSTYLE_TRANSPARENT;
@@ -1190,48 +1773,60 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
         tm.cyButtonSpacing = 0;
         SendMessageW(st->toolbar, TB_SETMETRICS, 0, reinterpret_cast<LPARAM>(&tm));
       }
-      // Square icon buttons spanning full toolbar height; tips via TBN_GETINFOTIP.
-      SendMessageW(st->toolbar, TB_SETBUTTONSIZE, 0, MAKELONG(st->toolbar_h, st->toolbar_h));
-      st->toolbar_il = build_toolbar_images(dip(kToolbarIconDip, st->dpi));
+      // Fixed square buttons = toolbar height so glyphs stay vertically centered.
+      const int btn = st->toolbar_h;
+      SendMessageW(st->toolbar, TB_SETBUTTONSIZE, 0, MAKELONG(btn, btn));
+      const int icon_px = dip(kToolbarIconDip, st->dpi);
+      st->toolbar_il = build_toolbar_images(icon_px, kTextSecondary);
+      st->toolbar_il_on_accent = build_toolbar_images(icon_px, RGB(255, 255, 255));
+      st->toolbar_il_muted = build_toolbar_images(icon_px, kTextMuted);
       SendMessageW(st->toolbar, TB_SETIMAGELIST, 0,
                    reinterpret_cast<LPARAM>(st->toolbar_il));
+      SendMessageW(st->toolbar, TB_SETDISABLEDIMAGELIST, 0,
+                   reinterpret_cast<LPARAM>(st->toolbar_il_muted));
       {
-        const BYTE style = BTNS_BUTTON | BTNS_AUTOSIZE;
-        const BYTE check = BTNS_CHECK | BTNS_AUTOSIZE;
+        // No BTNS_AUTOSIZE — keeps 32×32 hit targets aligned to design.
+        const BYTE style = BTNS_BUTTON;
+        const BYTE check = BTNS_CHECK;
+        const int sep_w = dip(8, st->dpi);
         TBBUTTON btns[] = {
-            {0, kCmdRefresh, TBSTATE_ENABLED, style, {}, 0, 0},
-            {0, 0, TBSTATE_ENABLED, BTNS_SEP, {}, 0, 0},
-            {1, kCmdCloseSession, 0, style, {}, 0, 0},
-            {2, kCmdCloseAll, 0, style, {}, 0, 0},
-            {0, 0, TBSTATE_ENABLED, BTNS_SEP, {}, 0, 0},
-            {3, kCmdScreenshot, 0, style, {}, 0, 0},
-            {4, kCmdFullscreen, 0, style, {}, 0, 0},
-            {5, kCmdViewOnly, 0, check, {}, 0, 0},
+            {kTbImgRefresh, kCmdRefresh, TBSTATE_ENABLED, style, {}, 0, 0},
+            {sep_w, 0, TBSTATE_ENABLED, BTNS_SEP, {}, 0, 0},
+            {kTbImgStart, kCmdSession, 0, style, {}, 0, 0},
+            {kTbImgCloseAll, kCmdCloseAll, 0, style, {}, 0, 0},
+            {sep_w, 0, TBSTATE_ENABLED, BTNS_SEP, {}, 0, 0},
+            {kTbImgScreenshot, kCmdScreenshot, 0, style, {}, 0, 0},
+            {kTbImgFullscreen, kCmdFullscreen, 0, style, {}, 0, 0},
+            {kTbImgViewOnly, kCmdViewOnly, 0, check, {}, 0, 0},
         };
         SendMessageW(st->toolbar, TB_ADDBUTTONSW, ARRAYSIZE(btns),
                      reinterpret_cast<LPARAM>(btns));
       }
-      SendMessageW(st->toolbar, TB_SETBUTTONSIZE, 0, MAKELONG(st->toolbar_h, st->toolbar_h));
-      SendMessageW(st->toolbar, TB_AUTOSIZE, 0, 0);
-      SendMessageW(st->toolbar, TB_SETBUTTONSIZE, 0, MAKELONG(st->toolbar_h, st->toolbar_h));
-
-      st->tree = CreateWindowExW(WS_EX_CLIENTEDGE, WC_TREEVIEWW, L"",
+      SendMessageW(st->toolbar, TB_SETBUTTONSIZE, 0, MAKELONG(btn, btn));
+      // Intentionally no TB_AUTOSIZE — layout() sizes the strip to full client width.
+      st->tree = CreateWindowExW(0, WC_TREEVIEWW, L"",
                                  WS_CHILD | WS_VISIBLE | TVS_HASLINES | TVS_LINESATROOT |
-                                     TVS_HASBUTTONS | TVS_SHOWSELALWAYS,
+                                     TVS_HASBUTTONS | TVS_SHOWSELALWAYS | TVS_FULLROWSELECT,
                                  0, 0, 100, 100, hwnd, reinterpret_cast<HMENU>(IDC_TREE),
                                  st->instance, nullptr);
+      TreeView_SetBkColor(st->tree, kPanel);
+      TreeView_SetTextColor(st->tree, kTextPrimary);
+      TreeView_SetLineColor(st->tree, kBorderStrong);
 
       st->tab_strip =
           CreateWindowExW(0, kTabStripClass, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0,
                           100, st->tab_h, hwnd, reinterpret_cast<HMENU>(IDC_TABSTRIP),
                           st->instance, nullptr);
 
-      st->list = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
+      st->list = CreateWindowExW(0, WC_LISTVIEWW, L"",
                                  WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL |
                                      LVS_SHOWSELALWAYS,
                                  0, 0, 100, 100, hwnd, reinterpret_cast<HMENU>(IDC_LIST),
                                  st->instance, nullptr);
-      ListView_SetExtendedListViewStyle(st->list, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
+      ListView_SetExtendedListViewStyle(st->list, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+      ListView_SetBkColor(st->list, kPanel);
+      ListView_SetTextColor(st->list, kTextPrimary);
+      ListView_SetTextBkColor(st->list, kPanel);
       LVCOLUMNW col{};
       col.mask = LVCF_TEXT | LVCF_WIDTH;
       col.pszText = const_cast<wchar_t*>(L"名称");
@@ -1255,15 +1850,16 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
                           100, 100, hwnd, reinterpret_cast<HMENU>(IDC_SESSION_HOST),
                           st->instance, nullptr);
 
-      st->status = CreateWindowExW(0, STATUSCLASSNAMEW, nullptr,
-                                   WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP, 0, 0, 0, 0, hwnd,
-                                   reinterpret_cast<HMENU>(IDC_STATUS), st->instance, nullptr);
+      st->status = CreateWindowExW(0, STATUSCLASSNAMEW, nullptr, WS_CHILD | WS_VISIBLE, 0, 0, 0, 0,
+                                   hwnd, reinterpret_cast<HMENU>(IDC_STATUS), st->instance,
+                                   nullptr);
+      SendMessageW(st->status, SB_SETBKCOLOR, 0, static_cast<LPARAM>(kChrome));
 
       apply_ui_font(st, st->toolbar);
       apply_ui_font(st, st->tree);
       apply_ui_font(st, st->list);
       apply_ui_font(st, st->tab_strip);
-      apply_ui_font(st, st->status);
+      apply_caption_font(st, st->status);
       layout_status_parts(st, 1100);
       set_status(st, catalog_ready_status());
 
@@ -1274,8 +1870,54 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
     case WM_SIZE:
       layout(st);
       return 0;
+    case WM_PAINT: {
+      PAINTSTRUCT ps{};
+      HDC hdc = BeginPaint(hwnd, &ps);
+      RECT rc{};
+      GetClientRect(hwnd, &rc);
+      const int top = st->body_top > 0 ? st->body_top : st->toolbar_h;
+      const int bottom = rc.bottom - st->status_h;
+      if (bottom > top) {
+        RECT split{st->tree_width, top, st->tree_width + st->splitter_w, bottom};
+        const COLORREF fill =
+            (st->dragging_splitter || st->splitter_hot) ? kAccent : kSplitter;
+        HBRUSH br = CreateSolidBrush(fill);
+        FillRect(hdc, &split, br);
+        DeleteObject(br);
+        if (st->dragging_splitter || st->splitter_hot) {
+          const int mid_x = st->tree_width + st->splitter_w / 2;
+          const int mid_y = (top + bottom) / 2;
+          HBRUSH dot = CreateSolidBrush(RGB(255, 255, 255));
+          for (int i = -1; i <= 1; ++i) {
+            RECT dr{mid_x - 1, mid_y + i * 5 - 1, mid_x + 1, mid_y + i * 5 + 1};
+            FillRect(hdc, &dr, dot);
+          }
+          DeleteObject(dot);
+        }
+      }
+      EndPaint(hwnd, &ps);
+      return 0;
+    }
+    case WM_SETCURSOR: {
+      if (LOWORD(lparam) == HTCLIENT) {
+        POINT pt{};
+        GetCursorPos(&pt);
+        ScreenToClient(hwnd, &pt);
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        const int top = st->body_top > 0 ? st->body_top : st->toolbar_h;
+        if (pt.y > top && pt.y < rc.bottom - st->status_h && pt.x >= st->tree_width &&
+            pt.x < st->tree_width + st->splitter_w) {
+          SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
+          return TRUE;
+        }
+      }
+      break;
+    }
     case WM_SESSION_META:
-      // Connected: the tab label now carries the live agent version.
+      // Agent version and/or chrome changes (fullscreen dock/undock).
+      sync_session_floating_flags(st);
+      layout(st);
       if (st->tab_strip) {
         InvalidateRect(st->tab_strip, nullptr, TRUE);
       }
@@ -1295,9 +1937,19 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
       const int cmd = LOWORD(wparam);
       if (cmd == kCmdRefresh) {
         refresh_directory(st);
-      } else if (cmd == kCmdCloseSession) {
-        if (st->active_tab >= 0 && st->active_tab < static_cast<int>(st->sessions.size())) {
+      } else if (cmd == kCmdSession) {
+        if (session_toolbar_starts(st)) {
+          open_session_for_device(st, selected_list_device_id(st));
+        } else if (st->active_tab >= 0 &&
+                   st->active_tab < static_cast<int>(st->sessions.size())) {
           close_session_at(st, st->active_tab);
+        } else {
+          const int device_id = selected_list_device_id(st);
+          if (device_id >= 0) {
+            open_session_for_device(st, device_id);  // focus existing
+          } else {
+            set_status(st, L"请先在列表中选择被控端");
+          }
         }
       } else if (cmd == kCmdCloseAll) {
         close_all_sessions(st);
@@ -1324,6 +1976,8 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
           } else if (cmd == kCmdFullscreen) {
             if (host) {
               host->toggle_fullscreen();
+              sync_session_floating_flags(st);
+              layout(st);
             }
           } else if (cmd == kCmdViewOnly && host) {
             host->set_view_only(!host->view_only());
@@ -1395,6 +2049,13 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
           }
         }
       }
+      if (hdr->hwndFrom == st->list && hdr->code == LVN_ITEMCHANGED) {
+        const auto* lv = reinterpret_cast<NMLISTVIEW*>(lparam);
+        if ((lv->uChanged & LVIF_STATE) &&
+            ((lv->uOldState ^ lv->uNewState) & LVIS_SELECTED)) {
+          update_toolbar_state(st);
+        }
+      }
       if (hdr->hwndFrom == st->list && hdr->code == NM_DBLCLK) {
         int i = ListView_GetNextItem(st->list, -1, LVNI_SELECTED);
         if (i >= 0) {
@@ -1412,8 +2073,8 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
           case kCmdRefresh:
             tip = L"刷新目录";
             break;
-          case kCmdCloseSession:
-            tip = L"关闭会话";
+          case kCmdSession:
+            tip = session_toolbar_starts(st) ? L"启动会话" : L"关闭会话";
             break;
           case kCmdCloseAll:
             tip = L"全部断开";
@@ -1440,23 +2101,45 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
       GetClientRect(hwnd, &rc);
       const int x = GET_X_LPARAM(lparam);
       const int y = GET_Y_LPARAM(lparam);
+      const int top = st->body_top > 0 ? st->body_top : st->toolbar_h;
       const int split = st->tree_width;
-      if (y > st->toolbar_h && y < rc.bottom - kStatusH && x >= split && x < split + kSplitterW) {
+      if (y > top && y < rc.bottom - st->status_h && x >= split && x < split + st->splitter_w) {
         st->dragging_splitter = true;
+        st->splitter_hot = true;
         SetCapture(hwnd);
+        RECT split_rc{split, top, split + st->splitter_w, rc.bottom - st->status_h};
+        InvalidateRect(hwnd, &split_rc, FALSE);
       }
       return 0;
     }
-    case WM_MOUSEMOVE:
+    case WM_MOUSEMOVE: {
+      RECT rc{};
+      GetClientRect(hwnd, &rc);
+      const int x = GET_X_LPARAM(lparam);
+      const int y = GET_Y_LPARAM(lparam);
+      const int top = st->body_top > 0 ? st->body_top : st->toolbar_h;
+      const bool over = y > top && y < rc.bottom - st->status_h && x >= st->tree_width &&
+                        x < st->tree_width + st->splitter_w;
       if (st->dragging_splitter) {
-        st->tree_width = GET_X_LPARAM(lparam);
+        st->tree_width = x;
         layout(st);
+        SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
+      } else if (over != st->splitter_hot) {
+        st->splitter_hot = over;
+        RECT split_rc{st->tree_width, top, st->tree_width + st->splitter_w, rc.bottom - st->status_h};
+        InvalidateRect(hwnd, &split_rc, FALSE);
       }
       return 0;
+    }
     case WM_LBUTTONUP:
       if (st->dragging_splitter) {
         st->dragging_splitter = false;
         ReleaseCapture();
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        const int top = st->body_top > 0 ? st->body_top : st->toolbar_h;
+        RECT split_rc{st->tree_width, top, st->tree_width + st->splitter_w, rc.bottom - st->status_h};
+        InvalidateRect(hwnd, &split_rc, FALSE);
       }
       return 0;
     case WM_DESTROY:
@@ -1472,9 +2155,25 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
         DeleteObject(st->ui_font);
         st->ui_font = nullptr;
       }
+      if (st->caption_font) {
+        DeleteObject(st->caption_font);
+        st->caption_font = nullptr;
+      }
+      if (st->menu_chrome_br) {
+        DeleteObject(st->menu_chrome_br);
+        st->menu_chrome_br = nullptr;
+      }
       if (st->toolbar_il) {
         ImageList_Destroy(st->toolbar_il);
         st->toolbar_il = nullptr;
+      }
+      if (st->toolbar_il_on_accent) {
+        ImageList_Destroy(st->toolbar_il_on_accent);
+        st->toolbar_il_on_accent = nullptr;
+      }
+      if (st->toolbar_il_muted) {
+        ImageList_Destroy(st->toolbar_il_muted);
+        st->toolbar_il_muted = nullptr;
       }
       g_console = nullptr;
       PostQuitMessage(0);
@@ -1547,8 +2246,9 @@ int run_console(HINSTANCE instance, int /*show_cmd*/, const ConnectDefaults& con
   if (!hwnd) {
     return 1;
   }
-  // Center on the monitor work area. Do not pass WinMain's show_cmd (often SW_SHOWDEFAULT):
-  // Explorer STARTUPINFO would otherwise place the window at the cascade top-left.
+  // Center restore bounds on the work area. Do not pass WinMain's show_cmd
+  // (often SW_SHOWDEFAULT): Explorer STARTUPINFO would otherwise place the
+  // window at the cascade top-left. Always open maximized for the console.
   RECT rc{};
   GetWindowRect(hwnd, &rc);
   RECT wa{};
@@ -1558,7 +2258,7 @@ int run_console(HINSTANCE instance, int /*show_cmd*/, const ConnectDefaults& con
   SetWindowPos(hwnd, nullptr, wa.left + (wa.right - wa.left - win_w) / 2,
                wa.top + (wa.bottom - wa.top - win_h) / 2, 0, 0,
                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-  ShowWindow(hwnd, SW_SHOW);
+  ShowWindow(hwnd, SW_SHOWMAXIMIZED);
   UpdateWindow(hwnd);
   SessionHost::install_keyboard_hook(instance);
 
