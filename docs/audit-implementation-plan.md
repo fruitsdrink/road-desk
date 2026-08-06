@@ -1,6 +1,6 @@
 # 接入审计实施方案
 
-Status: **active**（2026-08-06）— 已拍板双源+P1；A0–A4 + `audit_events` 已落地；**A5a–A5d 桌面行为链路已落地（A5b/c 待实验室验收；A5d 管理端敏感展示/导出/事件保留）**；目录 ACL 一期不做  
+Status: **active**（2026-08-06）— 已拍板双源+P1；A0–A4 + `audit_events` 已落地；**A5a–A5d 桌面行为链路已落地并实验室验收通过**；目录 ACL 一期不做；A2 容量满拒绝仍暂缓  
 Related: [CONTEXT.md](../CONTEXT.md)（审计日志 / 控制面）、[gateway.md](./gateway.md)、[adr/0001-media-plane-vnc-adapter.md](./adr/0001-media-plane-vnc-adapter.md)、[viewer-implementation-plan.md](./viewer-implementation-plan.md)
 
 把远控「话单」落到控制面：可查询、可合规抽查；**不含会话录像**。媒体仍 Viewer↔Agent TLS mux 直连，审计事件由端上报，网关不旁路拆媒体包。
@@ -120,7 +120,7 @@ Related: [CONTEXT.md](../CONTEXT.md)（审计日志 / 控制面）、[gateway.md
 
 生命周期事件由 `POST /v1/audit/sessions/upsert` **旁路追加**（upsert 失败才拦远控路径；事件插入失败只打网关日志）。进程/窗口事件不改主表布尔，只写本表。
 
-### 4.3 桌面行为审计（已拍板；A5b/A5c 端侧已实现待验收）
+### 4.3 桌面行为审计（已拍板；A5a–A5d 实验室验收通过 2026-08-06）
 
 **产品目标**：尽量还原「当前控制端操作员在被控端做了什么」——会话内较全的进程时间线，并带窗口标题；**不是**录像/键鼠轨迹。
 
@@ -249,10 +249,10 @@ GET /v1/admin/audit/sessions/export?from=&to=&agent_id=&operator=&result=&depart
 | **A2** | ✅ 协议带 `session_id` + Host 上报 auth/容量/peer + 归并 | 错 PSK 可见失败单；容量满拒绝人工暂缓（无 8 路条件） |
 | **A3** | ✅ 剪贴板/文件布尔；只读切换；保留期；`audit_events` 时间线（进程 type 预留） | CONTEXT 字段表一期列齐 |
 | **A4** | ✅ CSV 导出、按部门过滤；**目录 ACL 明确不做（一期）** | ✅ 人工验收通过（2026-08-05） |
-| **A5a** | ✅ 一路控制、其余强制只读；主控离开自动提升旁观 | ✅ 人工验收中（2026-08-05；含提升续测） |
-| **A5b** | ✅ Host：主控会话进程开/关（path + cmdline）→ `POST /v1/audit/events` | 📋 实验室：主控期间开/关 notepad 等可见；旁观不采；归属该操作员 |
-| **A5c** | ✅ Host：前台 `window_focus` / 防抖 `window_title` | 📋 实验室：切换窗口/改标题可见；与进程时间线可对照 |
-| **A5d** | ✅ 时间线敏感字段折叠；行为事件导出；单会话文本导出；事件独立保留期 env | ✅ 管理端可见折叠；导出菜单；文档 env |
+| **A5a** | ✅ 一路控制、其余强制只读；主控离开自动提升旁观 | ✅ 实验室验收通过（2026-08-06；含提升） |
+| **A5b** | ✅ Host：主控会话进程开/关（path + cmdline）→ `POST /v1/audit/events` | ✅ 实验室验收通过（2026-08-06） |
+| **A5c** | ✅ Host：前台 `window_focus` / 防抖 `window_title` | ✅ 实验室验收通过（2026-08-06） |
+| **A5d** | ✅ 时间线敏感字段折叠；行为事件导出；单会话文本导出；事件独立保留期 env | ✅ 实验室验收通过（2026-08-06） |
 
 建议落地顺序：**A0 → A1 → A2 → A3**。A1 即可演示；A2 才达到「权威失败可查」。
 
@@ -293,10 +293,10 @@ GET /v1/admin/audit/sessions/export?from=&to=&agent_id=&operator=&result=&depart
 - [x] 文件方向 + 顶层名/路径进管理端（人工，同日）
 - [x] A4 CSV 导出 + 按操作员部门过滤（人工验收 2026-08-05；**目录 ACL 一期不做**）
 - [x] 桌面行为审计目标拍板：尽量还原；归单一操作员；path+cmdline+窗口标题；**一路控制、其余只读**（§4.3）
-- [x] A5a 一路控制 / 其余强制只读；主控离开自动提升旁观（人工验收续测 2026-08-05）
-- [x] A5b Host 进程开/关时间线上报（path + cmdline；待实验室验收 2026-08-06）
-- [x] A5c 窗口焦点/标题时间线（focus 稳定 2 拍 + title 1.5s 防抖；待实验室验收）
-- [x] A5d 管理端敏感字段展示/导出/保留策略（2026-08-06）
+- [x] A5a 一路控制 / 其余强制只读；主控离开自动提升旁观（实验室验收 2026-08-06）
+- [x] A5b Host 进程开/关时间线上报（path + cmdline；实验室验收 2026-08-06）
+- [x] A5c 窗口焦点/标题时间线（实验室验收 2026-08-06）
+- [x] A5d 管理端敏感字段展示/导出/保留策略 + 单会话文本导出（实验室验收 2026-08-06）
 
 ---
 
