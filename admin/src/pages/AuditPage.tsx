@@ -217,6 +217,8 @@ const eventTypeLabel: Record<string, string> = {
   file_transfer: '文件传输',
   process_open: '进程启动',
   process_close: '进程退出',
+  window_focus: '窗口焦点',
+  window_title: '窗口标题',
 }
 
 const eventSourceLabel: Record<string, string> = {
@@ -239,6 +241,10 @@ function eventColor(type: string): string {
       return 'cyan'
     case 'process_close':
       return 'orange'
+    case 'window_focus':
+      return 'geekblue'
+    case 'window_title':
+      return 'purple'
     default:
       return 'blue'
   }
@@ -256,6 +262,12 @@ function formatEventDetail(ev: AuditEvent): string {
   if (typeof d.name === 'string' && d.name) {
     const pid = typeof d.pid === 'number' ? ` pid=${d.pid}` : ''
     parts.push(`${d.name}${pid}`)
+  }
+  if (typeof d.title === 'string' && d.title) {
+    const pid = typeof d.pid === 'number' ? ` pid=${d.pid}` : ''
+    parts.push(`「${d.title}」${pid}`)
+  } else if (typeof d.title === 'string' && typeof d.pid === 'number' && !d.name) {
+    parts.push(`(无标题) pid=${d.pid}`)
   }
   if (typeof d.path === 'string' && d.path) parts.push(d.path)
   if (typeof d.cmdline === 'string' && d.cmdline) parts.push(d.cmdline)

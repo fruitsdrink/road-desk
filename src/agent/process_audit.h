@@ -4,8 +4,8 @@
 
 namespace road_desk::agent {
 
-// A5b: while a control session is active, poll process open/close and batch-post
-// process_open / process_close to the gateway. No-op when audit reporting is off.
+// A5b/A5c: while a control session is active, poll process open/close and
+// foreground window focus/title; batch-post to the gateway. No-op when audit off.
 void process_audit_on_control_session(const std::string& session_id, const char* phase,
                                       const char* mode);
 

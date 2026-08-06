@@ -23,6 +23,8 @@ namespace {
 constexpr DWORD kPollMs = 1000;
 constexpr size_t kFlushBatch = 80;
 constexpr DWORD kFirstFlushDelayMs = 2000;
+constexpr DWORD kTitleDebounceMs = 1500;  // A5c: drop rapid same-hwnd title churn
+constexpr int kFocusStableTicks = 2;     // A5c: require ~2 polls before focus emit
 
 struct ProcSnap {
   DWORD pid = 0;
@@ -30,6 +32,13 @@ struct ProcSnap {
   std::string name;
   std::string path;
   std::string cmdline;
+};
+
+struct FgSnap {
+  HWND hwnd = nullptr;
+  DWORD pid = 0;
+  std::string title;
+  std::string path;
 };
 
 std::mutex g_mu;
@@ -174,6 +183,37 @@ void fill_details(ProcSnap* s) {
   s->cmdline = query_cmdline(s->pid);
 }
 
+void json_add_str(std::string* d, bool* first, const char* k, const std::string& v) {
+  if (!d || !first || v.empty()) {
+    return;
+  }
+  if (!*first) {
+    *d += ',';
+  }
+  *first = false;
+  *d += '"';
+  *d += k;
+  *d += "\":\"";
+  *d += audit_json_escape(v);
+  *d += '"';
+}
+
+void json_add_num(std::string* d, bool* first, const char* k, unsigned long long v) {
+  if (!d || !first) {
+    return;
+  }
+  if (!*first) {
+    *d += ',';
+  }
+  *first = false;
+  *d += '"';
+  *d += k;
+  *d += "\":";
+  char buf[32];
+  std::snprintf(buf, sizeof(buf), "%llu", v);
+  *d += buf;
+}
+
 AuditBehaviorEvent make_event(const std::string& session_id, const char* type, const ProcSnap& s) {
   AuditBehaviorEvent e;
   e.session_id = session_id;
@@ -182,41 +222,53 @@ AuditBehaviorEvent make_event(const std::string& session_id, const char* type, c
 
   std::string d = "{";
   bool first = true;
-  auto add_str = [&](const char* k, const std::string& v) {
-    if (v.empty()) {
-      return;
-    }
-    if (!first) {
-      d += ',';
-    }
-    first = false;
-    d += '"';
-    d += k;
-    d += "\":\"";
-    d += audit_json_escape(v);
-    d += '"';
-  };
-  auto add_num = [&](const char* k, unsigned long long v) {
-    if (!first) {
-      d += ',';
-    }
-    first = false;
-    d += '"';
-    d += k;
-    d += "\":";
-    char buf[32];
-    std::snprintf(buf, sizeof(buf), "%llu", v);
-    d += buf;
-  };
-  add_str("name", s.name);
-  add_str("path", s.path);
-  add_num("pid", s.pid);
+  json_add_str(&d, &first, "name", s.name);
+  json_add_str(&d, &first, "path", s.path);
+  json_add_num(&d, &first, "pid", s.pid);
   if (s.ppid != 0) {
-    add_num("ppid", s.ppid);
+    json_add_num(&d, &first, "ppid", s.ppid);
   }
   if (std::strcmp(type, "process_open") == 0) {
-    add_str("cmdline", s.cmdline);
+    json_add_str(&d, &first, "cmdline", s.cmdline);
   }
+  d += '}';
+  e.detail_json = std::move(d);
+  return e;
+}
+
+FgSnap read_foreground() {
+  FgSnap s;
+  HWND hwnd = GetForegroundWindow();
+  if (!hwnd || !IsWindow(hwnd)) {
+    return s;
+  }
+  s.hwnd = hwnd;
+  DWORD pid = 0;
+  GetWindowThreadProcessId(hwnd, &pid);
+  s.pid = pid;
+  wchar_t title[512] = {};
+  GetWindowTextW(hwnd, title, static_cast<int>(sizeof(title) / sizeof(title[0])));
+  s.title = wide_to_utf8(title);
+  if (pid && !skip_pid(pid)) {
+    s.path = query_image_path(pid);
+  }
+  return s;
+}
+
+AuditBehaviorEvent make_window_event(const std::string& session_id, const char* type,
+                                     const FgSnap& s) {
+  AuditBehaviorEvent e;
+  e.session_id = session_id;
+  e.type = type;
+  e.at_iso = iso_utc_now();
+  std::string d = "{\"title\":\"";
+  d += audit_json_escape(s.title);
+  d += '"';
+  bool first = false;
+  if (s.pid != 0) {
+    json_add_num(&d, &first, "pid", s.pid);
+  }
+  json_add_str(&d, &first, "path", s.path);
   d += '}';
   e.detail_json = std::move(d);
   return e;
@@ -252,6 +304,17 @@ void worker_main() {
   DWORD seed_tick = GetTickCount();
   size_t opens = 0;
   size_t closes = 0;
+  size_t focuses = 0;
+  size_t titles = 0;
+
+  // A5c foreground tracking
+  FgSnap last_fg{};
+  bool fg_have = false;
+  FgSnap focus_cand{};
+  int focus_cand_ticks = 0;
+  std::string title_cand;
+  DWORD title_cand_tick = 0;
+  bool title_cand_active = false;
 
   auto flush_if_ready = [&](bool force) {
     if (pending.empty()) {
@@ -281,6 +344,16 @@ void worker_main() {
     pending.clear();
   };
 
+  auto emit_focus = [&](const std::string& sid, const FgSnap& s) {
+    pending.push_back(make_window_event(sid, "window_focus", s));
+    last_fg = s;
+    fg_have = true;
+    focus_cand = {};
+    focus_cand_ticks = 0;
+    title_cand_active = false;
+    ++focuses;
+  };
+
   while (g_run.load()) {
     std::string sid;
     {
@@ -300,6 +373,12 @@ void worker_main() {
       }
       seeded = true;
       seed_tick = GetTickCount();
+      // Do not lock last_fg yet — first stable foreground becomes the initial window_focus.
+      last_fg = {};
+      fg_have = false;
+      focus_cand = {};
+      focus_cand_ticks = 0;
+      title_cand_active = false;
       char line[192];
       std::snprintf(line, sizeof(line), "process_audit seeded n=%u sid=%s",
                     static_cast<unsigned>(known.size()), sid.c_str());
@@ -329,18 +408,56 @@ void worker_main() {
         known.erase(it);
         ++closes;
       }
+
+      // --- A5c: foreground window ---
+      const FgSnap fg = read_foreground();
+      if (fg.hwnd) {
+        if (!fg_have || fg.hwnd != last_fg.hwnd) {
+          if (focus_cand.hwnd == fg.hwnd) {
+            ++focus_cand_ticks;
+            focus_cand = fg;  // refresh title/path
+          } else {
+            focus_cand = fg;
+            focus_cand_ticks = 1;
+          }
+          if (focus_cand_ticks >= kFocusStableTicks) {
+            emit_focus(sid, focus_cand);
+          }
+        } else if (fg.title != last_fg.title) {
+          // Same hwnd, title changed — debounce before window_title.
+          const DWORD now = GetTickCount();
+          if (!title_cand_active || title_cand != fg.title) {
+            title_cand = fg.title;
+            title_cand_tick = now;
+            title_cand_active = true;
+          } else if (now - title_cand_tick >= kTitleDebounceMs) {
+            FgSnap titled = last_fg;
+            titled.title = title_cand;
+            titled.path = fg.path.empty() ? last_fg.path : fg.path;
+            pending.push_back(make_window_event(sid, "window_title", titled));
+            last_fg.title = title_cand;
+            last_fg.path = titled.path;
+            title_cand_active = false;
+            ++titles;
+          }
+        } else {
+          title_cand_active = false;
+        }
+      }
+
       flush_if_ready(pending.size() >= kFlushBatch);
     }
 
     WaitForSingleObject(g_wake, kPollMs);
-    // Periodic flush of small batches after the FK delay.
     flush_if_ready(false);
   }
 
   flush_if_ready(true);
-  char line[160];
-  std::snprintf(line, sizeof(line), "process_audit stop opens=%u closes=%u",
-                static_cast<unsigned>(opens), static_cast<unsigned>(closes));
+  char line[192];
+  std::snprintf(line, sizeof(line),
+                "process_audit stop opens=%u closes=%u focus=%u title=%u",
+                static_cast<unsigned>(opens), static_cast<unsigned>(closes),
+                static_cast<unsigned>(focuses), static_cast<unsigned>(titles));
   log_line(line);
 }
 
