@@ -258,6 +258,8 @@ function formatEventDetail(ev: AuditEvent): string {
     parts.push(`${d.name}${pid}`)
   }
   if (typeof d.path === 'string' && d.path) parts.push(d.path)
+  if (typeof d.cmdline === 'string' && d.cmdline) parts.push(d.cmdline)
+  if (typeof d.ppid === 'number' && d.ppid > 0) parts.push(`ppid=${d.ppid}`)
   if (d.fileTransfer && typeof d.fileTransfer === 'object') {
     const fake: AuditSession = {
       id: '',

@@ -1,6 +1,7 @@
 #include "audit_client.h"
 
 #include "log.h"
+#include "process_audit.h"
 
 #include <atomic>
 #include <cstdio>
@@ -8,6 +9,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -202,7 +204,40 @@ std::string build_json(const AuditReport& r, const GatewayConfig& cfg) {
   return j;
 }
 
+std::string build_events_json(const std::vector<AuditBehaviorEvent>& events) {
+  std::string j = "{\"events\":[";
+  for (size_t i = 0; i < events.size(); ++i) {
+    const AuditBehaviorEvent& e = events[i];
+    if (i > 0) {
+      j += ',';
+    }
+    j += "{\"sessionId\":\"";
+    j += json_escape(e.session_id);
+    j += "\",\"source\":\"agent\",\"type\":\"";
+    j += json_escape(e.type);
+    j += '"';
+    if (!e.at_iso.empty()) {
+      j += ",\"at\":\"";
+      j += json_escape(e.at_iso);
+      j += '"';
+    }
+    j += ",\"detail\":";
+    if (!e.detail_json.empty() && e.detail_json.front() == '{') {
+      j += e.detail_json;
+    } else {
+      j += "{}";
+    }
+    j += '}';
+  }
+  j += "]}";
+  return j;
+}
+
 }  // namespace
+
+std::string audit_json_escape(const std::string& s) {
+  return json_escape(s);
+}
 
 void audit_set_agent(const GatewayConfig& cfg) {
   std::lock_guard<std::mutex> lock(g_cfg_mu);
@@ -269,6 +304,58 @@ void audit_report_async(const AuditReport& report) {
   }).detach();
 }
 
+void audit_events_report_async(const std::vector<AuditBehaviorEvent>& events) {
+  if (!audit_reporting_enabled() || events.empty()) {
+    return;
+  }
+  GatewayConfig cfg;
+  {
+    std::lock_guard<std::mutex> lock(g_cfg_mu);
+    cfg = g_cfg;
+  }
+  if (cfg.gateway_url.empty() || cfg.agent_psk.empty()) {
+    return;
+  }
+
+  // Cap at gateway limit (200); split into chunks if needed.
+  constexpr size_t kMax = 200;
+  size_t off = 0;
+  while (off < events.size()) {
+    const size_t n = (events.size() - off > kMax) ? kMax : (events.size() - off);
+    std::vector<AuditBehaviorEvent> chunk(events.begin() + static_cast<std::ptrdiff_t>(off),
+                                          events.begin() + static_cast<std::ptrdiff_t>(off + n));
+    off += n;
+    std::string url = cfg.gateway_url;
+    std::string key = cfg.agent_psk;
+    std::thread([url, key, chunk]() {
+      const std::string body = build_events_json(chunk);
+      std::string err;
+      if (!http_post_json_auth(url, "/v1/audit/events", key, body, &err)) {
+        char line[192];
+        std::snprintf(line, sizeof(line), "audit events fail n=%u err=%s",
+                      static_cast<unsigned>(chunk.size()), err.c_str());
+        log_line(line);
+        // One retry after short delay (session upsert may still be in flight).
+        Sleep(1500);
+        if (!http_post_json_auth(url, "/v1/audit/events", key, body, &err)) {
+          std::snprintf(line, sizeof(line), "audit events retry fail n=%u err=%s",
+                        static_cast<unsigned>(chunk.size()), err.c_str());
+          log_line(line);
+        } else {
+          std::snprintf(line, sizeof(line), "audit events ok n=%u (retry)",
+                        static_cast<unsigned>(chunk.size()));
+          log_line(line);
+        }
+      } else {
+        char line[128];
+        std::snprintf(line, sizeof(line), "audit events ok n=%u",
+                      static_cast<unsigned>(chunk.size()));
+        log_line(line);
+      }
+    }).detach();
+  }
+}
+
 void audit_on_media_event(void* /*user*/, const media::MediaPlaneConfig::AuditEvent* ev) {
   if (!ev || !ev->phase) {
     return;
@@ -299,6 +386,10 @@ void audit_on_media_event(void* /*user*/, const media::MediaPlaneConfig::AuditEv
     r.partial = true;
   }
   audit_report_async(r);
+
+  // A5b: start/stop process timeline for the active control session.
+  process_audit_on_control_session(r.session_id, r.phase.c_str(),
+                                   r.mode.empty() ? nullptr : r.mode.c_str());
 }
 
 }  // namespace road_desk::agent

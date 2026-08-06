@@ -2,6 +2,7 @@
 #include "gateway_client.h"
 #include "gateway_config.h"
 #include "audit_client.h"
+#include "process_audit.h"
 #include "log.h"
 
 #include "auth.h"
@@ -288,6 +289,7 @@ int main(int argc, char** argv) {
   }
 
   media.serve();
+  road_desk::agent::process_audit_shutdown();
   debug_http.stop();
   gateway.stop();
   g_media = nullptr;
