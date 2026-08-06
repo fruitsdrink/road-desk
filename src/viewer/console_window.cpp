@@ -81,7 +81,11 @@ enum : int {
   IDC_STATUS = 1004,
   IDC_TOOLBAR = 1005,
   IDC_SESSION_HOST = 1006,
+  IDC_DETAIL = 1007,
 };
+
+constexpr UINT_PTR kTimerPresence = 1;
+constexpr UINT kPresenceIntervalMs = 15000;
 
 // Menu + toolbar command ids (shared where actions overlap).
 constexpr int kCmdRefresh = 10;
@@ -132,8 +136,10 @@ struct ConsoleState {
   HIMAGELIST toolbar_il_muted = nullptr;      // text.muted for disabled
   HWND tree = nullptr;
   HWND list = nullptr;
+  HWND detail = nullptr;  // catalog: agent property pane
   HWND tab_strip = nullptr;
   HWND status = nullptr;
+  std::wstring status_left;  // caption; version is appended right-aligned via SB tabs
   HWND session_area = nullptr;
   HWND splitter_chip = nullptr;  // Frame D: DIP width while dragging
   HFONT ui_font = nullptr;       // rd.font.body 10pt
@@ -150,6 +156,7 @@ struct ConsoleState {
   int tab_nav_w = kTabNavWDip;
   int float_badge_w = kFloatBadgeWDip;
   int tree_width = rd::kTreeDefaultWDip;
+  int detail_width = rd::kDetailDefaultWDip;
   int tab_h = kTabHDefault;
   int selected_group_id = 0;
   int active_tab = kTabCatalog;  // kTabCatalog or session index
@@ -501,22 +508,39 @@ int measure_tab_height(HFONT font) {
   return h < kTabHDefault ? kTabHDefault : h;
 }
 
+void set_status(ConsoleState* st, const wchar_t* text);
+
 void layout_status_parts(ConsoleState* st, int client_w) {
   if (!st || !st->status) {
     return;
   }
   (void)client_w;
-  // Design: single chrome caption strip (no version pane / size grip).
+  // Single part: left caption + right-aligned version via "\t\t" (SB_SETTEXT).
   int parts[1] = {-1};
   SendMessageW(st->status, SB_SETPARTS, 1, reinterpret_cast<LPARAM>(parts));
+  set_status(st, nullptr);
+}
+
+void apply_console_title(ConsoleState* st) {
+  if (!st || !st->hwnd) {
+    return;
+  }
+  wchar_t title[128] = {};
+  _snwprintf_s(title, _TRUNCATE, L"Road Desk Viewer  %hs", ROAD_DESK_VERSION_STRING);
+  SetWindowTextW(st->hwnd, title);
 }
 
 void set_status(ConsoleState* st, const wchar_t* text) {
   if (!st || !st->status) {
     return;
   }
-  SendMessageW(st->status, SB_SETTEXTW, 0 | SBT_NOBORDERS,
-               reinterpret_cast<LPARAM>(text ? text : L""));
+  if (text) {
+    st->status_left = text;
+  }
+  wchar_t buf[512] = {};
+  // Trailing spaces inset the right-aligned version from the window edge.
+  _snwprintf_s(buf, _TRUNCATE, L"%s\t\tv%hs   ", st->status_left.c_str(), ROAD_DESK_VERSION_STRING);
+  SendMessageW(st->status, SB_SETTEXTW, 0 | SBT_NOBORDERS, reinterpret_cast<LPARAM>(buf));
 }
 
 void sync_chrome_commands(ConsoleState* st);
@@ -590,10 +614,26 @@ void layout(ConsoleState* st) {
   const int content_h = y + body_h - content_y;
 
   const bool show_list = (st->active_tab == kTabCatalog);
+  int dw = st->detail_width;
+  if (dw < 200) {
+    dw = 200;
+  }
+  if (dw > work_w / 2) {
+    dw = work_w / 2;
+  }
+  st->detail_width = dw;
+  const int list_w = show_list ? (work_w - dw - st->splitter_w) : work_w;
   if (st->list) {
     ShowWindow(st->list, show_list ? SW_SHOW : SW_HIDE);
     if (show_list) {
-      MoveWindow(st->list, work_x, content_y, work_w, content_h, TRUE);
+      MoveWindow(st->list, work_x, content_y, list_w > 80 ? list_w : 80, content_h, TRUE);
+    }
+  }
+  if (st->detail) {
+    ShowWindow(st->detail, show_list ? SW_SHOW : SW_HIDE);
+    if (show_list) {
+      const int detail_x = work_x + (list_w > 80 ? list_w : 80) + st->splitter_w;
+      MoveWindow(st->detail, detail_x, content_y, dw, content_h, TRUE);
     }
   }
   if (st->session_area) {
@@ -639,6 +679,16 @@ void ensure_list_selection(ConsoleState* st) {
   sync_chrome_commands(st);
 }
 
+void fill_detail_pane(ConsoleState* st) {
+  if (!st || !st->detail) {
+    return;
+  }
+  const int id = selected_list_device_id(st);
+  const BookNode* d = id >= 0 ? address_book_find(id) : nullptr;
+  const std::wstring text = address_book_format_detail(d);
+  SetWindowTextW(st->detail, text.c_str());
+}
+
 void fill_list(ConsoleState* st) {
   if (!st || !st->list) {
     return;
@@ -664,9 +714,15 @@ void fill_list(ConsoleState* st) {
     item.lParam = d->id;
     ListView_InsertItem(st->list, &item);
     ListView_SetItemText(st->list, row, 1, const_cast<LPWSTR>(ip.c_str()));
-    ListView_SetItemText(st->list, row, 2, const_cast<LPWSTR>(ver.c_str()));
-    ListView_SetItemText(st->list, row, 3, const_cast<LPWSTR>(d->role.c_str()));
-    ListView_SetItemText(st->list, row, 4, const_cast<LPWSTR>(d->remark.c_str()));
+    wchar_t port_buf[16];
+    _snwprintf_s(port_buf, _TRUNCATE, L"%d", d->port > 0 ? d->port : 38471);
+    ListView_SetItemText(st->list, row, 2, port_buf);
+    ListView_SetItemText(st->list, row, 3, const_cast<LPWSTR>(ver.c_str()));
+    ListView_SetItemText(st->list, row, 4, const_cast<LPWSTR>(d->computer_role.c_str()));
+    ListView_SetItemText(st->list, row, 5, const_cast<LPWSTR>(d->install_location.c_str()));
+    ListView_SetItemText(st->list, row, 6, const_cast<LPWSTR>(d->lane_number.c_str()));
+    ListView_SetItemText(st->list, row, 7, const_cast<LPWSTR>(d->role.c_str()));
+    ListView_SetItemText(st->list, row, 8, const_cast<LPWSTR>(d->remark.c_str()));
     ++row;
   }
   if (row > 0) {
@@ -674,6 +730,7 @@ void fill_list(ConsoleState* st) {
                           LVIS_SELECTED | LVIS_FOCUSED);
   }
   sync_chrome_commands(st);
+  fill_detail_pane(st);
 }
 
 HTREEITEM insert_tree_recursive(ConsoleState* st, HWND tree, HTREEITEM parent, int node_id) {
@@ -2237,6 +2294,8 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
       st->close_btn_w = dip(kCloseBtnWDip, st->dpi);
       st->tab_nav_w = dip(kTabNavWDip, st->dpi);
       st->float_badge_w = dip(kFloatBadgeWDip, st->dpi);
+      st->tree_width = dip(rd::kTreeDefaultWDip, st->dpi);
+      st->detail_width = dip(rd::kDetailDefaultWDip, st->dpi);
       st->tab_h = measure_tab_height(st->ui_font);
       SendMessageW(hwnd, WM_SETFONT, reinterpret_cast<WPARAM>(st->ui_font), TRUE);
 
@@ -2322,17 +2381,39 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
       col.cx = 160;
       ListView_InsertColumn(st->list, 0, &col);
       col.pszText = const_cast<wchar_t*>(L"IP地址");
-      col.cx = 130;
+      col.cx = 120;
       ListView_InsertColumn(st->list, 1, &col);
+      col.pszText = const_cast<wchar_t*>(L"端口");
+      col.cx = 60;
+      ListView_InsertColumn(st->list, 2, &col);
       col.pszText = const_cast<wchar_t*>(L"版本");
       col.cx = 70;
-      ListView_InsertColumn(st->list, 2, &col);
-      col.pszText = const_cast<wchar_t*>(L"角色");
-      col.cx = 70;
       ListView_InsertColumn(st->list, 3, &col);
+      col.pszText = const_cast<wchar_t*>(L"设备角色");
+      col.cx = 90;
+      ListView_InsertColumn(st->list, 4, &col);
+      col.pszText = const_cast<wchar_t*>(L"位置");
+      col.cx = 120;
+      ListView_InsertColumn(st->list, 5, &col);
+      col.pszText = const_cast<wchar_t*>(L"车道");
+      col.cx = 60;
+      ListView_InsertColumn(st->list, 6, &col);
+      col.pszText = const_cast<wchar_t*>(L"状态");
+      col.cx = 60;
+      ListView_InsertColumn(st->list, 7, &col);
       col.pszText = const_cast<wchar_t*>(L"备注");
       col.cx = 140;
-      ListView_InsertColumn(st->list, 4, &col);
+      ListView_InsertColumn(st->list, 8, &col);
+
+      st->detail = CreateWindowExW(
+          WS_EX_CLIENTEDGE, L"EDIT", L"",
+          WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP | ES_MULTILINE | ES_READONLY |
+              ES_AUTOVSCROLL,
+          0, 0, 100, 100, hwnd, reinterpret_cast<HMENU>(IDC_DETAIL), st->instance, nullptr);
+      if (st->ui_font) {
+        SendMessageW(st->detail, WM_SETFONT, reinterpret_cast<WPARAM>(st->ui_font), TRUE);
+      }
+      SetWindowTextW(st->detail, L"选择左侧列表中的被控端以查看详细信息。");
 
       st->session_area =
           CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN, 0, 0,
@@ -2356,6 +2437,7 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
       apply_ui_font(st, st->list);
       apply_ui_font(st, st->tab_strip);
       apply_caption_font(st, st->status);
+      apply_console_title(st);
       layout_status_parts(st, 1100);
       set_status(st, catalog_ready_status());
 
@@ -2364,8 +2446,16 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
       if (st->tree) {
         SetFocus(st->tree);
       }
+      SetTimer(hwnd, kTimerPresence, kPresenceIntervalMs, nullptr);
+      viewer_presence_heartbeat_async();
       return 0;
     }
+    case WM_TIMER:
+      if (wparam == kTimerPresence) {
+        viewer_presence_heartbeat_async();
+        return 0;
+      }
+      break;
     case WM_SIZE:
       layout(st);
       return 0;
@@ -2599,6 +2689,7 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
         if ((lv->uChanged & LVIF_STATE) &&
             ((lv->uOldState ^ lv->uNewState) & LVIS_SELECTED)) {
           sync_chrome_commands(st);
+          fill_detail_pane(st);
         }
       }
       if (hdr->hwndFrom == st->list && hdr->code == NM_DBLCLK) {
@@ -2715,6 +2806,8 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
       }
       return 0;
     case WM_DESTROY:
+      KillTimer(hwnd, kTimerPresence);
+      viewer_presence_offline_sync();
       destroy_drag_ghost(st);
       hide_splitter_chip(st);
       if (st->splitter_chip) {

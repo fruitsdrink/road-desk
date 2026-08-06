@@ -16,6 +16,8 @@ import { AdminLayout } from './components/AdminLayout'
 import { authStore } from './lib/authStore'
 import { LoginPage } from './pages/LoginPage'
 import { CatalogPage } from './pages/CatalogPage'
+import { ViewersPage } from './pages/ViewersPage'
+import { ComputerRolesPage } from './pages/ComputerRolesPage'
 import { DepartmentsPage } from './pages/DepartmentsPage'
 import { UsersPage } from './pages/UsersPage'
 import { AuditPage } from './pages/AuditPage'
@@ -59,6 +61,18 @@ const indexRoute = createRoute({
   component: CatalogPage,
 })
 
+const viewersRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/viewers',
+  component: ViewersPage,
+})
+
+const computerRolesRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/computer-roles',
+  component: ComputerRolesPage,
+})
+
 const departmentsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/departments',
@@ -80,7 +94,14 @@ const auditRoute = createRoute({
 const router = createRouter({
   routeTree: rootRoute.addChildren([
     loginRoute,
-    appRoute.addChildren([indexRoute, departmentsRoute, usersRoute, auditRoute]),
+    appRoute.addChildren([
+      indexRoute,
+      viewersRoute,
+      computerRolesRoute,
+      departmentsRoute,
+      usersRoute,
+      auditRoute,
+    ]),
   ]),
 })
 

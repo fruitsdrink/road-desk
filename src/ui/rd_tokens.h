@@ -71,6 +71,7 @@ inline constexpr int kButtonHDip = 30;
 inline constexpr int kToolbarHDip = 32;
 inline constexpr int kStatusHDip = 24;
 inline constexpr int kTreeDefaultWDip = 240;
+inline constexpr int kDetailDefaultWDip = 400;
 inline constexpr int kSplitterWDip = 4;
 inline constexpr int kHeaderHDip = 72;
 inline constexpr int kRadiusMdDip = 4;

@@ -1,5 +1,6 @@
 #include "gateway_config.h"
 
+#include "product_version.h"
 #include "ui/rd_app_icon.h"
 #include "ui/rd_dpi.h"
 #include "ui/rd_tokens.h"
@@ -14,6 +15,7 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <commdlg.h>
+#include <objbase.h>
 #include <shlobj.h>
 #include <winhttp.h>
 #include <gdiplus.h>
@@ -805,6 +807,18 @@ void paint_login(HWND hwnd, DlgState* st) {
               DT_LEFT | DT_SINGLELINE | DT_VCENTER);
   }
 
+  // Version — form footer strip below buttons, right-aligned.
+  {
+    wchar_t ver[64] = {};
+    _snwprintf_s(ver, _TRUNCATE, L"v%hs", ROAD_DESK_VERSION_STRING);
+    SetTextColor(hdc, kMuted);
+    if (st && st->font_label) {
+      SelectObject(hdc, st->font_label);
+    }
+    RECT ver_rc{form_l, rc.bottom - dip(st, 22), form_r, rc.bottom - dip(st, 4)};
+    DrawTextW(hdc, ver, -1, &ver_rc, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
+  }
+
   EndPaint(hwnd, &ps);
 }
 
@@ -1020,6 +1034,7 @@ DirectoryConfig load_directory_config() {
       }
       c.viewer_psk = std::move(psk);
     }
+    c.viewer_instance_id = json_get_string(json, "viewerInstanceId");
   }
   return c;
 }
@@ -1043,6 +1058,9 @@ bool save_directory_config(const DirectoryConfig& cfg) {
   }
   if (!cfg.username.empty()) {
     out << ",\n  \"username\": \"" << json_escape(cfg.username) << "\"";
+  }
+  if (!cfg.viewer_instance_id.empty()) {
+    out << ",\n  \"viewerInstanceId\": \"" << json_escape(cfg.viewer_instance_id) << "\"";
   }
   out << ",\n  \"rememberPassword\": " << (cfg.remember_password ? "true" : "false");
   if (cfg.remember_password && !cfg.password.empty()) {
@@ -1076,6 +1094,56 @@ bool viewer_login(const std::string& gateway_url, const std::string& username,
     return false;
   }
   return true;
+}
+
+std::string ensure_viewer_instance_id(DirectoryConfig* cfg) {
+  if (!cfg) {
+    return {};
+  }
+  if (!cfg->viewer_instance_id.empty()) {
+    return cfg->viewer_instance_id;
+  }
+  DirectoryConfig disk = load_directory_config();
+  if (!disk.viewer_instance_id.empty()) {
+    cfg->viewer_instance_id = disk.viewer_instance_id;
+    return cfg->viewer_instance_id;
+  }
+  GUID g{};
+  char buf[64] = {};
+  if (CoCreateGuid(&g) == S_OK) {
+    std::snprintf(buf, sizeof(buf), "%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+                  static_cast<unsigned long>(g.Data1), g.Data2, g.Data3, g.Data4[0], g.Data4[1],
+                  g.Data4[2], g.Data4[3], g.Data4[4], g.Data4[5], g.Data4[6], g.Data4[7]);
+    for (char* p = buf; *p; ++p) {
+      if (*p >= 'A' && *p <= 'F') {
+        *p = static_cast<char>(*p - 'A' + 'a');
+      }
+    }
+  } else {
+    std::snprintf(buf, sizeof(buf), "viewer-%08lx%08lx",
+                  static_cast<unsigned long>(GetTickCount()),
+                  static_cast<unsigned long>(GetCurrentProcessId()));
+  }
+  cfg->viewer_instance_id = buf;
+  // Merge into disk config so we don't wipe other fields if cfg is partial.
+  if (disk.gateway_url.empty()) {
+    disk.gateway_url = cfg->gateway_url;
+  }
+  if (disk.viewer_psk.empty()) {
+    disk.viewer_psk = cfg->viewer_psk;
+  }
+  if (disk.username.empty()) {
+    disk.username = cfg->username;
+  }
+  disk.viewer_instance_id = cfg->viewer_instance_id;
+  if (cfg->remember_password) {
+    disk.remember_password = true;
+    if (!cfg->password.empty()) {
+      disk.password = cfg->password;
+    }
+  }
+  save_directory_config(disk);
+  return cfg->viewer_instance_id;
 }
 
 bool prompt_directory_config(DirectoryConfig* inout) {

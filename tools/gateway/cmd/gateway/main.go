@@ -79,6 +79,14 @@ func main() {
 		log.Printf("audit retention: disabled")
 	}
 
+	if cfg.ViewerProbeIntervalS > 0 {
+		log.Printf("viewer presence probe: every %ds (offline after %ds without heartbeat)",
+			cfg.ViewerProbeIntervalS, cfg.OnlineAfterS)
+		go store.RunViewerPresenceProbe(ctx, st, cfg.ViewerProbeIntervalS)
+	} else {
+		log.Printf("viewer presence probe: disabled")
+	}
+
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
 	<-ch

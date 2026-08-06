@@ -51,4 +51,10 @@ struct AuditReport {
 // failures only go to viewer.log. No-op when audit_reporting_enabled() is false.
 void audit_report_async(const AuditReport& report);
 
+// Fire-and-forget POST /v1/viewer/heartbeat for admin online Viewer list.
+void viewer_presence_heartbeat_async();
+
+// Blocking POST /v1/viewer/offline (short timeout) so graceful exit clears online status.
+void viewer_presence_offline_sync();
+
 }  // namespace road_desk::viewer

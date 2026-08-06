@@ -11,6 +11,7 @@ struct DirectoryConfig {
   std::string viewer_psk;     // durable imported Viewer PSK (persisted)
   std::string username;       // optional; set after account login
   std::string password;       // UI/prefill only when remember_password; cleared if not remembered
+  std::string viewer_instance_id;  // stable presence id (persisted)
   bool remember_password = false;
 };
 
@@ -28,5 +29,8 @@ bool prompt_directory_config(DirectoryConfig* inout);
 // POST /v1/viewer/login → token.
 bool viewer_login(const std::string& gateway_url, const std::string& username,
                   const std::string& password, std::string* token, std::string* err);
+
+// Ensure a durable viewerInstanceId exists (generate + persist if missing).
+std::string ensure_viewer_instance_id(DirectoryConfig* cfg);
 
 }  // namespace road_desk::viewer

@@ -119,16 +119,19 @@ pwsh -File scripts/smoke.ps1
 ## API 摘要
 
 ```
-POST /v1/agents/register|heartbeat     # Agent-PSK
+POST /v1/agents/register|heartbeat     # Agent-PSK（可选 inventory：OS/CPU/内存/磁盘）
 POST /v1/admin/login                   # 仅 role=admin
 POST /v1/viewer/login                  # viewer 或 admin（目录）
-GET/POST/PATCH/DELETE /v1/admin/groups|tags|agents...
+GET/POST/PATCH/DELETE /v1/admin/groups|tags|computer-roles|agents...  # Agent PATCH：computerRole / installLocation / laneNumber
+GET /v1/admin/viewers                  # 操作端在线列表（heartbeat）
 GET/POST/PATCH/DELETE /v1/admin/departments|users...
 GET /v1/admin/secrets/agent-psk|viewer-psk
 POST /v1/audit/sessions/upsert         # Viewer JWT/PSK 或 Agent-PSK；话单幂等
 GET /v1/admin/audit/sessions[/{id}]    # 管理员查审计（department_id 筛选）
 GET /v1/admin/audit/sessions/export    # 管理员导出 CSV（同筛选，最多 5000）
-GET /v1/directory/tree|agents          # Viewer-PSK 或 viewer/admin JWT
+GET /v1/directory/tree|agents          # 含 computerRole / installLocation / laneNumber
+POST /v1/viewer/heartbeat              # Viewer 在线心跳（Viewer-PSK / JWT）
+POST /v1/viewer/offline                # Viewer 退出时立即标离线
 GET /healthz
 ```
 
@@ -147,4 +150,16 @@ curl -s -X POST http://127.0.0.1:8743/v1/audit/sessions/upsert `
 
 - 用户必须归属某个部门；系统预置部门「系统管理」。
 - 角色：`admin` 可登录管理端；`viewer` 仅可通过 `POST /v1/viewer/login` 获取 JWT 访问目录（Viewer 仍可用 `viewer.psk`）。
-- 管理端导航：编目 / 部门 / 用户 / 审计。
+- 管理端导航：编目 / 操作端 / 设备角色 / 部门 / 用户 / 审计。
+
+## 操作端在线
+
+- Viewer 连上网关目录后每约 15s 上报 `POST /v1/viewer/heartbeat`（稳定 `viewerInstanceId` 落盘）。
+- 正常退出时同步 `POST /v1/viewer/offline`，管理端立即显示离线。
+- **兜底：** 网关后台每 `ROAD_DESK_VIEWER_PROBE_INTERVAL_SEC`（默认 15）秒扫描一次；超过 `ROAD_DESK_ONLINE_AFTER_SEC`（默认 45）秒无心跳则主动标离线（异常退出 / offline 上报失败时生效）。设 probe 间隔为 `0` 可关闭。
+- 管理端「操作端」页平铺列表（无分组）：主机名 / 用户 / 认证方式 / 版本 / IP / 在线状态。
+
+## 设备角色
+
+- 管理端「设备角色」页可增删改排序；预置收费 / 发卡 / 机器人 / 维护工作站 / 前台 / 机房。
+- Agent 的 `computerRole` 存角色名称；重命名会同步更新已绑定 Agent；仍有 Agent 使用时不可删除。

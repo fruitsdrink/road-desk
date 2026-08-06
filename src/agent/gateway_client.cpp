@@ -1,5 +1,6 @@
 #include "gateway_client.h"
 
+#include "host_inventory.h"
 #include "log.h"
 
 #include <cstdio>
@@ -195,7 +196,8 @@ std::string GatewayClient::build_body() const {
     }
     ss << '"' << ips[i] << '"';
   }
-  ss << "]}";
+  ss << "],"
+     << "\"inventory\":" << collect_host_inventory_json() << '}';
   return ss.str();
 }
 

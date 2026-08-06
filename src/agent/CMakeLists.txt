@@ -6,6 +6,7 @@ add_executable(host-agent
   debug_http.cpp
   audit_client.cpp
   process_audit.cpp
+  host_inventory.cpp
   host-agent.manifest
   ${CMAKE_SOURCE_DIR}/src/ui/rd_app.rc
 )

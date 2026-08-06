@@ -44,6 +44,27 @@ export type Group = {
 
 export type Tag = { id: number; name: string; agentCount: number }
 
+export type ComputerRole = {
+  id: number
+  name: string
+  sortOrder: number
+  agentCount: number
+  createdAt: string
+}
+
+export type ViewerPresence = {
+  viewerId: string
+  hostname: string
+  username: string
+  authMode: string
+  version: string
+  clientIp: string
+  online: boolean
+  lastSeenAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 export type Agent = {
   agentId: string
   displayName: string
@@ -52,6 +73,9 @@ export type Agent = {
   mediaPort: number
   version: string
   preferredIpv4: string
+  computerRole: string
+  installLocation: string
+  laneNumber: string
   ipv4s: string[]
   tagIds: number[]
   tagNames?: string[]
@@ -139,16 +163,45 @@ export const api = {
     request<Group>('/v1/admin/groups', { method: 'POST', body: JSON.stringify(body) }),
   patchGroup: (id: number, body: Partial<{ name: string; parentId: number | null; sortOrder: number }>) =>
     request<Group>(`/v1/admin/groups/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
-  deleteGroup: (id: number) => request<void>(`/v1/admin/groups/${id}`, { method: 'DELETE' }),
+  moveGroup: (id: number, body: { parentId: number | null; index: number }) =>
+    request<Group>(`/v1/admin/groups/${id}/move`, { method: 'POST', body: JSON.stringify(body) }),
+  deleteGroup: (id: number, opts?: { cascade?: boolean }) =>
+    request<void>(
+      `/v1/admin/groups/${id}${opts?.cascade ? '?cascade=1' : ''}`,
+      { method: 'DELETE' },
+    ),
   tags: () => request<Tag[]>('/v1/admin/tags'),
   createTag: (name: string) =>
     request<Tag>('/v1/admin/tags', { method: 'POST', body: JSON.stringify({ name }) }),
   patchTag: (id: number, name: string) =>
     request<Tag>(`/v1/admin/tags/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
   deleteTag: (id: number) => request<void>(`/v1/admin/tags/${id}`, { method: 'DELETE' }),
+  computerRoles: () => request<ComputerRole[]>('/v1/admin/computer-roles'),
+  createComputerRole: (body: { name: string; sortOrder?: number }) =>
+    request<ComputerRole>('/v1/admin/computer-roles', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  patchComputerRole: (id: number, body: Partial<{ name: string; sortOrder: number }>) =>
+    request<ComputerRole>(`/v1/admin/computer-roles/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  deleteComputerRole: (id: number) =>
+    request<void>(`/v1/admin/computer-roles/${id}`, { method: 'DELETE' }),
+  viewers: () => request<ViewerPresence[]>('/v1/admin/viewers'),
   agents: () => request<Agent[]>('/v1/admin/agents'),
-  patchAgent: (id: string, body: Partial<{ displayName: string; groupId: number; tagIds: number[] }>) =>
-    request<Agent>(`/v1/admin/agents/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  patchAgent: (
+    id: string,
+    body: Partial<{
+      displayName: string
+      groupId: number
+      computerRole: string
+      installLocation: string
+      laneNumber: string
+      tagIds: number[]
+    }>,
+  ) => request<Agent>(`/v1/admin/agents/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   deleteAgent: (id: string) => request<void>(`/v1/admin/agents/${id}`, { method: 'DELETE' }),
   departments: () => request<Department[]>('/v1/admin/departments'),
   createDepartment: (body: { name: string; sortOrder?: number }) =>

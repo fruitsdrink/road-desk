@@ -15,6 +15,7 @@ type Config struct {
 	DataDir                  string
 	JWTSecret                string
 	OnlineAfterS             int
+	ViewerProbeIntervalS     int // gateway sweeper for stale viewer presence; 0 disables
 	WebDir                   string
 	AuditRetentionDays       int // sessions; 0 disables; default 90
 	AuditEventsRetentionDays int // behavior events; 0 = cascade with sessions only
@@ -30,6 +31,7 @@ func Load() Config {
 		DataDir:                  dataDir,
 		JWTSecret:                env("ROAD_DESK_GATEWAY_JWT_SECRET", ""),
 		OnlineAfterS:             envInt("ROAD_DESK_ONLINE_AFTER_SEC", 45),
+		ViewerProbeIntervalS:     envInt("ROAD_DESK_VIEWER_PROBE_INTERVAL_SEC", 15),
 		WebDir:                   env("ROAD_DESK_GATEWAY_WEB", filepath.Join(".", "web", "dist")),
 		AuditRetentionDays:       envInt("ROAD_DESK_AUDIT_RETENTION_DAYS", 90),
 		AuditEventsRetentionDays: envInt("ROAD_DESK_AUDIT_EVENTS_RETENTION_DAYS", 0),

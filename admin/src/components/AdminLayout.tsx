@@ -6,6 +6,8 @@ const { Header, Content } = Layout
 
 const navItems = [
   { key: '/', label: '编目' },
+  { key: '/viewers', label: '操作端' },
+  { key: '/computer-roles', label: '设备角色' },
   { key: '/departments', label: '部门' },
   { key: '/users', label: '用户' },
   { key: '/audit', label: '审计' },

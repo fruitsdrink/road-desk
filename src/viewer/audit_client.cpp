@@ -1,6 +1,7 @@
 #include "audit_client.h"
 
 #include "media_log.h"
+#include "product_version.h"
 
 #include <atomic>
 #include <cstdio>
@@ -89,7 +90,8 @@ bool parse_url(const std::string& url, std::wstring* host, INTERNET_PORT* port, 
 }
 
 bool http_post_json_auth(const std::string& base_url, const std::string& path,
-                         const std::string& bearer, const std::string& json_body, std::string* err) {
+                         const std::string& bearer, const std::string& json_body, std::string* err,
+                         DWORD timeout_ms = 0) {
   std::wstring host;
   INTERNET_PORT port = 0;
   bool https = false;
@@ -103,6 +105,10 @@ bool http_post_json_auth(const std::string& base_url, const std::string& path,
   if (!ses) {
     *err = "WinHttpOpen failed";
     return false;
+  }
+  if (timeout_ms > 0) {
+    WinHttpSetTimeouts(ses, static_cast<int>(timeout_ms), static_cast<int>(timeout_ms),
+                       static_cast<int>(timeout_ms), static_cast<int>(timeout_ms));
   }
   HINTERNET con = WinHttpConnect(ses, host.c_str(), port, 0);
   if (!con) {
@@ -262,13 +268,19 @@ std::string build_json(const AuditReport& r) {
 
 }  // namespace
 
+void viewer_presence_heartbeat_async();
+
 void audit_set_directory(const DirectoryConfig& cfg) {
-  std::lock_guard<std::mutex> lock(g_dir_mu);
-  g_dir = cfg;
-  if (g_dir.directory_key.empty() && !g_dir.viewer_psk.empty()) {
-    g_dir.directory_key = g_dir.viewer_psk;
+  {
+    std::lock_guard<std::mutex> lock(g_dir_mu);
+    g_dir = cfg;
+    if (g_dir.directory_key.empty() && !g_dir.viewer_psk.empty()) {
+      g_dir.directory_key = g_dir.viewer_psk;
+    }
+    ensure_viewer_instance_id(&g_dir);
+    g_dir_set.store(!g_dir.gateway_url.empty() && !g_dir.directory_key.empty());
   }
-  g_dir_set.store(!g_dir.gateway_url.empty() && !g_dir.directory_key.empty());
+  viewer_presence_heartbeat_async();
 }
 
 DirectoryConfig audit_directory_copy() {
@@ -334,6 +346,69 @@ void audit_report_async(const AuditReport& report) {
                                    copy.session_id.c_str());
     }
   }).detach();
+}
+
+void viewer_presence_heartbeat_async() {
+  if (!audit_reporting_enabled()) {
+    return;
+  }
+  DirectoryConfig dir;
+  {
+    std::lock_guard<std::mutex> lock(g_dir_mu);
+    dir = g_dir;
+  }
+  if (dir.gateway_url.empty() || dir.directory_key.empty()) {
+    return;
+  }
+  ensure_viewer_instance_id(&dir);
+  {
+    std::lock_guard<std::mutex> lock(g_dir_mu);
+    g_dir.viewer_instance_id = dir.viewer_instance_id;
+  }
+  const std::string host = local_computer_name();
+  std::string body = "{\"viewerId\":\"";
+  body += json_escape(dir.viewer_instance_id);
+  body += "\",\"hostname\":\"";
+  body += json_escape(host);
+  body += "\",\"version\":\"";
+  body += json_escape(ROAD_DESK_VERSION_STRING);
+  body += '"';
+  if (!dir.username.empty()) {
+    body += ",\"username\":\"";
+    body += json_escape(dir.username);
+    body += '"';
+  }
+  body += '}';
+  std::string url = dir.gateway_url;
+  std::string key = dir.directory_key;
+  std::thread([url, key, body]() {
+    std::string err;
+    if (!http_post_json_auth(url, "/v1/viewer/heartbeat", key, body, &err)) {
+      road_desk::media::media_logf("viewer", "presence heartbeat fail err=%s", err.c_str());
+    }
+  }).detach();
+}
+
+void viewer_presence_offline_sync() {
+  if (!audit_reporting_enabled()) {
+    return;
+  }
+  DirectoryConfig dir;
+  {
+    std::lock_guard<std::mutex> lock(g_dir_mu);
+    dir = g_dir;
+  }
+  if (dir.gateway_url.empty() || dir.directory_key.empty() || dir.viewer_instance_id.empty()) {
+    return;
+  }
+  std::string body = "{\"viewerId\":\"";
+  body += json_escape(dir.viewer_instance_id);
+  body += "\"}";
+  std::string err;
+  if (!http_post_json_auth(dir.gateway_url, "/v1/viewer/offline", dir.directory_key, body, &err,
+                           2000)) {
+    road_desk::media::media_logf("viewer", "presence offline fail err=%s", err.c_str());
+  }
 }
 
 }  // namespace road_desk::viewer

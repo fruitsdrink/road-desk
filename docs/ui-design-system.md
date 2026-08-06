@@ -191,9 +191,10 @@ Agent 网关配置窗仍用标准顶栏配置尺寸；Viewer 登录用上表分�
 | Tab 条 | max(30, 字体高+10) | 与现逻辑一致；溢出时两端导航钮各 24×24（lucide chevron） |
 | 状态栏 | 24 | |
 | 树默认宽 | 240 | 夹取 120 … 客户宽-200；拖动调宽（见 `docs/design/viewer-console.pen` Frame D） |
+| 详情默认宽 | 400 | 目录态右侧被控端详情；夹取 200 … 工作区一半 |
 | 分割条宽 | 4 | 树/工作区之间；悬停与拖动用 accent + 握点；光标 `IDC_SIZEWE` |
 | Tab 关闭热区 | 18×18 | |
-| 列表列表示例 | 160 / 130 / 70 / 70 / 140 | 可按内容调，保持整数 DIP |
+| 列表列表示例 | 160 / 120 / 60 / 70 / 90 / 120 / 60 / 60 / 140 | 名称 / IP / 端口 / 版本 / 设备角色 / 位置 / 车道 / 状态 / 备注 |
 
 ### 3.6 图标
 
@@ -278,7 +279,8 @@ MessageBox 使用系统图标类型（`MB_ICONERROR` 等），标题统一为 `R
 6. 「取消」「浏览…」「登录」为自绘按钮并带图标（× / 文件夹 / 登录箭头）；主按钮 accent 实心  
 7. 主按钮「登录」占表单栏剩余宽度；「取消」固定宽在左  
 8. PSK 分隔文案：`或导入 Viewer PSK`  
-9. 登录分栏默认 **800×540**（已导入 PSK 时可略矮至 500）
+9. 登录分栏默认 **800×540**（已导入 PSK 时可略矮至 500）  
+10. 右侧表单区底部右对齐显示 `vMAJOR.MINOR.PATCH`（`text.muted` / caption）
 
 文案：
 
@@ -292,15 +294,18 @@ MessageBox 使用系统图标类型（`MB_ICONERROR` 等），标题统一为 `R
 ```
 菜单
 工具栏 (chrome)
-┌────────┬─────────────────────────────┐
-│ 树     │ Tab 条                      │
-│        │ 列表 / 会话宿主             │
-├────────┴─────────────────────────────┤
+┌────────┬──────────────────┬──────────┐
+│ 树     │ 列表             │ 被控端详情│
+│        │ Tab / 会话宿主   │（目录态） │
+├────────┴──────────────────┴──────────┤
 │ 状态栏                                │
 └──────────────────────────────────────┘
 ```
 
-- 背景：树/列表 `surface.panel`；外壳 `surface.chrome`
+- 背景：树/列表/详情 `surface.panel`；外壳 `surface.chrome`
+- 状态栏左侧为操作提示；版本号用 `\t\t` 右对齐到状态栏右缘（`vMAJOR.MINOR.PATCH`）。修改 `src/viewer` 源码并编译 viewer 时自动递增 PATCH（见 `scripts/bump_product_version.ps1`）。
+- 窗口标题：`Road Desk Viewer  MAJOR.MINOR.PATCH`；帮助→关于含版本与编译时间；登录页右侧表单区右下角同样显示 `vMAJOR.MINOR.PATCH`（`text.muted`）。
+- 目录态选中列表行时，右侧详情显示 Host Agent 版本、主机名、网卡、OS/CPU/内存、心跳采样的 CPU/内存占用与开机时长、磁盘分区（来自心跳 `inventory`）；会话态隐藏详情面板。
 - 菜单栏（`MIIM_BITMAP` + 加速键）：文件 退出(`log-out`, Alt+F4)；查看 刷新(`refresh-cw`, F5) / 下一标签(Ctrl+Tab) / 上一标签(Ctrl+Shift+Tab) / 切换窗格(F6)；会话 启动(`monitor`, Ctrl+Enter) / 关闭(`x`, Ctrl+W) / 全部断开(`x-circle`, Ctrl+Shift+W)；帮助 关于(`info`, F1)。顶层带 `&` 助记键。树/列表/Tab 条 `WS_TABSTOP` + `IsDialogMessage`；Tab 条方向键切页、Delete 关会话；列表/树 Enter 启动。远控会话持有键鼠时 LL hook 优先转发远端。**会话抢键期间不要求本机全键盘**（无交还热键；见 `viewer-implementation-plan.md`）。
 - 侧栏分割条：树右缘 4 DIP（`rd.color.splitter`）；悬停/拖动 `accent` + 细握点；光标 `IDC_SIZEWE`；树宽夹取 120 … 客户宽−200（默认 240）；拖动中在分割条旁显示宽度芯片（`brand.bg` + 当前 DIP `N px`，松手消失）。稿见 Frame D。
 - 会话 Tab：活动/非活动用 §3.1 Tab 色；关闭「×」热区 18 DIP
