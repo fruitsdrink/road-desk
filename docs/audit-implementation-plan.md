@@ -252,7 +252,7 @@ GET /v1/admin/audit/sessions/export?from=&to=&agent_id=&operator=&result=&depart
 | **A5a** | ✅ 一路控制、其余强制只读；主控离开自动提升旁观 | ✅ 人工验收中（2026-08-05；含提升续测） |
 | **A5b** | ✅ Host：主控会话进程开/关（path + cmdline）→ `POST /v1/audit/events` | 📋 实验室：主控期间开/关 notepad 等可见；旁观不采；归属该操作员 |
 | **A5c** | ✅ Host：前台 `window_focus` / 防抖 `window_title` | 📋 实验室：切换窗口/改标题可见；与进程时间线可对照 |
-| **A5d** | ✅ 时间线敏感字段折叠；行为事件导出（脱敏/含敏感）；事件独立保留期 env | ✅ 管理端可见折叠；导出菜单；文档 env |
+| **A5d** | ✅ 时间线敏感字段折叠；行为事件导出；单会话文本导出；事件独立保留期 env | ✅ 管理端可见折叠；导出菜单；文档 env |
 
 建议落地顺序：**A0 → A1 → A2 → A3**。A1 即可演示；A2 才达到「权威失败可查」。
 

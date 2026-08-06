@@ -16,7 +16,7 @@ import {
 import type { ColumnsType } from 'antd/es/table'
 import { useQuery } from '@tanstack/react-query'
 import dayjs, { type Dayjs } from 'dayjs'
-import { api, type AuditEvent, type AuditSession } from '@/lib/api'
+import { api, type AuditEvent, type AuditSession, type AuditSessionDetail } from '@/lib/api'
 import { resizableTableComponents } from '@/components/ResizableTitle'
 import { useResizableColumns } from '@/hooks/useResizableColumns'
 import { useTableScrollY } from '@/hooks/useTableScrollY'
@@ -309,6 +309,82 @@ function formatEventSensitive(ev: AuditEvent): string {
   return parts.join('\n')
 }
 
+function downloadTextFile(filename: string, text: string) {
+  const blob = new Blob(['\uFEFF' + text], { type: 'text/plain;charset=utf-8' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(a.href)
+}
+
+/** Single-session plain-text report for admin archive / ticket attach. */
+function buildSessionTextReport(detail: AuditSessionDetail, includeSensitive: boolean): string {
+  const s = detail.session
+  const lines: string[] = []
+  lines.push('Road Desk 审计会话记录')
+  lines.push('='.repeat(48))
+  lines.push(`话单 ID：${s.id}`)
+  lines.push(`操作员：${s.operatorName || '—'}${s.departmentName ? `（${s.departmentName}）` : ''}`)
+  lines.push(
+    `发起端：${[s.viewerHost && `本机 ${s.viewerHost}`, s.viewerIp && `IP ${s.viewerIp}`]
+      .filter(Boolean)
+      .join(' · ') || '—'}`,
+  )
+  lines.push(
+    `被控端：${[s.agentName, s.agentId, s.agentEndpoint].filter(Boolean).join(' / ') || '—'}`,
+  )
+  lines.push(`模式：${modeLabel[s.mode] || s.mode}`)
+  lines.push(`结果：${resultLabel[s.result] || s.result}`)
+  if (s.disconnectReason) {
+    lines.push(`断开：${disconnectLabel[s.disconnectReason] || s.disconnectReason}`)
+  }
+  lines.push(`尝试：${s.attemptedAt ? dayjs(s.attemptedAt).format('YYYY-MM-DD HH:mm:ss') : '—'}`)
+  lines.push(`接通：${s.openedAt ? dayjs(s.openedAt).format('YYYY-MM-DD HH:mm:ss') : '—'}`)
+  lines.push(`关闭：${s.closedAt ? dayjs(s.closedAt).format('YYYY-MM-DD HH:mm:ss') : '—'}`)
+  lines.push(`时长：${formatDuration(s)}`)
+  lines.push(`剪贴板：${s.usedClipboard ? '是' : '否'} · 文件传输：${s.usedFileTransfer ? '是' : '否'}`)
+  if (s.partial) lines.push('标记：部分上报')
+  lines.push('')
+  lines.push('备注')
+  lines.push('-'.repeat(48))
+  lines.push(formatRemark(s))
+  lines.push('')
+  lines.push(
+    includeSensitive
+      ? '时间线（含 cmdline / 窗口标题）'
+      : '时间线（敏感字段已脱敏）',
+  )
+  lines.push('-'.repeat(48))
+  const events = detail.events ?? []
+  if (events.length === 0) {
+    lines.push('（无事件）')
+  } else {
+    for (const ev of events) {
+      const when = dayjs(ev.at).format('YYYY-MM-DD HH:mm:ss')
+      const type = eventTypeLabel[ev.type] || ev.type
+      const src = eventSourceLabel[ev.source] || ev.source
+      lines.push(`[${when}] ${type}（${src}）`)
+      const summary = formatEventSummary(ev)
+      if (summary) lines.push(`  ${summary}`)
+      if (includeSensitive) {
+        const sens = formatEventSensitive(ev)
+        if (sens) {
+          for (const row of sens.split('\n')) {
+            lines.push(`  ${row}`)
+          }
+        }
+      }
+      lines.push('')
+    }
+  }
+  lines.push(`导出时间：${dayjs().format('YYYY-MM-DD HH:mm:ss')}`)
+  lines.push(`敏感字段：${includeSensitive ? '已包含' : '已脱敏'}`)
+  return lines.join('\n')
+}
+
 export function AuditPage() {
   const tableWrapRef = useRef<HTMLDivElement>(null)
   const [range, setRange] = useState<[Dayjs | null, Dayjs | null] | null>(null)
@@ -506,6 +582,18 @@ export function AuditPage() {
     }
   }
 
+  const onExportSessionText = (includeSensitive: boolean) => {
+    if (!detailQ.data) {
+      message.warning('会话详情尚未加载')
+      return
+    }
+    const text = buildSessionTextReport(detailQ.data, includeSensitive)
+    const stamp = dayjs().format('YYYYMMDD-HHmmss')
+    const idShort = detailQ.data.session.id.slice(0, 8)
+    downloadTextFile(`audit-session-${idShort}-${stamp}.txt`, text)
+    message.success(includeSensitive ? '已导出文本（含敏感字段）' : '已导出文本（脱敏）')
+  }
+
   return (
     <div className="flex h-full flex-col gap-3 p-4">
       <Space wrap>
@@ -585,6 +673,25 @@ export function AuditPage() {
         title="会话时间线"
         width={520}
         destroyOnClose
+        extra={
+          detailQ.data ? (
+            <Dropdown.Button
+              size="small"
+              onClick={() => onExportSessionText(false)}
+              menu={{
+                items: [
+                  {
+                    key: 'text-sensitive',
+                    label: '导出文本（含 cmdline/标题）',
+                    onClick: () => onExportSessionText(true),
+                  },
+                ],
+              }}
+            >
+              导出文本
+            </Dropdown.Button>
+          ) : null
+        }
       >
         {detailQ.isLoading && <Typography.Text type="secondary">加载中…</Typography.Text>}
         {detailQ.isError && (
