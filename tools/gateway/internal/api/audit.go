@@ -378,6 +378,68 @@ func (s *Server) exportAuditSessionsCSV(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+// redactAuditEventDetail removes cmdline / title unless includeSensitive (A5d).
+func redactAuditEventDetail(detail json.RawMessage, includeSensitive bool) string {
+	if len(detail) == 0 {
+		return "{}"
+	}
+	if includeSensitive {
+		return string(detail)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(detail, &m); err != nil {
+		return "{}"
+	}
+	delete(m, "cmdline")
+	delete(m, "title")
+	b, err := json.Marshal(m)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
+}
+
+func (s *Server) exportAuditEventsCSV(w http.ResponseWriter, r *http.Request) {
+	f, err := s.parseAuditListFilter(r, true)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	includeSensitive := false
+	switch strings.TrimSpace(r.URL.Query().Get("include_sensitive")) {
+	case "1", "true", "yes":
+		includeSensitive = true
+	}
+
+	items, err := s.Store.ListAuditEventsBySessionFilter(r.Context(), f)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	filename := "audit-events-" + time.Now().UTC().Format("20060102-150405") + ".csv"
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF})
+	cw := csv.NewWriter(w)
+	_ = cw.Write([]string{
+		"sessionId", "at", "source", "type", "detail",
+	})
+	for _, e := range items {
+		_ = cw.Write([]string{
+			e.SessionID,
+			e.At.UTC().Format(time.RFC3339),
+			e.Source,
+			e.Type,
+			csvCell(redactAuditEventDetail(e.Detail, includeSensitive)),
+		})
+	}
+	cw.Flush()
+	if err := cw.Error(); err != nil {
+		return
+	}
+}
+
 func (s *Server) getAuditSession(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
 	if !uuidRE.MatchString(id) {

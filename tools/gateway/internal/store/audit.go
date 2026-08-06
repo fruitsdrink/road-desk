@@ -301,26 +301,39 @@ func (s *Store) PurgeAuditSessionsOlderThan(ctx context.Context, cutoff time.Tim
 	return tag.RowsAffected(), nil
 }
 
-// RunAuditRetention periodically deletes audit rows older than retentionDays.
-// retentionDays <= 0 disables the loop. Cancels when ctx is done.
-func RunAuditRetention(ctx context.Context, st *Store, retentionDays int) {
-	if st == nil || retentionDays <= 0 {
+// RunAuditRetention periodically deletes audit rows older than the configured days.
+// sessionDays / eventsDays <= 0 disables that purge. Cancels when ctx is done.
+func RunAuditRetention(ctx context.Context, st *Store, sessionDays, eventsDays int) {
+	if st == nil || (sessionDays <= 0 && eventsDays <= 0) {
 		return
 	}
 	const interval = time.Hour
 	run := func() {
-		cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays)
-		n, err := st.PurgeAuditSessionsOlderThan(ctx, cutoff)
-		if err != nil {
-			if ctx.Err() != nil {
-				return
+		if sessionDays > 0 {
+			cutoff := time.Now().UTC().AddDate(0, 0, -sessionDays)
+			n, err := st.PurgeAuditSessionsOlderThan(ctx, cutoff)
+			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				log.Printf("audit retention: session purge failed: %v", err)
+			} else if n > 0 {
+				log.Printf("audit retention: deleted %d sessions older than %d days (before %s)",
+					n, sessionDays, cutoff.Format(time.RFC3339))
 			}
-			log.Printf("audit retention: purge failed: %v", err)
-			return
 		}
-		if n > 0 {
-			log.Printf("audit retention: deleted %d sessions older than %d days (before %s)",
-				n, retentionDays, cutoff.Format(time.RFC3339))
+		if eventsDays > 0 {
+			cutoff := time.Now().UTC().AddDate(0, 0, -eventsDays)
+			n, err := st.PurgeAuditEventsOlderThan(ctx, cutoff)
+			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				log.Printf("audit retention: events purge failed: %v", err)
+			} else if n > 0 {
+				log.Printf("audit retention: deleted %d events older than %d days (before %s)",
+					n, eventsDays, cutoff.Format(time.RFC3339))
+			}
 		}
 	}
 	run()

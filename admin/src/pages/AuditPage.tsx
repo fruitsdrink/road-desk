@@ -1,8 +1,8 @@
 import { useMemo, useRef, useState } from 'react'
 import {
-  Button,
   DatePicker,
   Drawer,
+  Dropdown,
   Input,
   Select,
   Space,
@@ -250,7 +250,7 @@ function eventColor(type: string): string {
   }
 }
 
-function formatEventDetail(ev: AuditEvent): string {
+function formatEventSummary(ev: AuditEvent): string {
   const d = ev.detail && typeof ev.detail === 'object' ? ev.detail : {}
   const parts: string[] = []
   if (typeof d.result === 'string' && d.result) parts.push(`结果 ${d.result}`)
@@ -262,15 +262,11 @@ function formatEventDetail(ev: AuditEvent): string {
   if (typeof d.name === 'string' && d.name) {
     const pid = typeof d.pid === 'number' ? ` pid=${d.pid}` : ''
     parts.push(`${d.name}${pid}`)
+  } else if (typeof d.pid === 'number') {
+    parts.push(`pid=${d.pid}`)
   }
-  if (typeof d.title === 'string' && d.title) {
-    const pid = typeof d.pid === 'number' ? ` pid=${d.pid}` : ''
-    parts.push(`「${d.title}」${pid}`)
-  } else if (typeof d.title === 'string' && typeof d.pid === 'number' && !d.name) {
-    parts.push(`(无标题) pid=${d.pid}`)
-  }
+  // A5d: window title / cmdline stay in sensitive block (collapsed by default).
   if (typeof d.path === 'string' && d.path) parts.push(d.path)
-  if (typeof d.cmdline === 'string' && d.cmdline) parts.push(d.cmdline)
   if (typeof d.ppid === 'number' && d.ppid > 0) parts.push(`ppid=${d.ppid}`)
   if (d.fileTransfer && typeof d.fileTransfer === 'object') {
     const fake: AuditSession = {
@@ -302,6 +298,15 @@ function formatEventDetail(ev: AuditEvent): string {
     parts.push(`重连 ${d.reconnectCount}`)
   }
   return parts.join(' · ')
+}
+
+/** A5d sensitive fields — cmdline / window title; shown collapsed until expanded. */
+function formatEventSensitive(ev: AuditEvent): string {
+  const d = ev.detail && typeof ev.detail === 'object' ? ev.detail : {}
+  const parts: string[] = []
+  if (typeof d.title === 'string' && d.title) parts.push(`标题 ${d.title}`)
+  if (typeof d.cmdline === 'string' && d.cmdline) parts.push(`命令行 ${d.cmdline}`)
+  return parts.join('\n')
 }
 
 export function AuditPage() {
@@ -479,6 +484,28 @@ export function AuditPage() {
     }
   }
 
+  const onExportEvents = async (includeSensitive: boolean) => {
+    setExporting(true)
+    try {
+      await api.downloadAuditEventsCsv({
+        from: filterParams.from,
+        to: filterParams.to,
+        operator: filterParams.operator,
+        agent_id: filterParams.agent_id,
+        result: filterParams.result,
+        department_id: filterParams.department_id,
+        include_sensitive: includeSensitive,
+      })
+      message.success(
+        includeSensitive ? '已下载行为事件（含敏感字段）' : '已下载行为事件（敏感字段已脱敏）',
+      )
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '导出失败')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="flex h-full flex-col gap-3 p-4">
       <Space wrap>
@@ -514,9 +541,27 @@ export function AuditPage() {
           onChange={setResult}
           options={Object.entries(resultLabel).map(([value, label]) => ({ value, label }))}
         />
-        <Button type="primary" loading={exporting} onClick={onExport}>
+        <Dropdown.Button
+          type="primary"
+          loading={exporting}
+          onClick={onExport}
+          menu={{
+            items: [
+              {
+                key: 'events',
+                label: '导出行为事件（脱敏）',
+                onClick: () => void onExportEvents(false),
+              },
+              {
+                key: 'events-sensitive',
+                label: '导出行为事件（含 cmdline/标题）',
+                onClick: () => void onExportEvents(true),
+              },
+            ],
+          }}
+        >
           导出 CSV
-        </Button>
+        </Dropdown.Button>
       </Space>
       <div ref={tableWrapRef} className="min-h-0 flex-1">
         <Table<AuditSession>
@@ -575,12 +620,25 @@ export function AuditPage() {
                           {dayjs(ev.at).format('YYYY-MM-DD HH:mm:ss')}
                         </Typography.Text>
                       </div>
-                      {formatEventDetail(ev) && (
+                      {formatEventSummary(ev) && (
                         <Typography.Paragraph
                           type="secondary"
                           className="mb-0 mt-1 whitespace-pre-wrap text-xs"
                         >
-                          {formatEventDetail(ev)}
+                          {formatEventSummary(ev)}
+                        </Typography.Paragraph>
+                      )}
+                      {formatEventSensitive(ev) && (
+                        <Typography.Paragraph
+                          type="secondary"
+                          className="mb-0 mt-1 whitespace-pre-wrap text-xs"
+                          ellipsis={{
+                            rows: 1,
+                            expandable: true,
+                            symbol: '展开敏感字段',
+                          }}
+                        >
+                          {formatEventSensitive(ev)}
                         </Typography.Paragraph>
                       )}
                     </div>

@@ -10,13 +10,14 @@ import (
 )
 
 type Config struct {
-	ListenAddr         string
-	DatabaseURL        string
-	DataDir            string
-	JWTSecret          string
-	OnlineAfterS       int
-	WebDir             string
-	AuditRetentionDays int // 0 disables purge; default 90
+	ListenAddr               string
+	DatabaseURL              string
+	DataDir                  string
+	JWTSecret                string
+	OnlineAfterS             int
+	WebDir                   string
+	AuditRetentionDays       int // sessions; 0 disables; default 90
+	AuditEventsRetentionDays int // behavior events; 0 = cascade with sessions only
 }
 
 func Load() Config {
@@ -24,13 +25,14 @@ func Load() Config {
 	dataDir := env("ROAD_DESK_GATEWAY_DATA", filepath.Join(".", "data"))
 	_ = os.MkdirAll(dataDir, 0o755)
 	return Config{
-		ListenAddr:         env("ROAD_DESK_GATEWAY_LISTEN", ":8743"),
-		DatabaseURL:        env("DATABASE_URL", "postgres://roaddesk:roaddesk@127.0.0.1:5433/roaddesk?sslmode=disable"),
-		DataDir:            dataDir,
-		JWTSecret:          env("ROAD_DESK_GATEWAY_JWT_SECRET", ""),
-		OnlineAfterS:       envInt("ROAD_DESK_ONLINE_AFTER_SEC", 45),
-		WebDir:             env("ROAD_DESK_GATEWAY_WEB", filepath.Join(".", "web", "dist")),
-		AuditRetentionDays: envInt("ROAD_DESK_AUDIT_RETENTION_DAYS", 90),
+		ListenAddr:               env("ROAD_DESK_GATEWAY_LISTEN", ":8743"),
+		DatabaseURL:              env("DATABASE_URL", "postgres://roaddesk:roaddesk@127.0.0.1:5433/roaddesk?sslmode=disable"),
+		DataDir:                  dataDir,
+		JWTSecret:                env("ROAD_DESK_GATEWAY_JWT_SECRET", ""),
+		OnlineAfterS:             envInt("ROAD_DESK_ONLINE_AFTER_SEC", 45),
+		WebDir:                   env("ROAD_DESK_GATEWAY_WEB", filepath.Join(".", "web", "dist")),
+		AuditRetentionDays:       envInt("ROAD_DESK_AUDIT_RETENTION_DAYS", 90),
+		AuditEventsRetentionDays: envInt("ROAD_DESK_AUDIT_EVENTS_RETENTION_DAYS", 0),
 	}
 }
 

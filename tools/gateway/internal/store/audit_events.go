@@ -28,8 +28,10 @@ const (
 	AuditEventFailed       = "failed"
 	AuditEventFlag         = "flag"
 	AuditEventFileTransfer = "file_transfer"
-	AuditEventProcessOpen  = "process_open"  // reserved: Host process start
-	AuditEventProcessClose = "process_close" // reserved: Host process exit
+	AuditEventProcessOpen  = "process_open"  // Host process start (A5b)
+	AuditEventProcessClose = "process_close" // Host process exit (A5b)
+	AuditEventWindowFocus  = "window_focus"  // Host foreground window (A5c)
+	AuditEventWindowTitle  = "window_title"  // Host same-window title change (A5c)
 )
 
 var auditEventTypeRE = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
@@ -176,6 +178,78 @@ func (s *Store) ListAuditEvents(ctx context.Context, sessionID string, limit int
 		out = append(out, ev)
 	}
 	return out, rows.Err()
+}
+
+// ListAuditEventsBySessionFilter returns events whose parent session matches the
+// same filters as ListAuditSessions (attempt time range, agent, operator, …).
+// Used by A5d admin behavior-event CSV export. Cap 20000.
+func (s *Store) ListAuditEventsBySessionFilter(ctx context.Context, f AuditListFilter) ([]AuditEvent, error) {
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 5000
+	}
+	if limit > 20000 {
+		limit = 20000
+	}
+	var (
+		b    strings.Builder
+		args []any
+		n    int
+	)
+	arg := func(v any) string {
+		n++
+		args = append(args, v)
+		return fmt.Sprintf("$%d", n)
+	}
+	b.WriteString(`
+		SELECT e.id, e.session_id, e.at, e.source, e.type, e.detail, e.created_at
+		FROM audit_events e
+		INNER JOIN audit_sessions a ON a.id = e.session_id
+		LEFT JOIN users u ON u.id = a.operator_user_id
+		WHERE TRUE`)
+	if f.From != nil {
+		b.WriteString(` AND a.attempted_at >= ` + arg(f.From.UTC()))
+	}
+	if f.To != nil {
+		b.WriteString(` AND a.attempted_at < ` + arg(f.To.UTC()))
+	}
+	if f.AgentID != "" {
+		b.WriteString(` AND a.agent_id = ` + arg(f.AgentID))
+	}
+	if f.Operator != "" {
+		b.WriteString(` AND a.operator_name ILIKE ` + arg("%"+f.Operator+"%"))
+	}
+	if f.Result != "" {
+		b.WriteString(` AND a.result = ` + arg(f.Result))
+	}
+	if f.DepartmentID > 0 {
+		b.WriteString(` AND u.department_id = ` + arg(f.DepartmentID))
+	}
+	b.WriteString(` ORDER BY e.at ASC, e.id ASC LIMIT ` + arg(limit))
+
+	rows, err := s.Pool.Query(ctx, b.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AuditEvent
+	for rows.Next() {
+		ev, err := scanAuditEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ev)
+	}
+	return out, rows.Err()
+}
+
+// PurgeAuditEventsOlderThan deletes behavior events by event time (A5d shorter retention).
+func (s *Store) PurgeAuditEventsOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
+	tag, err := s.Pool.Exec(ctx, `DELETE FROM audit_events WHERE at < $1`, cutoff.UTC())
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 func scanAuditEvent(row pgx.Row) (AuditEvent, error) {

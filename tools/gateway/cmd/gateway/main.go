@@ -71,10 +71,10 @@ func main() {
 		}
 	}()
 
-	if cfg.AuditRetentionDays > 0 {
-		log.Printf("audit retention: %d days (ROAD_DESK_AUDIT_RETENTION_DAYS; 0 disables)",
-			cfg.AuditRetentionDays)
-		go store.RunAuditRetention(ctx, st, cfg.AuditRetentionDays)
+	if cfg.AuditRetentionDays > 0 || cfg.AuditEventsRetentionDays > 0 {
+		log.Printf("audit retention: sessions=%d days events=%d days (0 disables that purge)",
+			cfg.AuditRetentionDays, cfg.AuditEventsRetentionDays)
+		go store.RunAuditRetention(ctx, st, cfg.AuditRetentionDays, cfg.AuditEventsRetentionDays)
 	} else {
 		log.Printf("audit retention: disabled")
 	}
