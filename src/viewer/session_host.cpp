@@ -1108,11 +1108,11 @@ void SessionHost::set_fit_to_window(bool on) {
     return;
   }
   fit_to_window_ = on;
-  scroll_x_ = 0;
-  scroll_y_ = 0;
+  // Mode switch always forces a full repaint — the pixel data is the same
+  // framebuffer, but the mapping rules changed (scale vs scroll-offset).
   if (hwnd_) {
-    update_scrollbars();
     InvalidateRect(hwnd_, nullptr, FALSE);
+    update_scrollbars();
   }
 }
 
