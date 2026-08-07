@@ -172,14 +172,134 @@ LRESULT CALLBACK SessionWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
       }
       // Docked tab: ask the console to refresh labels with the agent version.
       PostMessageW(GetAncestor(hwnd, GA_ROOT), WM_SESSION_META, 0, 0);
+      self->update_scrollbars();
       InvalidateRect(hwnd, nullptr, FALSE);
       return 0;
     }
     case WM_ERASEBKGND:
       return 1;
     case WM_SIZE:
+      self->update_scrollbars();
       InvalidateRect(hwnd, nullptr, FALSE);
       return 0;
+    case WM_HSCROLL: {
+      int fb_w = 0;
+      int fb_h = 0;
+      if (!self->client_.framebuffer_size(&fb_w, &fb_h) || fb_w <= 0 || fb_h <= 0) {
+        return 0;
+      }
+      RECT crc{};
+      GetClientRect(hwnd, &crc);
+      const int ccw = crc.right - crc.left;
+      const int cch = crc.bottom - crc.top;
+      const int max_x = (fb_w > ccw) ? (fb_w - ccw) : 0;
+      switch (LOWORD(wparam)) {
+        case SB_LINELEFT:
+          self->scroll_x_ -= 20;
+          break;
+        case SB_LINERIGHT:
+          self->scroll_x_ += 20;
+          break;
+        case SB_PAGELEFT:
+          self->scroll_x_ -= ccw / 2;
+          break;
+        case SB_PAGERIGHT:
+          self->scroll_x_ += ccw / 2;
+          break;
+        case SB_THUMBTRACK:
+        case SB_THUMBPOSITION:
+          self->scroll_x_ = static_cast<int>(HIWORD(wparam));
+          break;
+        default:
+          break;
+      }
+      if (self->scroll_x_ < 0) {
+        self->scroll_x_ = 0;
+      }
+      if (self->scroll_x_ > max_x) {
+        self->scroll_x_ = max_x;
+      }
+      self->update_scrollbars();
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return 0;
+    }
+    case WM_VSCROLL: {
+      int fb_w = 0;
+      int fb_h = 0;
+      if (!self->client_.framebuffer_size(&fb_w, &fb_h) || fb_w <= 0 || fb_h <= 0) {
+        return 0;
+      }
+      RECT crc{};
+      GetClientRect(hwnd, &crc);
+      const int cch = crc.bottom - crc.top;
+      const int max_y = (fb_h > cch) ? (fb_h - cch) : 0;
+      switch (LOWORD(wparam)) {
+        case SB_LINEUP:
+          self->scroll_y_ -= 20;
+          break;
+        case SB_LINEDOWN:
+          self->scroll_y_ += 20;
+          break;
+        case SB_PAGEUP:
+          self->scroll_y_ -= cch / 2;
+          break;
+        case SB_PAGEDOWN:
+          self->scroll_y_ += cch / 2;
+          break;
+        case SB_THUMBTRACK:
+        case SB_THUMBPOSITION:
+          self->scroll_y_ = static_cast<int>(HIWORD(wparam));
+          break;
+        default:
+          break;
+      }
+      if (self->scroll_y_ < 0) {
+        self->scroll_y_ = 0;
+      }
+      if (self->scroll_y_ > max_y) {
+        self->scroll_y_ = max_y;
+      }
+      self->update_scrollbars();
+      InvalidateRect(hwnd, nullptr, FALSE);
+      return 0;
+    }
+    case WM_MOUSEWHEEL: {
+      if (!self->fit_to_window_ && self->client_.connected() && !self->reconnecting_) {
+        const short delta = GET_WHEEL_DELTA_WPARAM(wparam);
+        const int keys = GET_KEYSTATE_WPARAM(wparam);
+        const int line = (delta / WHEEL_DELTA) * 40;
+        if (keys & MK_CONTROL) {
+          self->scroll_x_ -= line;
+        } else {
+          self->scroll_y_ -= line;
+        }
+        int fb_w = 0;
+        int fb_h = 0;
+        if (self->client_.framebuffer_size(&fb_w, &fb_h)) {
+          RECT crc{};
+          GetClientRect(hwnd, &crc);
+          const int ccw = crc.right - crc.left;
+          const int cch = crc.bottom - crc.top;
+          const int max_x = (fb_w > ccw) ? (fb_w - ccw) : 0;
+          const int max_y = (fb_h > cch) ? (fb_h - cch) : 0;
+          if (self->scroll_x_ < 0) {
+            self->scroll_x_ = 0;
+          }
+          if (self->scroll_x_ > max_x) {
+            self->scroll_x_ = max_x;
+          }
+          if (self->scroll_y_ < 0) {
+            self->scroll_y_ = 0;
+          }
+          if (self->scroll_y_ > max_y) {
+            self->scroll_y_ = max_y;
+          }
+        }
+        self->update_scrollbars();
+        InvalidateRect(hwnd, nullptr, FALSE);
+      }
+      return 0;
+    }
     case WM_PAINT:
       self->paint();
       return 0;
@@ -253,26 +373,61 @@ LRESULT CALLBACK SessionWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
       }
       RECT crc{};
       GetClientRect(hwnd, &crc);
-      RECT dest{};
-      if (!fit_rect(crc.right - crc.left, crc.bottom - crc.top, desk_w, desk_h, &dest,
-                    !self->floating_)) {
-        InvalidateRect(hwnd, nullptr, FALSE);
-        return 0;
-      }
-      const int dw = dest.right - dest.left;
-      const int dh = dest.bottom - dest.top;
-      if (dw <= 0 || dh <= 0) {
-        return 0;
-      }
-      RECT inv{};
-      inv.left = dest.left + (fx * dw) / desk_w;
-      inv.top = dest.top + (fy * dh) / desk_h;
-      inv.right = dest.left + ((fx + fw) * dw + desk_w - 1) / desk_w;
-      inv.bottom = dest.top + ((fy + fh) * dh + desk_h - 1) / desk_h;
-      InflateRect(&inv, 4, 4);
-      RECT clipped{};
-      if (IntersectRect(&clipped, &inv, &crc)) {
-        InvalidateRect(hwnd, &clipped, FALSE);
+      const int ccw = crc.right - crc.left;
+      const int cch = crc.bottom - crc.top;
+
+      if (self->fit_to_window_) {
+        RECT dest{};
+        if (!fit_rect(ccw, cch, desk_w, desk_h, &dest, !self->floating_)) {
+          InvalidateRect(hwnd, nullptr, FALSE);
+          return 0;
+        }
+        const int dw = dest.right - dest.left;
+        const int dh = dest.bottom - dest.top;
+        if (dw <= 0 || dh <= 0) {
+          return 0;
+        }
+        RECT inv{};
+        inv.left = dest.left + (fx * dw) / desk_w;
+        inv.top = dest.top + (fy * dh) / desk_h;
+        inv.right = dest.left + ((fx + fw) * dw + desk_w - 1) / desk_w;
+        inv.bottom = dest.top + ((fy + fh) * dh + desk_h - 1) / desk_h;
+        InflateRect(&inv, 4, 4);
+        RECT clipped{};
+        if (IntersectRect(&clipped, &inv, &crc)) {
+          InvalidateRect(hwnd, &clipped, FALSE);
+        }
+      } else {
+        // 1:1: map framebuffer dirty rect directly to client coords, offset by scroll.
+        const int img_x = (desk_w < ccw) ? ((ccw - desk_w) / 2) : 0;
+        const int img_y = (desk_h < cch) ? ((cch - desk_h) / 2) : 0;
+        int cx = img_x + fx - self->scroll_x_;
+        int cy = img_y + fy - self->scroll_y_;
+        int cw_rect = fw;
+        int ch_rect = fh;
+        // Clip to client area.
+        if (cx < 0) {
+          cw_rect += cx;
+          cx = 0;
+        }
+        if (cy < 0) {
+          ch_rect += cy;
+          cy = 0;
+        }
+        if (cx + cw_rect > ccw) {
+          cw_rect = ccw - cx;
+        }
+        if (cy + ch_rect > cch) {
+          ch_rect = cch - cy;
+        }
+        if (cw_rect > 0 && ch_rect > 0) {
+          RECT inv{cx, cy, cx + cw_rect, cy + ch_rect};
+          InflateRect(&inv, 4, 4);
+          RECT clipped{};
+          if (IntersectRect(&clipped, &inv, &crc)) {
+            InvalidateRect(hwnd, &clipped, FALSE);
+          }
+        }
       }
       return 0;
     }
@@ -328,14 +483,49 @@ LRESULT CALLBACK SessionWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
         return 0;
       }
       const bool fit_ws = !self->floating_;
-      if (!client_point_in_letterbox(hwnd, lparam, fb_w, fb_h, fit_ws)) {
-        self->client_.set_software_cursor_enabled(false);
-        return 0;
+      int mx = 0;
+      int my = 0;
+      if (self->fit_to_window_) {
+        if (!client_point_in_letterbox(hwnd, lparam, fb_w, fb_h, fit_ws)) {
+          self->client_.set_software_cursor_enabled(false);
+          return 0;
+        }
+        mx = map_mouse_x(hwnd, lparam, fb_w, fb_h, fit_ws);
+        my = map_mouse_y(hwnd, lparam, fb_w, fb_h, fit_ws);
+      } else {
+        // 1:1: check if the cursor is inside the drawn framebuffer area.
+        RECT crc{};
+        GetClientRect(hwnd, &crc);
+        const int ccw = crc.right - crc.left;
+        const int cch = crc.bottom - crc.top;
+        const int img_x = (fb_w < ccw) ? ((ccw - fb_w) / 2) : 0;
+        const int img_y = (fb_h < cch) ? ((cch - fb_h) / 2) : 0;
+        const int img_w = (fb_w < ccw) ? fb_w : ccw;
+        const int img_h = (fb_h < cch) ? fb_h : cch;
+        const int cx = GET_X_LPARAM(lparam);
+        const int cy = GET_Y_LPARAM(lparam);
+        if (cx < img_x || cx >= img_x + img_w || cy < img_y || cy >= img_y + img_h) {
+          self->client_.set_software_cursor_enabled(false);
+          return 0;
+        }
+        mx = (cx - img_x) + self->scroll_x_;
+        my = (cy - img_y) + self->scroll_y_;
+        if (mx < 0) {
+          mx = 0;
+        }
+        if (mx >= fb_w) {
+          mx = fb_w - 1;
+        }
+        if (my < 0) {
+          my = 0;
+        }
+        if (my >= fb_h) {
+          my = fb_h - 1;
+        }
       }
       // Soft cursor off: Host blanks OS cursors; local WM_SETCURSOR arrow is the only pointer.
       self->client_.set_software_cursor_enabled(false);
-      self->client_.send_pointer(mask, map_mouse_x(hwnd, lparam, fb_w, fb_h, fit_ws),
-                                 map_mouse_y(hwnd, lparam, fb_w, fb_h, fit_ws));
+      self->client_.send_pointer(mask, mx, my);
       self->last_ptr_mask_ = mask;
       return 0;
     }
@@ -509,6 +699,7 @@ bool SessionHost::open(HINSTANCE instance, HWND parent_or_null, const std::wstri
   started_ = true;
   audit_opened_sent_ = true;
   audit_emit("opened", "ok", nullptr);
+  update_scrollbars();
   if (floating_) {
     ShowWindow(hwnd_, SW_SHOW);
   }
@@ -672,6 +863,7 @@ void SessionHost::try_reconnect() {
   apply_host_session_role();
   started_ = true;
   reconnecting_ = false;
+  update_scrollbars();
   const int prior_attempts = reconnect_attempt_;
   reconnect_attempt_ = 0;
   status_override_.clear();
@@ -911,6 +1103,89 @@ SessionHost* SessionHost::from_hwnd(HWND hwnd) {
   return reinterpret_cast<SessionHost*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 }
 
+void SessionHost::set_fit_to_window(bool on) {
+  if (fit_to_window_ == on) {
+    return;
+  }
+  fit_to_window_ = on;
+  scroll_x_ = 0;
+  scroll_y_ = 0;
+  if (hwnd_) {
+    update_scrollbars();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+  }
+}
+
+void SessionHost::update_scrollbars() {
+  if (!hwnd_) {
+    return;
+  }
+  int fb_w = 0;
+  int fb_h = 0;
+  if (!client_.framebuffer_size(&fb_w, &fb_h)) {
+    fb_w = 0;
+    fb_h = 0;
+  }
+  RECT rc{};
+  GetClientRect(hwnd_, &rc);
+  const int cw = rc.right - rc.left;
+  const int ch = rc.bottom - rc.top;
+
+  const bool need_scroll = !fit_to_window_ && fb_w > 0 && fb_h > 0 && (fb_w > cw || fb_h > ch);
+  const LONG_PTR base_style = floating_ ? WS_OVERLAPPEDWINDOW : (WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS);
+  const LONG_PTR scroll_style = need_scroll ? (WS_HSCROLL | WS_VSCROLL) : 0;
+  const LONG_PTR cur = GetWindowLongPtrW(hwnd_, GWL_STYLE);
+  const LONG_PTR desired = base_style | scroll_style;
+  if ((cur & (WS_HSCROLL | WS_VSCROLL)) != scroll_style) {
+    SetWindowLongPtrW(hwnd_, GWL_STYLE, desired);
+    SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+  }
+
+  if (need_scroll) {
+    const int max_x = (fb_w > cw) ? (fb_w - cw) : 0;
+    const int max_y = (fb_h > ch) ? (fb_h - ch) : 0;
+    if (scroll_x_ < 0) {
+      scroll_x_ = 0;
+    }
+    if (scroll_x_ > max_x) {
+      scroll_x_ = max_x;
+    }
+    if (scroll_y_ < 0) {
+      scroll_y_ = 0;
+    }
+    if (scroll_y_ > max_y) {
+      scroll_y_ = max_y;
+    }
+
+    SCROLLINFO si{};
+    si.cbSize = sizeof(si);
+    si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+    si.nMin = 0;
+    si.nMax = fb_w - 1;
+    si.nPage = static_cast<UINT>(cw);
+    si.nPos = scroll_x_;
+    SetScrollInfo(hwnd_, SB_HORZ, &si, TRUE);
+
+    si.nMax = fb_h - 1;
+    si.nPage = static_cast<UINT>(ch);
+    si.nPos = scroll_y_;
+    SetScrollInfo(hwnd_, SB_VERT, &si, TRUE);
+  } else {
+    SCROLLINFO si{};
+    si.cbSize = sizeof(si);
+    si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+    si.nMin = 0;
+    si.nMax = 100;
+    si.nPage = 101;
+    si.nPos = 0;
+    SetScrollInfo(hwnd_, SB_HORZ, &si, TRUE);
+    SetScrollInfo(hwnd_, SB_VERT, &si, TRUE);
+    scroll_x_ = 0;
+    scroll_y_ = 0;
+  }
+}
+
 void SessionHost::install_keyboard_hook(HINSTANCE instance) {
   if (!g_kb_hook) {
     g_kb_hook = SetWindowsHookExW(WH_KEYBOARD_LL, low_level_keyboard, instance, 0);
@@ -1000,13 +1275,55 @@ void SessionHost::paint() {
     return;
   }
 
-  RECT dest{};
-  const bool have_frame =
-      w > 0 && h > 0 && fit_rect(cw, ch, w, h, &dest, !floating_) &&
-      bgra.size() >= static_cast<size_t>(w) * h * 4;
-  if (have_frame) {
-    const int dw = dest.right - dest.left;
-    const int dh = dest.bottom - dest.top;
+  const bool have_frame = w > 0 && h > 0 && bgra.size() >= static_cast<size_t>(w) * h * 4;
+
+  if (have_frame && fit_to_window_) {
+    // --- fit-to-window path (existing behaviour) ---
+    RECT dest{};
+    if (fit_rect(cw, ch, w, h, &dest, !floating_)) {
+      const int dw = dest.right - dest.left;
+      const int dh = dest.bottom - dest.top;
+      RECT update{};
+      if (IntersectRect(&update, &ps.rcPaint, &rc)) {
+        auto fill_black = [&](int l, int t, int r, int b) {
+          if (r <= l || b <= t) {
+            return;
+          }
+          RECT bar{l, t, r, b};
+          RECT hit{};
+          if (IntersectRect(&hit, &bar, &update)) {
+            FillRect(back_dc_, &hit, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+          }
+        };
+        fill_black(0, 0, cw, dest.top);
+        fill_black(0, dest.bottom, cw, ch);
+        fill_black(0, dest.top, dest.left, dest.bottom);
+        fill_black(dest.right, dest.top, cw, dest.bottom);
+
+        RECT paint_dest{};
+        if (IntersectRect(&paint_dest, &update, &dest) && dw > 0 && dh > 0) {
+          BITMAPINFO bmi{};
+          bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+          bmi.bmiHeader.biWidth = w;
+          bmi.bmiHeader.biHeight = -h;
+          bmi.bmiHeader.biPlanes = 1;
+          bmi.bmiHeader.biBitCount = 32;
+          bmi.bmiHeader.biCompression = BI_RGB;
+          SetStretchBltMode(back_dc_, COLORONCOLOR);
+          SetBrushOrgEx(back_dc_, 0, 0, nullptr);
+          StretchDIBits(back_dc_, dest.left, dest.top, dw, dh, 0, 0, w, h, bgra.data(), &bmi,
+                        DIB_RGB_COLORS, SRCCOPY);
+        }
+      }
+    }
+  } else if (have_frame) {
+    // --- 1:1 path (default) — pixel-perfect, no scaling, scrollbars when larger ---
+    const int draw_w = (w < cw) ? w : cw;
+    const int draw_h = (h < ch) ? h : ch;
+    // Centre when framebuffer is smaller than client; anchor at (0,0) when larger.
+    const int dest_x = (w < cw) ? ((cw - w) / 2) : 0;
+    const int dest_y = (h < ch) ? ((ch - h) / 2) : 0;
+
     RECT update{};
     if (!IntersectRect(&update, &ps.rcPaint, &rc)) {
       EndPaint(hwnd_, &ps);
@@ -1023,16 +1340,17 @@ void SessionHost::paint() {
         FillRect(back_dc_, &hit, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
       }
     };
-    fill_black(0, 0, cw, dest.top);
-    fill_black(0, dest.bottom, cw, ch);
-    fill_black(0, dest.top, dest.left, dest.bottom);
-    fill_black(dest.right, dest.top, cw, dest.bottom);
+    fill_black(0, 0, cw, dest_y);
+    fill_black(0, dest_y + draw_h, cw, ch);
+    fill_black(0, dest_y, dest_x, dest_y + draw_h);
+    fill_black(dest_x + draw_w, dest_y, cw, dest_y + draw_h);
 
-    // Always stretch the full desktop into |dest|. Partial-source StretchDIBits on a
-    // top-down DIB mis-maps rows during drag (see-through / torn windows). Presenting
-    // only ps.rcPaint via BitBlt still avoids the old full-client HALFTONE flash.
+    // Blit only the visible portion of the framebuffer 1:1 (no Stretch).
+    const int src_x = scroll_x_;
+    const int src_y = scroll_y_;
     RECT paint_dest{};
-    if (IntersectRect(&paint_dest, &update, &dest) && dw > 0 && dh > 0) {
+    RECT draw_rc{dest_x, dest_y, dest_x + draw_w, dest_y + draw_h};
+    if (IntersectRect(&paint_dest, &update, &draw_rc) && draw_w > 0 && draw_h > 0) {
       BITMAPINFO bmi{};
       bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
       bmi.bmiHeader.biWidth = w;
@@ -1042,8 +1360,8 @@ void SessionHost::paint() {
       bmi.bmiHeader.biCompression = BI_RGB;
       SetStretchBltMode(back_dc_, COLORONCOLOR);
       SetBrushOrgEx(back_dc_, 0, 0, nullptr);
-      StretchDIBits(back_dc_, dest.left, dest.top, dw, dh, 0, 0, w, h, bgra.data(), &bmi,
-                    DIB_RGB_COLORS, SRCCOPY);
+      StretchDIBits(back_dc_, dest_x, dest_y, draw_w, draw_h, src_x, src_y, draw_w, draw_h,
+                    bgra.data(), &bmi, DIB_RGB_COLORS, SRCCOPY);
     }
   } else {
     FillRect(back_dc_, &rc, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));

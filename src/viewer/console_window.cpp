@@ -101,6 +101,7 @@ constexpr int kCmdCloseSession = 19;  // menu: close active tab
 constexpr int kCmdNextTab = 20;
 constexpr int kCmdPrevTab = 21;
 constexpr int kCmdCyclePane = 22;
+constexpr int kCmdFitToWindow = 23;
 
 // Toolbar imagelist indices (build_toolbar_images order).
 constexpr int kTbImgRefresh = 0;
@@ -110,6 +111,7 @@ constexpr int kTbImgScreenshot = 3;
 constexpr int kTbImgFullscreen = 4;
 constexpr int kTbImgViewOnly = 5;
 constexpr int kTbImgStart = 6;
+constexpr int kTbImgFitWindow = 7;  // added after start — re-number below
 
 // Tab context menu (design Frame C).
 constexpr int kCmdTabCtxClose = 2001;
@@ -823,6 +825,11 @@ void sync_chrome_commands(ConsoleState* st) {
         st->sessions[static_cast<size_t>(st->active_tab)].host->view_only();
     SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdViewOnly, has_active ? TRUE : FALSE);
     SendMessageW(st->toolbar, TB_CHECKBUTTON, kCmdViewOnly, view_only ? TRUE : FALSE);
+    const bool fit_to_window =
+        has_active && st->sessions[static_cast<size_t>(st->active_tab)].host &&
+        st->sessions[static_cast<size_t>(st->active_tab)].host->fit_to_window();
+    SendMessageW(st->toolbar, TB_ENABLEBUTTON, kCmdFitToWindow, has_active ? TRUE : FALSE);
+    SendMessageW(st->toolbar, TB_CHECKBUTTON, kCmdFitToWindow, fit_to_window ? TRUE : FALSE);
   }
 
   if (HMENU menu = st->hwnd ? GetMenu(st->hwnd) : nullptr) {
@@ -1700,7 +1707,7 @@ HIMAGELIST build_toolbar_images(int icon_px, COLORREF ink) {
     return nullptr;
   }
 
-  HIMAGELIST il = ImageList_Create(icon_px, icon_px, ILC_COLOR32, 7, 1);
+  HIMAGELIST il = ImageList_Create(icon_px, icon_px, ILC_COLOR32, 8, 1);
   if (!il) {
     gdip::GdiplusShutdown(gdip_token);
     return nullptr;
@@ -1714,6 +1721,7 @@ HIMAGELIST build_toolbar_images(int icon_px, COLORREF ink) {
     Maximize,
     Eye,
     Monitor,
+    FitWindow,
   };
 
   auto draw_icon = [&](TbIcon which, gdip::Graphics* g) {
@@ -1805,10 +1813,22 @@ HIMAGELIST build_toolbar_images(int icon_px, COLORREF ink) {
         g->DrawLine(&pen, 8.f, 21.f, 16.f, 21.f);
         break;
       }
+      case TbIcon::FitWindow: {
+        // lucide maximize-2 / expand — four outward-pointing corners (fit-to-window)
+        gdip::PointF tl_corner[] = {{2.f, 6.f}, {2.f, 2.f}, {6.f, 2.f}};
+        gdip::PointF tr_corner[] = {{18.f, 6.f}, {22.f, 6.f}, {22.f, 2.f}, {18.f, 2.f}};
+        gdip::PointF bl_corner[] = {{6.f, 18.f}, {2.f, 18.f}, {2.f, 22.f}, {6.f, 22.f}};
+        gdip::PointF br_corner[] = {{18.f, 18.f}, {22.f, 18.f}, {22.f, 22.f}};
+        g->DrawLines(&pen, tl_corner, 3);
+        g->DrawLines(&pen, tr_corner, 4);
+        g->DrawLines(&pen, bl_corner, 4);
+        g->DrawLines(&pen, br_corner, 3);
+        break;
+      }
     }
   };
 
-  for (int i = 0; i < 7; ++i) {
+  for (int i = 0; i < 8; ++i) {
     gdip::Bitmap bmp(icon_px, icon_px, PixelFormat32bppPARGB);
     gdip::Graphics g(&bmp);
     draw_icon(static_cast<TbIcon>(i), &g);
@@ -2048,6 +2068,8 @@ HMENU build_console_menu() {
   AppendMenuW(view, MF_STRING, kCmdNextTab, L"下一标签(&N)\tCtrl+Tab");
   AppendMenuW(view, MF_STRING, kCmdPrevTab, L"上一标签(&P)\tCtrl+Shift+Tab");
   AppendMenuW(view, MF_STRING, kCmdCyclePane, L"切换窗格(&G)\tF6");
+  AppendMenuW(view, MF_SEPARATOR, 0, nullptr);
+  AppendMenuW(view, MF_STRING, kCmdFitToWindow, L"适应窗口(&F)\tCtrl+0");
   AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(view), L"查看(&V)");
   HMENU session = CreatePopupMenu();
   AppendMenuW(session, MF_STRING, kCmdStartSession, L"启动会话(&O)\tCtrl+Enter");
@@ -2205,6 +2227,7 @@ HACCEL create_console_accel() {
       {FVIRTKEY | FCONTROL | FNOINVERT, VK_TAB, static_cast<WORD>(kCmdNextTab)},
       {FVIRTKEY | FCONTROL | FSHIFT | FNOINVERT, VK_TAB, static_cast<WORD>(kCmdPrevTab)},
       {FVIRTKEY | FNOINVERT, VK_F6, static_cast<WORD>(kCmdCyclePane)},
+      {FVIRTKEY | FCONTROL | FNOINVERT, '0', static_cast<WORD>(kCmdFitToWindow)},
   };
   return CreateAcceleratorTableW(accels, static_cast<int>(ARRAYSIZE(accels)));
 }
@@ -2344,6 +2367,7 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
             {kTbImgScreenshot, kCmdScreenshot, 0, style, {}, 0, 0},
             {kTbImgFullscreen, kCmdFullscreen, 0, style, {}, 0, 0},
             {kTbImgViewOnly, kCmdViewOnly, 0, check, {}, 0, 0},
+            {kTbImgFitWindow, kCmdFitToWindow, 0, check, {}, 0, 0},
         };
         SendMessageW(st->toolbar, TB_ADDBUTTONSW, ARRAYSIZE(btns),
                      reinterpret_cast<LPARAM>(btns));
@@ -2568,7 +2592,8 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
         cmd_session_toolbar(st);
       } else if (cmd == kCmdCloseAll) {
         close_all_sessions(st);
-      } else if (cmd == kCmdScreenshot || cmd == kCmdFullscreen || cmd == kCmdViewOnly) {
+      } else if (cmd == kCmdScreenshot || cmd == kCmdFullscreen || cmd == kCmdViewOnly ||
+                 cmd == kCmdFitToWindow) {
         if (st->active_tab >= 0 &&
             st->active_tab < static_cast<int>(st->sessions.size())) {
           SessionHost* host =
@@ -2603,6 +2628,10 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
               set_status(st, host->view_only() ? L"仅查看模式：键鼠输入已冻结"
                                                : L"已恢复键鼠控制");
             }
+          } else if (cmd == kCmdFitToWindow && host) {
+            host->set_fit_to_window(!host->fit_to_window());
+            sync_chrome_commands(st);
+            set_status(st, host->fit_to_window() ? L"适应窗口" : L"1:1 显示");
           }
         }
       }
@@ -2739,6 +2768,15 @@ LRESULT CALLBACK ConsoleProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) 
                 st->sessions[static_cast<size_t>(st->active_tab)].host &&
                 st->sessions[static_cast<size_t>(st->active_tab)].host->host_forced_view_only();
             tip = forced ? L"仅观看（被控端已有控制端）" : L"仅查看（冻结键鼠输入）";
+            break;
+          }
+          case kCmdFitToWindow: {
+            const bool on =
+                st->active_tab >= 0 &&
+                st->active_tab < static_cast<int>(st->sessions.size()) &&
+                st->sessions[static_cast<size_t>(st->active_tab)].host &&
+                st->sessions[static_cast<size_t>(st->active_tab)].host->fit_to_window();
+            tip = on ? L"1:1 显示（Ctrl+0 切换）" : L"适应窗口（Ctrl+0 切换）";
             break;
           }
         }

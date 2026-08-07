@@ -88,6 +88,11 @@ class SessionHost {
   bool toggle_fullscreen();
   bool fullscreen() const { return fullscreen_; }
 
+  // 1:1 display mode (default) vs fit-to-window. 1:1 preserves ClearType pixel-for-pixel;
+  // scrollbars appear when the framebuffer is larger than the client area.
+  bool fit_to_window() const { return fit_to_window_; }
+  void set_fit_to_window(bool on);
+
   // Save the current remote framebuffer (with cursor) as PNG.
   bool save_screenshot(const std::wstring& path);
 
@@ -113,6 +118,7 @@ class SessionHost {
   void audit_emit(const char* phase, const char* result, const char* disconnect_reason,
                   bool flag_clipboard = false, bool flag_file = false);
   void apply_host_session_role();
+  void update_scrollbars();
 
   road_desk::media::MediaClient client_;
   ConnectDefaults connect_{};
@@ -130,6 +136,9 @@ class SessionHost {
   bool view_only_ = false;
   bool host_forced_view_only_ = false;
   bool fullscreen_ = false;
+  bool fit_to_window_ = false;
+  int scroll_x_ = 0;
+  int scroll_y_ = 0;
   bool audit_clipboard_sent_ = false;
   bool audit_file_sent_ = false;
   int audit_file_out_count_ = 0;
