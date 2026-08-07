@@ -50,6 +50,7 @@ target_compile_definitions(viewer PRIVATE UNICODE _UNICODE)
 target_link_libraries(viewer PRIVATE
   road_desk_media_client
   road_desk_session
+  road_desk_common
   comctl32
   winhttp
   comdlg32

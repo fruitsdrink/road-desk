@@ -37,6 +37,7 @@ if(MSVC)
   endif()
 endif()
 
+add_subdirectory(src/common)
 add_subdirectory(src/session)
 enable_testing()
 add_subdirectory(src/media)

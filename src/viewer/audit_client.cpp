@@ -1,5 +1,6 @@
 #include "audit_client.h"
 
+#include "common/http_helpers.h"
 #include "media_log.h"
 #include "product_version.h"
 
@@ -12,11 +13,6 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <objbase.h>
-#include <winhttp.h>
-
-#pragma comment(lib, "winhttp.lib")
-#pragma comment(lib, "ole32.lib")
 
 namespace road_desk::viewer {
 namespace {
@@ -24,148 +20,6 @@ namespace {
 std::mutex g_dir_mu;
 DirectoryConfig g_dir;
 std::atomic<bool> g_dir_set{false};
-
-std::string json_escape(const std::string& s) {
-  std::string o;
-  o.reserve(s.size() + 8);
-  for (unsigned char c : s) {
-    switch (c) {
-      case '"':
-        o += "\\\"";
-        break;
-      case '\\':
-        o += "\\\\";
-        break;
-      case '\b':
-        o += "\\b";
-        break;
-      case '\f':
-        o += "\\f";
-        break;
-      case '\n':
-        o += "\\n";
-        break;
-      case '\r':
-        o += "\\r";
-        break;
-      case '\t':
-        o += "\\t";
-        break;
-      default:
-        if (c < 0x20) {
-          char buf[8];
-          std::snprintf(buf, sizeof(buf), "\\u%04x", c);
-          o += buf;
-        } else {
-          o.push_back(static_cast<char>(c));
-        }
-        break;
-    }
-  }
-  return o;
-}
-
-bool parse_url(const std::string& url, std::wstring* host, INTERNET_PORT* port, bool* https,
-               std::wstring* path_prefix) {
-  std::wstring wurl(url.begin(), url.end());
-  URL_COMPONENTSW uc{};
-  uc.dwStructSize = sizeof(uc);
-  wchar_t host_buf[256] = {};
-  wchar_t path_buf[1024] = {};
-  uc.lpszHostName = host_buf;
-  uc.dwHostNameLength = 256;
-  uc.lpszUrlPath = path_buf;
-  uc.dwUrlPathLength = 1024;
-  if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &uc)) {
-    return false;
-  }
-  *host = host_buf;
-  *port = uc.nPort;
-  *https = (uc.nScheme == INTERNET_SCHEME_HTTPS);
-  *path_prefix = path_buf;
-  while (!path_prefix->empty() && path_prefix->back() == L'/') {
-    path_prefix->pop_back();
-  }
-  return !host->empty();
-}
-
-bool http_post_json_auth(const std::string& base_url, const std::string& path,
-                         const std::string& bearer, const std::string& json_body, std::string* err,
-                         DWORD timeout_ms = 0) {
-  std::wstring host;
-  INTERNET_PORT port = 0;
-  bool https = false;
-  std::wstring prefix;
-  if (!parse_url(base_url, &host, &port, &https, &prefix)) {
-    *err = "bad gateway url";
-    return false;
-  }
-  HINTERNET ses = WinHttpOpen(L"RoadDesk-Viewer-Audit/0.1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                              WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-  if (!ses) {
-    *err = "WinHttpOpen failed";
-    return false;
-  }
-  if (timeout_ms > 0) {
-    WinHttpSetTimeouts(ses, static_cast<int>(timeout_ms), static_cast<int>(timeout_ms),
-                       static_cast<int>(timeout_ms), static_cast<int>(timeout_ms));
-  }
-  HINTERNET con = WinHttpConnect(ses, host.c_str(), port, 0);
-  if (!con) {
-    WinHttpCloseHandle(ses);
-    *err = "connect failed";
-    return false;
-  }
-  std::wstring wpath = prefix + std::wstring(path.begin(), path.end());
-  DWORD flags = https ? WINHTTP_FLAG_SECURE : 0;
-  HINTERNET req = WinHttpOpenRequest(con, L"POST", wpath.c_str(), nullptr, WINHTTP_NO_REFERER,
-                                     WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
-  if (!req) {
-    WinHttpCloseHandle(con);
-    WinHttpCloseHandle(ses);
-    *err = "open request failed";
-    return false;
-  }
-  std::wstring headers = L"Content-Type: application/json\r\n";
-  if (!bearer.empty()) {
-    headers += L"Authorization: Bearer ";
-    headers.append(bearer.begin(), bearer.end());
-    headers += L"\r\n";
-  }
-  std::string payload = json_body;
-  BOOL ok = WinHttpSendRequest(req, headers.c_str(), static_cast<DWORD>(-1),
-                               payload.empty() ? WINHTTP_NO_REQUEST_DATA : payload.data(),
-                               static_cast<DWORD>(payload.size()), static_cast<DWORD>(payload.size()),
-                               0);
-  if (ok) {
-    ok = WinHttpReceiveResponse(req, nullptr);
-  }
-  DWORD status = 0;
-  DWORD status_len = sizeof(status);
-  if (ok) {
-    WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                        WINHTTP_HEADER_NAME_BY_INDEX, &status, &status_len, WINHTTP_NO_HEADER_INDEX);
-  }
-  WinHttpCloseHandle(req);
-  WinHttpCloseHandle(con);
-  WinHttpCloseHandle(ses);
-  if (!ok || status < 200 || status >= 300) {
-    char line[64];
-    std::snprintf(line, sizeof(line), "HTTP %lu", static_cast<unsigned long>(status));
-    *err = line;
-    return false;
-  }
-  return true;
-}
-
-std::string local_computer_name() {
-  char buf[MAX_COMPUTERNAME_LENGTH + 1] = {};
-  DWORD n = MAX_COMPUTERNAME_LENGTH + 1;
-  if (GetComputerNameA(buf, &n)) {
-    return buf;
-  }
-  return {};
-}
 
 std::string build_json(const AuditReport& r) {
   std::string j = "{";
@@ -180,7 +34,7 @@ std::string build_json(const AuditReport& r) {
     j += '"';
     j += key;
     j += "\":\"";
-    j += json_escape(v);
+    j += road_desk::common::json_escape(v);
     j += '"';
   };
   auto add_bool = [&](const char* key, bool v, bool* first) {
@@ -198,7 +52,7 @@ std::string build_json(const AuditReport& r) {
   add_str("source", "viewer", &first);
   add_str("phase", r.phase, &first);
   add_str("operatorName", r.operator_name, &first);
-  add_str("viewerHost", r.viewer_host.empty() ? local_computer_name() : r.viewer_host, &first);
+  add_str("viewerHost", r.viewer_host.empty() ? road_desk::common::local_computer_name() : r.viewer_host, &first);
   add_str("agentId", r.agent_id, &first);
   add_str("agentName", r.agent_name, &first);
   add_str("agentEndpoint", r.agent_endpoint, &first);
@@ -249,9 +103,9 @@ std::string build_json(const AuditReport& r) {
           j += "{\"dir\":\"";
           j += it.outbound ? "out" : "in";
           j += "\",\"name\":\"";
-          j += json_escape(it.name);
+          j += road_desk::common::json_escape(it.name);
           j += "\",\"path\":\"";
-          j += json_escape(it.path);
+          j += road_desk::common::json_escape(it.path);
           j += "\",\"isDir\":";
           j += it.is_dir ? "true" : "false";
           j += '}';
@@ -293,24 +147,7 @@ bool audit_reporting_enabled() {
 }
 
 std::string audit_new_session_id() {
-  GUID g{};
-  if (CoCreateGuid(&g) != S_OK) {
-    char buf[64];
-    std::snprintf(buf, sizeof(buf), "00000000-0000-4000-8000-%012llx",
-                  static_cast<unsigned long long>(GetTickCount64()));
-    return buf;
-  }
-  char buf[64];
-  std::snprintf(buf, sizeof(buf), "%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-                static_cast<unsigned long>(g.Data1), g.Data2, g.Data3, g.Data4[0], g.Data4[1],
-                g.Data4[2], g.Data4[3], g.Data4[4], g.Data4[5], g.Data4[6], g.Data4[7]);
-  // Lowercase for gateway UUID regex.
-  for (char* p = buf; *p; ++p) {
-    if (*p >= 'A' && *p <= 'F') {
-      *p = static_cast<char>(*p - 'A' + 'a');
-    }
-  }
-  return buf;
+  return road_desk::common::new_session_id();
 }
 
 void audit_report_async(const AuditReport& report) {
@@ -338,7 +175,7 @@ void audit_report_async(const AuditReport& report) {
   std::thread([url, key, copy]() {
     const std::string body = build_json(copy);
     std::string err;
-    if (!http_post_json_auth(url, "/v1/audit/sessions/upsert", key, body, &err)) {
+    if (!road_desk::common::http_post_json(url, "/v1/audit/sessions/upsert", key, body, 0, &err)) {
       road_desk::media::media_logf("viewer", "audit upsert fail phase=%s id=%s err=%s",
                                    copy.phase.c_str(), copy.session_id.c_str(), err.c_str());
     } else {
@@ -365,17 +202,17 @@ void viewer_presence_heartbeat_async() {
     std::lock_guard<std::mutex> lock(g_dir_mu);
     g_dir.viewer_instance_id = dir.viewer_instance_id;
   }
-  const std::string host = local_computer_name();
+  const std::string host = road_desk::common::local_computer_name();
   std::string body = "{\"viewerId\":\"";
-  body += json_escape(dir.viewer_instance_id);
+  body += road_desk::common::json_escape(dir.viewer_instance_id);
   body += "\",\"hostname\":\"";
-  body += json_escape(host);
+  body += road_desk::common::json_escape(host);
   body += "\",\"version\":\"";
-  body += json_escape(ROAD_DESK_VERSION_STRING);
+  body += road_desk::common::json_escape(ROAD_DESK_VERSION_STRING);
   body += '"';
   if (!dir.username.empty()) {
     body += ",\"username\":\"";
-    body += json_escape(dir.username);
+    body += road_desk::common::json_escape(dir.username);
     body += '"';
   }
   body += '}';
@@ -383,7 +220,7 @@ void viewer_presence_heartbeat_async() {
   std::string key = dir.directory_key;
   std::thread([url, key, body]() {
     std::string err;
-    if (!http_post_json_auth(url, "/v1/viewer/heartbeat", key, body, &err)) {
+    if (!road_desk::common::http_post_json(url, "/v1/viewer/heartbeat", key, body, 0, &err)) {
       road_desk::media::media_logf("viewer", "presence heartbeat fail err=%s", err.c_str());
     }
   }).detach();
@@ -402,11 +239,11 @@ void viewer_presence_offline_sync() {
     return;
   }
   std::string body = "{\"viewerId\":\"";
-  body += json_escape(dir.viewer_instance_id);
+  body += road_desk::common::json_escape(dir.viewer_instance_id);
   body += "\"}";
   std::string err;
-  if (!http_post_json_auth(dir.gateway_url, "/v1/viewer/offline", dir.directory_key, body, &err,
-                           2000)) {
+  if (!road_desk::common::http_post_json(dir.gateway_url, "/v1/viewer/offline",
+                                          dir.directory_key, body, 2000, &err)) {
     road_desk::media::media_logf("viewer", "presence offline fail err=%s", err.c_str());
   }
 }

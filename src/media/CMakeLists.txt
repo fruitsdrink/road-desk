@@ -106,6 +106,57 @@ if(ROAD_DESK_WITH_MEDIA)
     mfplat mf mfreadwrite mfuuid wmcodecdspuuid
   )
   add_test(NAME capture_strategy_test COMMAND capture_strategy_test)
+
+  # Protocol parsing tests (no sockets/TLS needed at runtime, but mux.cpp compile
+  # pulls in tls_schannel.h symbols that must resolve).
+  add_executable(mux_parse_test
+    tests/mux_parse_test.cpp
+    mux.cpp
+    tls_schannel.cpp
+    tls_mvp_cert_data.cpp
+  )
+  target_include_directories(mux_parse_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    "${CMAKE_SOURCE_DIR}/src"
+  )
+  target_compile_definitions(mux_parse_test PRIVATE ROAD_DESK_WITH_MEDIA=1)
+  target_link_libraries(mux_parse_test PRIVATE
+    ws2_32 secur32 crypt32 ncrypt
+  )
+  add_test(NAME mux_parse_test COMMAND mux_parse_test)
+
+  # Clipboard payload roundtrip tests (no clipboard API needed for payload encode/decode).
+  add_executable(clipboard_test
+    tests/clipboard_test.cpp
+    mux_clipboard.cpp
+  )
+  target_include_directories(clipboard_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    "${MINIZ_DIR}"
+    "${CMAKE_SOURCE_DIR}/src"
+  )
+  target_compile_definitions(clipboard_test PRIVATE ROAD_DESK_WITH_MEDIA=1)
+  target_link_libraries(clipboard_test PRIVATE
+    road_desk_miniz
+    gdi32 user32
+  )
+  add_test(NAME clipboard_test COMMAND clipboard_test)
+
+  # TLS certificate / handshake / host:port tests (needs real Schannel).
+  add_executable(tls_test
+    tests/tls_test.cpp
+    tls_schannel.cpp
+    tls_mvp_cert_data.cpp
+  )
+  target_include_directories(tls_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    "${CMAKE_SOURCE_DIR}/src"
+  )
+  target_compile_definitions(tls_test PRIVATE ROAD_DESK_WITH_MEDIA=1)
+  target_link_libraries(tls_test PRIVATE
+    ws2_32 secur32 crypt32 ncrypt
+  )
+  add_test(NAME tls_test COMMAND tls_test)
 else()
   add_library(road_desk_media STATIC
     media_stub.cpp

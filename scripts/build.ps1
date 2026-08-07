@@ -32,6 +32,6 @@ Write-Host "Env: ROAD_DESK_PSK, ROAD_DESK_TLS_FINGERPRINT, ROAD_DESK_TLS_INSECUR
 Write-Host "     ROAD_DESK_DEMO_HOST / ROAD_DESK_DEMO_PORT (console demo target),"
 Write-Host "     ROAD_DESK_GATEWAY_URL / ROAD_DESK_VIEWER_KEY (viewer directory),"
 Write-Host "     ROAD_DESK_CAPTURE=auto|mirror|gdi|dxgi (Host; OS strategy resolves auto/dxgi)"
-Write-Host "Tests: cmake --build build --target capture_strategy_test && ctest --test-dir build -R capture_strategy"
+Write-Host "Tests: cmake --build build --target auth_test session_mutex_test mux_parse_test clipboard_test tls_test capture_strategy_test && ctest --test-dir build"
 Write-Host "Gateway: docs/gateway.md (tools/gateway + admin)"
 Write-Host "Note: Mirror Host needs Administrator (HKLM Attach.ToDesktop scrub)."

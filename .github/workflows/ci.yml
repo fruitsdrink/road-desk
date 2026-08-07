@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── C++ build + tests (MSVC 2022, x64) ──────────────────────────
+  cpp:
+    name: C++ Build & Test
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+
+      - name: Install Ninja
+        run: choco install ninja -y --no-progress
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DROAD_DESK_STATIC_CRT=ON
+          -DROAD_DESK_WITH_MEDIA=ON
+
+      - name: Build host-agent + viewer
+        run: cmake --build build --parallel
+
+      - name: Build all tests
+        run: >
+          cmake --build build --target
+          auth_test session_mutex_test capture_strategy_test
+          mux_parse_test clipboard_test tls_test
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Upload test logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpp-test-failure
+          path: build/Testing/
+
+  # ── Go gateway compile check ─────────────────────────────────────
+  gateway:
+    name: Go Gateway
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          check-latest: false
+
+      - name: Build gateway
+        working-directory: tools/gateway
+        run: go build ./cmd/gateway
+
+  # ── Go sidecar compile check (pinned 1.20 for Win7) ─────────────
+  sidecar:
+    name: Go Sidecar (1.20)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.20.14'
+          check-latest: false
+
+      - name: Build sidecar
+        working-directory: tools/host-sidecar
+        # GOOS=windows to catch any non-Windows syscall drift
+        run: GOOS=windows GOARCH=amd64 go build -o host-sidecar.exe .
+
+  # ── Admin UI build check ─────────────────────────────────────────
+  admin:
+    name: Admin UI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.14.0'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: admin/pnpm-lock.yaml
+
+      - name: Install & build
+        working-directory: admin
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build

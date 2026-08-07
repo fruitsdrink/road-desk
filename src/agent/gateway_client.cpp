@@ -1,5 +1,6 @@
 #include "gateway_client.h"
 
+#include "common/http_helpers.h"
 #include "host_inventory.h"
 #include "log.h"
 
@@ -19,31 +20,9 @@
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "ws2_32.lib")
-#pragma comment(lib, "ole32.lib")
-#pragma comment(lib, "comdlg32.lib")
-#pragma comment(lib, "shell32.lib")
 
 namespace road_desk::agent {
 namespace {
-
-bool parse_url(const std::string& url, std::wstring* host, INTERNET_PORT* port, bool* https) {
-  URL_COMPONENTSW uc{};
-  uc.dwStructSize = sizeof(uc);
-  wchar_t host_buf[256] = {};
-  wchar_t path_buf[256] = {};
-  uc.lpszHostName = host_buf;
-  uc.dwHostNameLength = 256;
-  uc.lpszUrlPath = path_buf;
-  uc.dwUrlPathLength = 256;
-  std::wstring wurl(url.begin(), url.end());
-  if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &uc)) {
-    return false;
-  }
-  *host = host_buf;
-  *port = uc.nPort;
-  *https = (uc.nScheme == INTERNET_SCHEME_HTTPS);
-  return !host->empty();
-}
 
 bool is_loopback_or_linklocal(const std::string& ip) {
   if (ip.rfind("127.", 0) == 0) {
@@ -130,9 +109,9 @@ std::vector<std::string> GatewayClient::list_ipv4s() const {
 
 std::string GatewayClient::preferred_ipv4() const {
   std::wstring host;
-  INTERNET_PORT port = 0;
+  unsigned short port = 0;
   bool https = false;
-  if (!parse_url(cfg_.gateway_url, &host, &port, &https)) {
+  if (!road_desk::common::parse_url(cfg_.gateway_url, &host, &port, &https, nullptr)) {
     return {};
   }
   addrinfo hints{};
@@ -202,59 +181,10 @@ std::string GatewayClient::build_body() const {
 }
 
 bool GatewayClient::post_json(const char* path, const std::string& body) {
-  std::wstring host;
-  INTERNET_PORT port = 0;
-  bool https = false;
-  if (!parse_url(cfg_.gateway_url, &host, &port, &https)) {
-    log_line("gateway: bad gatewayUrl");
-    return false;
-  }
-  HINTERNET ses = WinHttpOpen(L"RoadDesk-HostAgent/0.1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                              WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-  if (!ses) {
-    return false;
-  }
-  HINTERNET con = WinHttpConnect(ses, host.c_str(), port, 0);
-  if (!con) {
-    WinHttpCloseHandle(ses);
-    return false;
-  }
-  std::wstring wpath(path, path + std::strlen(path));
-  DWORD flags = https ? WINHTTP_FLAG_SECURE : 0;
-  HINTERNET req =
-      WinHttpOpenRequest(con, L"POST", wpath.c_str(), nullptr, WINHTTP_NO_REFERER,
-                         WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
-  if (!req) {
-    WinHttpCloseHandle(con);
-    WinHttpCloseHandle(ses);
-    return false;
-  }
-  std::wstring auth = L"Authorization: Bearer ";
-  auth += std::wstring(cfg_.agent_psk.begin(), cfg_.agent_psk.end());
-  auth += L"\r\nContent-Type: application/json\r\n";
-  BOOL ok = WinHttpSendRequest(req, auth.c_str(), static_cast<DWORD>(-1),
-                               (LPVOID)body.data(), static_cast<DWORD>(body.size()),
-                               static_cast<DWORD>(body.size()), 0);
-  if (ok) {
-    ok = WinHttpReceiveResponse(req, nullptr);
-  }
-  DWORD status = 0;
-  DWORD status_len = sizeof(status);
-  if (ok) {
-    WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                        WINHTTP_HEADER_NAME_BY_INDEX, &status, &status_len, WINHTTP_NO_HEADER_INDEX);
-  }
-  WinHttpCloseHandle(req);
-  WinHttpCloseHandle(con);
-  WinHttpCloseHandle(ses);
-  if (!ok || status < 200 || status >= 300) {
-    char line[128];
-    std::snprintf(line, sizeof(line), "gateway: %s failed status=%lu", path,
-                  static_cast<unsigned long>(status));
-    log_line(line);
-    return false;
-  }
-  return true;
+  // Use common::http_post_json for the actual HTTP call — we inline the auth header
+  // construction here because GatewayClient already owns the Bearer assembly.
+  std::string err;
+  return road_desk::common::http_post_json(cfg_.gateway_url, path, cfg_.agent_psk, body, 0, &err);
 }
 
 void GatewayClient::run() {

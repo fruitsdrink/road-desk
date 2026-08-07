@@ -1,5 +1,6 @@
 #include "gateway_config.h"
 
+#include "common/http_helpers.h"
 #include "product_version.h"
 #include "ui/rd_app_icon.h"
 #include "ui/rd_dpi.h"
@@ -15,12 +16,10 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <commdlg.h>
-#include <objbase.h>
 #include <shlobj.h>
 #include <winhttp.h>
 #include <gdiplus.h>
 
-#pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "comdlg32.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "gdiplus.lib")
@@ -168,10 +167,10 @@ bool parse_url(const std::string& url, std::wstring* host, INTERNET_PORT* port, 
 
 bool split_gateway_url(const std::string& url, std::string* host, std::string* port) {
   std::wstring whost;
-  INTERNET_PORT p = 0;
+  unsigned short p = 0;
   bool https = false;
   std::wstring prefix;
-  if (!parse_url(url, &whost, &p, &https, &prefix)) {
+  if (!road_desk::common::parse_url(url, &whost, &p, &https, &prefix)) {
     return false;
   }
   char narrow[256] = {};

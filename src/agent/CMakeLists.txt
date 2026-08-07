@@ -47,6 +47,7 @@ target_include_directories(host-agent PRIVATE
 target_link_libraries(host-agent PRIVATE
   road_desk_media_host
   road_desk_session
+  road_desk_common
   winhttp
   iphlpapi
   ws2_32
