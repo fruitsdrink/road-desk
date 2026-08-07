@@ -5,6 +5,7 @@
 #include "process_audit.h"
 #include "log.h"
 #include "service_host.h"
+#include "session_monitor.h"
 
 #include "auth.h"
 #include "media_log.h"
@@ -117,6 +118,10 @@ bool road_desk::agent::debug_http_enabled() {
 
 int road_desk::agent::host_agent_serve(int argc, char** argv, bool as_service) {
   HANDLE stop_ev = as_service ? road_desk::agent::service_stop_event() : NULL;
+
+  // S2: Start session monitoring (HWND for foreground, polling for service).
+  // In service mode, SCM forwards WTS events via SERVICE_CONTROL_SESSIONCHANGE.
+  road_desk::agent::session_monitor_start(as_service);
 
   // Re-init log for service thread (foreground already did in main()).
   if (as_service) {
@@ -241,6 +246,7 @@ int road_desk::agent::host_agent_serve(int argc, char** argv, bool as_service) {
   road_desk::agent::process_audit_shutdown();
   debug_http.stop();
   gateway.stop();
+  road_desk::agent::session_monitor_stop();
   g_media = nullptr;
   road_desk::agent::log_line(as_service ? "host-agent service stopped" : "host-agent stopped");
   road_desk::media::media_log_close();

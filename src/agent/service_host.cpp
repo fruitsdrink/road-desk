@@ -1,6 +1,7 @@
 #include "service_host.h"
 
 #include "log.h"
+#include "session_monitor.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -46,7 +47,7 @@ HANDLE svc_stop_event() {
   return g_svc_stop_event;
 }
 
-DWORD WINAPI svc_ctrl_handler(DWORD ctrl, DWORD /*event_type*/, LPVOID /*event_data*/,
+DWORD WINAPI svc_ctrl_handler(DWORD ctrl, DWORD event_type, LPVOID event_data,
                               LPVOID /*context*/) {
   switch (ctrl) {
     case SERVICE_CONTROL_STOP:
@@ -57,7 +58,13 @@ DWORD WINAPI svc_ctrl_handler(DWORD ctrl, DWORD /*event_type*/, LPVOID /*event_d
       }
       return NO_ERROR;
     case SERVICE_CONTROL_SESSIONCHANGE:
-      // Handled in S2 via the session notification handler.
+      // Forward to S2 session monitor. event_data is the WTSSESSION_NOTIFICATION pointer
+      // passed by SCM (documented in MSDN for SERVICE_CONTROL_SESSIONCHANGE).
+      if (event_data && event_type != 0) {
+        // event_type carries the WTS session event code (e.g. WTS_SESSION_LOCK).
+        auto* ev = reinterpret_cast<WTSSESSION_NOTIFICATION*>(event_data);
+        road_desk::agent::session_monitor_on_change(event_type, ev->dwSessionId);
+      }
       break;
     case SERVICE_CONTROL_INTERROGATE:
       SetServiceStatus(g_svc_handle, &g_svc_status);

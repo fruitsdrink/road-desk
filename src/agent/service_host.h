@@ -7,6 +7,9 @@
 
 #include <string>
 
+#include <string>
+
+// Forward reference — session_monitor.h needs the kServiceName for logging ctx.
 namespace road_desk::agent {
 
 // Windows Service lifecycle (S1 pre-login remote control).
@@ -17,6 +20,9 @@ namespace road_desk::agent {
 //   host-agent.exe --uninstall        → stop + DeleteService
 //   host-agent.exe --run-as-service   → ServiceMain (called by SCM)
 //   host-agent.exe --helper <pipe>    → Session Helper entry (S4)
+//
+// Session change notifications (S2) arrive via SERVICE_CONTROL_SESSIONCHANGE
+// in the control handler and are forwarded to session_monitor_on_change().
 
 // Service name and display name (one per machine).
 extern const wchar_t* kServiceName;  // L"RoadDeskAgentServ"
