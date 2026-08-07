@@ -26,11 +26,5 @@ tools/host-sidecar/host-sidecar.exe
 .DS_Store
 Thumbs.db
 
-# Local / secrets
-.env
-.env.*
-*.pem
-*.key
-.dev/
-.cursor/debug-agents.json
-build/debug-pull/
+# Memory files (managed by Claude Agent SDK skills)
+memory/
