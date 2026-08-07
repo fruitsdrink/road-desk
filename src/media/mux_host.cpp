@@ -1615,14 +1615,12 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
         // next sent batch must diff against the last SENT frame. Advancing prev
         // here meant window-move regions between sent frames were never covered,
         // leaving ghost trails on the viewer during drag.
-        // Drag: yield briefly to let video-out drain the queue, then retry.
-        if (drag_mode) {
-          Sleep(0);
-          // Reset so this tick re-acquires at the current pointer position.
-          // Skipping the full loop means the outq check runs again immediately.
-        } else {
-          Sleep(1);
-        }
+        // During drag, drop the tick immediately — outq being full means video-out
+        // is slow (TCP backpressure). The encode thread busy-waiting the capture
+        // loop only produces frames that will be evicted, wasting CPU and starving
+        // the video-out thread that shares the same core(s). Skipping the tick
+        // without sleeping lets the next loop iteration check outq again at
+        // natural speed.
         continue;
       }
 
