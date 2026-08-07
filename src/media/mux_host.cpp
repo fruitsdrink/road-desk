@@ -1615,7 +1615,14 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
         // next sent batch must diff against the last SENT frame. Advancing prev
         // here meant window-move regions between sent frames were never covered,
         // leaving ghost trails on the viewer during drag.
-        Sleep(1);
+        // Drag: yield briefly to let video-out drain the queue, then retry.
+        if (drag_mode) {
+          Sleep(0);
+          // Reset so this tick re-acquires at the current pointer position.
+          // Skipping the full loop means the outq check runs again immediately.
+        } else {
+          Sleep(1);
+        }
         continue;
       }
 
