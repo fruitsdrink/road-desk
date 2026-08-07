@@ -1,1 +1,1 @@
-- [Road Desk pre-login remote control](road-desk-pre-login-remote-control.md) — S1–S5 implementation status: service scaffold, session monitor, cross-desktop capture, injection IPC, protocol extension, all committed to `dev`
+- [Road Desk pre-login remote control](road-desk-pre-login-remote-control.md) — S1–S5 complete: service scaffold, session monitor, cross-desktop GDI capture, injection IPC, protocol byte, mux_host wire-up
