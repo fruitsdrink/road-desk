@@ -50,7 +50,7 @@
 ### 运行测试
 
 ```powershell
-cmake --build build --target auth_test session_mutex_test mux_parse_test clipboard_test tls_test capture_strategy_test
+cmake --build build --target auth_test session_mutex_test mux_parse_test clipboard_test tls_test capture_strategy_test session_monitor_test
 ctest --test-dir build --output-on-failure
 ```
 
