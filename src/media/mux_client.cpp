@@ -179,6 +179,7 @@ struct ClientState {
   std::string agent_version;
   // A5a: Host AuthOk / SessionRole → view_only. Updated from net thread.
   std::atomic<bool> host_forces_view_only{false};
+  std::atomic<uint8_t> host_desktop_state{0};  // S5: HostDesktopState
   uint32_t frame_id = 0;
   uint32_t frame_epoch = 0;
   std::vector<uint8_t> decode_buf;
@@ -1100,7 +1101,8 @@ bool MediaClient::start(const MediaClientConfig& config) {
   uint16_t aw = 0;
   uint16_t ah = 0;
   uint8_t role = kSessionRoleControl;
-  if (!parse_auth_ok(payload.data(), payload.size(), &aw, &ah, &st->agent_version, &role)) {
+  uint8_t host_st = kHostDesktopConsole;  // S5
+  if (!parse_auth_ok(payload.data(), payload.size(), &aw, &ah, &st->agent_version, &role, &host_st)) {
     logf("AuthOk parse failed");
     tls::tls_close(st->tls);
     st->tls = nullptr;
@@ -1112,9 +1114,11 @@ bool MediaClient::start(const MediaClientConfig& config) {
   st->desk_w = aw;
   st->desk_h = ah;
   st->host_forces_view_only.store(role == kSessionRoleViewOnly);
-  logf("auth ok desktop=%dx%d agent=%s role=%s", st->desk_w, st->desk_h,
+  st->host_desktop_state.store(host_st);
+  logf("auth ok desktop=%dx%d agent=%s role=%s host_st=%u", st->desk_w, st->desk_h,
        st->agent_version.empty() ? "-" : st->agent_version.c_str(),
-       st->host_forces_view_only.load() ? "view_only" : "control");
+       st->host_forces_view_only.load() ? "view_only" : "control",
+       static_cast<unsigned>(host_st));
 
   if (st->cfg.notify_hwnd && st->cfg.resize_msg) {
     PostMessageW(st->cfg.notify_hwnd, st->cfg.resize_msg, static_cast<WPARAM>(st->desk_w),
@@ -1193,6 +1197,10 @@ std::string MediaClient::agent_version() const {
 
 bool MediaClient::host_forces_view_only() const {
   return impl_ && impl_->state.host_forces_view_only.load();
+}
+
+uint8_t MediaClient::host_desktop_state() const {
+  return impl_ ? impl_->state.host_desktop_state.load() : 0;
 }
 
 bool MediaClient::copy_desktop_bgra(std::vector<uint8_t>& out, int& width, int& height) const {

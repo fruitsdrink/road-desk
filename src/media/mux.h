@@ -32,9 +32,11 @@ bool mux_read_idle(road_desk::media::tls::TlsSession* tls, uint8_t* channel_out,
 bool control_send_auth(road_desk::media::tls::TlsSession* tls, const std::string& password,
                        const std::string& session_id = std::string());
 // session_role: kSessionRoleControl | kSessionRoleViewOnly (A5a).
+// host_desktop_state: kHostDesktopConsole (default), Logon, Locked, None (S5).
 bool control_send_auth_ok(road_desk::media::tls::TlsSession* tls, uint16_t width,
                           uint16_t height, const std::string& version = std::string(),
-                          uint8_t session_role = kSessionRoleControl);
+                          uint8_t session_role = kSessionRoleControl,
+                          uint8_t host_desktop_state = kHostDesktopConsole);
 bool control_send_auth_fail(road_desk::media::tls::TlsSession* tls, const std::string& reason);
 bool control_send_session_role(road_desk::media::tls::TlsSession* tls, uint8_t session_role);
 
@@ -42,8 +44,9 @@ bool control_send_session_role(road_desk::media::tls::TlsSession* tls, uint8_t s
 bool parse_auth_password(const uint8_t* p, size_t n, std::string* password_out,
                          std::string* session_id_out = nullptr);
 
-// Parse AuthOk: width/height required; version + session_role optional (old hosts omit role → control).
+// Parse AuthOk: width/height required; version + session_role + host_desktop_state optional.
 bool parse_auth_ok(const uint8_t* p, size_t n, uint16_t* width_out, uint16_t* height_out,
-                   std::string* version_out = nullptr, uint8_t* session_role_out = nullptr);
+                   std::string* version_out = nullptr, uint8_t* session_role_out = nullptr,
+                   uint8_t* host_desktop_state_out = nullptr);
 
 }  // namespace road_desk::replace

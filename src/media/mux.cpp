@@ -189,9 +189,10 @@ bool control_send_auth(road_desk::media::tls::TlsSession* tls, const std::string
 }
 
 bool control_send_auth_ok(road_desk::media::tls::TlsSession* tls, uint16_t width,
-                          uint16_t height, const std::string& version, uint8_t session_role) {
+                          uint16_t height, const std::string& version, uint8_t session_role,
+                          uint8_t host_desktop_state) {
   std::vector<uint8_t> body;
-  body.reserve(5 + 2 + version.size() + 1);
+  body.reserve(5 + 2 + version.size() + 2);
   body.push_back(kCtrlAuthOk);
   uint8_t hdr[4];
   write_u16_le(hdr, width);
@@ -207,6 +208,7 @@ bool control_send_auth_ok(road_desk::media::tls::TlsSession* tls, uint16_t width
   }
   body.push_back(session_role == kSessionRoleViewOnly ? kSessionRoleViewOnly
                                                       : kSessionRoleControl);
+  body.push_back(host_desktop_state);
   return mux_write(tls, kChannelControl, body.data(), static_cast<uint32_t>(body.size()));
 }
 
@@ -254,7 +256,8 @@ bool parse_auth_password(const uint8_t* p, size_t n, std::string* password_out,
 }
 
 bool parse_auth_ok(const uint8_t* p, size_t n, uint16_t* width_out, uint16_t* height_out,
-                   std::string* version_out, uint8_t* session_role_out) {
+                   std::string* version_out, uint8_t* session_role_out,
+                   uint8_t* host_desktop_state_out) {
   if (!p || !width_out || !height_out || n < 5 || p[0] != kCtrlAuthOk) {
     return false;
   }
@@ -265,6 +268,9 @@ bool parse_auth_ok(const uint8_t* p, size_t n, uint16_t* width_out, uint16_t* he
   }
   if (session_role_out) {
     *session_role_out = kSessionRoleControl;
+  }
+  if (host_desktop_state_out) {
+    *host_desktop_state_out = kHostDesktopConsole;
   }
   size_t off = 5;
   if (n >= off + 2) {
@@ -283,6 +289,16 @@ bool parse_auth_ok(const uint8_t* p, size_t n, uint16_t* width_out, uint16_t* he
       const uint8_t role = p[off];
       *session_role_out =
           (role == kSessionRoleViewOnly) ? kSessionRoleViewOnly : kSessionRoleControl;
+      ++off;
+      // S5: optional host_desktop_state byte after session_role.
+      if (host_desktop_state_out && n > off) {
+        const uint8_t st = p[off];
+        *host_desktop_state_out = (st <= 3) ? st : kHostDesktopConsole;
+      }
+    } else if (host_desktop_state_out && n > off) {
+      // No role byte (old host) but trailing byte exists — treat as desktop state.
+      const uint8_t st = p[off];
+      *host_desktop_state_out = (st <= 3) ? st : kHostDesktopConsole;
     }
   }
   return true;

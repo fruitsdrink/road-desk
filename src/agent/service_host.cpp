@@ -1,5 +1,6 @@
 #include "service_host.h"
 
+#include "injection_pipe.h"
 #include "log.h"
 #include "session_monitor.h"
 
@@ -221,6 +222,13 @@ bool try_run_service_cli(int argc, char** argv) {
       CloseServiceHandle(svc);
       CloseServiceHandle(scm);
       return true;
+    }
+
+    // --helper <pipe_name>: S4 session helper entry point.
+    if (std::strncmp(argv[i], "--helper", 7) == 0 && argc > i + 1) {
+      const char* name = argv[i + 1] ? argv[i + 1] : "";
+      const int rc = road_desk::agent::run_session_helper(name);
+      return rc == 0;
     }
   }
   return false;

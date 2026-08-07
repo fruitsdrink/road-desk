@@ -6,6 +6,7 @@
 #include "log.h"
 #include "service_host.h"
 #include "session_monitor.h"
+#include "injection_pipe.h"
 
 #include "auth.h"
 #include "media_log.h"
@@ -122,6 +123,11 @@ int road_desk::agent::host_agent_serve(int argc, char** argv, bool as_service) {
   // S2: Start session monitoring (HWND for foreground, polling for service).
   // In service mode, SCM forwards WTS events via SERVICE_CONTROL_SESSIONCHANGE.
   road_desk::agent::session_monitor_start(as_service);
+
+  // S4: Start injection pipe server (service mode) or direct injection (foreground).
+  if (as_service) {
+    road_desk::agent::injection_pipe_server_start();
+  }
 
   // Re-init log for service thread (foreground already did in main()).
   if (as_service) {
@@ -246,6 +252,7 @@ int road_desk::agent::host_agent_serve(int argc, char** argv, bool as_service) {
   road_desk::agent::process_audit_shutdown();
   debug_http.stop();
   gateway.stop();
+  road_desk::agent::injection_pipe_server_stop();
   road_desk::agent::session_monitor_stop();
   g_media = nullptr;
   road_desk::agent::log_line(as_service ? "host-agent service stopped" : "host-agent stopped");

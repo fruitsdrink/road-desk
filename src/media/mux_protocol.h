@@ -16,6 +16,13 @@ enum Channel : uint8_t {
   kChannelFile = 6,
 };
 
+enum HostDesktopState : uint8_t {
+  kHostDesktopConsole = 0,  // user logged in, default desktop
+  kHostDesktopLogon = 1,    // login / winlogon desktop
+  kHostDesktopLocked = 2,   // user session locked
+  kHostDesktopNone = 3,     // unknown / error
+};
+
 enum ControlType : uint8_t {
   kCtrlAuth = 1,      // client -> host: u16 le pass_len + utf8 [+ optional u16 sid_len + utf8 session_id]
   // host -> client: u16 le width, u16 le height [+ optional u16 vlen + version]

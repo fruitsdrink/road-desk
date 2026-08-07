@@ -731,6 +731,15 @@ std::wstring SessionHost::status_text() const {
     _snwprintf_s(buf, _TRUNCATE, L"正在重连… (%d)", reconnect_attempt_ + 1);
     return buf;
   }
+  // S5: show host desktop state when connected.
+  if (client_.connected()) {
+    const uint8_t st = client_.host_desktop_state();
+    switch (st) {
+      case 1: return L"登录界面";
+      case 2: return L"已锁定";
+      default: break;
+    }
+  }
   return {};
 }
 

@@ -947,7 +947,9 @@ bool try_auth_client(ClientConn* c, const std::string& psk, session::SessionMute
   // Controller leave → ensure_one_controller promotes the earliest remaining viewer.
   const bool grant_control = !(clients && has_controller(*clients, c));
   const uint8_t role = grant_control ? kSessionRoleControl : kSessionRoleViewOnly;
-  if (!control_send_auth_ok(c->tls, width, height, ROAD_DESK_VERSION_STRING, role)) {
+  // S5: pack host desktop state into AuthOk for Viewer.
+  const uint8_t host_st = static_cast<uint8_t>(road_desk::agent::session_desktop_state());
+  if (!control_send_auth_ok(c->tls, width, height, ROAD_DESK_VERSION_STRING, role, host_st)) {
     logf("send AuthOk failed");
     return false;
   }

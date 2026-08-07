@@ -130,6 +130,8 @@ class MediaClient {
   std::string agent_version() const;
   // True when Host assigned view-only role at AuthOk (A5a; another client holds control).
   bool host_forces_view_only() const;
+  // Host desktop state: 0=console, 1=logon, 2=locked, 3=none (S5 pre-login remote control).
+  uint8_t host_desktop_state() const;
   // Update paint/resize/close notify target (e.g. after reparenting the session HWND).
   void set_notify_hwnd(HWND hwnd);
 

@@ -34,7 +34,6 @@ extern const wchar_t* kServiceDisplayName;
 bool is_service_cli_arg(const char* arg);
 
 // Returns true after performing the requested CLI action.
-// caller_main_argv0 = argv[0] (path to host-agent.exe for service registration).
 bool try_run_service_cli(int argc, char** argv);
 
 // --- Service entry point ---

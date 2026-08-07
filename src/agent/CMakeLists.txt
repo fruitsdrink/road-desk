@@ -8,6 +8,7 @@ set(AGENT_SOURCES
   process_audit.cpp
   service_host.cpp
   session_monitor.cpp
+  injection_pipe.cpp
   host_inventory.cpp
 )
 
