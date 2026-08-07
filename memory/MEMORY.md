@@ -1,1 +1,2 @@
 - [Road Desk pre-login remote control](road-desk-pre-login-remote-control.md) — S1–S5 complete: service scaffold, session monitor, cross-desktop GDI capture, injection IPC, protocol byte, mux_host wire-up
+- [Login-before-desktop verification gaps](login-before-desktop-verification-gaps.md) — UIAccess code signing, real-machine lock/reboot chain testing, SAS, Win7 compatibility not yet verified
