@@ -21,6 +21,9 @@ add_custom_command(
     ${VIEWER_SOURCES}
     viewer.manifest
     "${CMAKE_SOURCE_DIR}/src/ui/rd_app.rc"
+    "${CMAKE_SOURCE_DIR}/src/media/mux_host.cpp"
+    "${CMAKE_SOURCE_DIR}/src/media/mux_client.cpp"
+    "${CMAKE_SOURCE_DIR}/src/media/mux_protocol.h"
     "${CMAKE_SOURCE_DIR}/scripts/bump_product_version.ps1"
   COMMENT "Bump product version (viewer sources changed)"
   WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"

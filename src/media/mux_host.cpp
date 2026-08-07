@@ -1214,7 +1214,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
       }
       if (msg.empty()) {
         ++vout_empty;
-        Sleep(1);
+        Sleep(0);  // yield time-slice, don't park — drag respawns immediately
         continue;
       }
 
@@ -1434,7 +1434,10 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
       }
 
       const DWORD now = GetTickCount();
-      if (last_send_ms != 0 && now - last_send_ms < 8u) {
+      const bool drag_mode = (g_ptr_buttons.load() & 1) != 0;
+      // Non-drag: keep the 8ms floor so Explorer-select dirties don't spin too fast.
+      // Drag: no floor — let capture + encode run at natural speed (VNC-style push).
+      if (last_send_ms != 0 && now - last_send_ms < 8u && !drag_mode) {
         Sleep(1);
         continue;
       }
@@ -1442,7 +1445,7 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
       bool outq_full = false;
       {
         std::lock_guard<std::mutex> lock(shared.outq_mu);
-        const size_t max_b = (g_ptr_buttons.load() & 1) ? 1u : kMaxBatches;
+        const size_t max_b = kMaxBatches;  // keep pipeline depth during drag too
         if (shared.outq.size() >= max_b) {
           shared.dropped_ticks.fetch_add(1);
           shared.dropped_interval.fetch_add(1);
@@ -1451,7 +1454,6 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
       }
 
       const bool any_kf = g_any_need_keyframe.load();
-      const bool drag_mode = (g_ptr_buttons.load() & 1) != 0;
       int validate = g_validate_frames.load();
       // DXGI drag: never force_full_pixels — that clears MoveRects (lab copy=0).
       const bool force_validate =

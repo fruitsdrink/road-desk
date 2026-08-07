@@ -1,4 +1,4 @@
-add_executable(host-agent
+set(AGENT_SOURCES
   main.cpp
   log.cpp
   gateway_config.cpp
@@ -7,9 +7,38 @@ add_executable(host-agent
   audit_client.cpp
   process_audit.cpp
   host_inventory.cpp
+)
+
+# When any agent or media source changes, bump ROAD_DESK_VERSION_PATCH before compiling.
+set(AGENT_VERSION_STAMP "${CMAKE_BINARY_DIR}/generated/agent_version.stamp")
+add_custom_command(
+  OUTPUT "${AGENT_VERSION_STAMP}"
+  COMMAND "${ROAD_DESK_PWSH}" -NoProfile -ExecutionPolicy Bypass
+          -File "${CMAKE_SOURCE_DIR}/scripts/bump_product_version.ps1"
+          -Stamp "${AGENT_VERSION_STAMP}"
+  DEPENDS
+    ${AGENT_SOURCES}
+    host-agent.manifest
+    "${CMAKE_SOURCE_DIR}/src/ui/rd_app.rc"
+    "${CMAKE_SOURCE_DIR}/src/media/mux_host.cpp"
+    "${CMAKE_SOURCE_DIR}/src/media/mux_client.cpp"
+    "${CMAKE_SOURCE_DIR}/src/media/mux_protocol.h"
+    "${CMAKE_SOURCE_DIR}/scripts/bump_product_version.ps1"
+  COMMENT "Bump product version (agent or media sources changed)"
+  WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+  VERBATIM
+)
+add_custom_target(agent_bump_version DEPENDS "${AGENT_VERSION_STAMP}")
+
+add_executable(host-agent
+  ${AGENT_SOURCES}
   host-agent.manifest
   ${CMAKE_SOURCE_DIR}/src/ui/rd_app.rc
 )
+
+add_dependencies(host-agent agent_bump_version)
+set_source_files_properties(${AGENT_SOURCES} PROPERTIES
+  OBJECT_DEPENDS "${AGENT_VERSION_STAMP}")
 
 target_include_directories(host-agent PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}

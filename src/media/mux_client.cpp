@@ -849,7 +849,10 @@ DWORD WINAPI net_thread(LPVOID param) {
       logf("tls_pending failed");
       break;
     }
-    if (pending == 0 && !socket_readable(sock, 5)) {
+    // During drag (LMB held), poll at 0ms so frames land immediately. Non-drag
+    // keeps 5ms to avoid busy-spinning the net thread when the desktop is idle.
+    const bool dragging = (st->ptr_buttons & 1) != 0;
+    if (pending == 0 && !socket_readable(sock, dragging ? 0 : 5)) {
       continue;
     }
     uint8_t ch = 0;
