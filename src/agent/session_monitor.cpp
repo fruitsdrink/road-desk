@@ -256,4 +256,9 @@ void session_capture_invalidate() {
   open_capture_dc_for_state(g_state);
 }
 
+bool session_capture_needs_gdi_fallback() {
+  std::lock_guard<std::mutex> lock(g_state_mu);
+  return g_state == HostDesktopState::kLogon || g_state == HostDesktopState::kLocked;
+}
+
 }  // namespace road_desk::agent

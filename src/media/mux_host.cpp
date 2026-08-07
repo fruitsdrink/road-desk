@@ -4,6 +4,7 @@
 
 #include "media_plane.h"
 
+#include "agent/session_monitor.h"
 #include "auth.h"
 #include "capture_resolve.h"
 #include "cursor_capture.h"
@@ -1151,6 +1152,8 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
   shared.clients.reserve(kMaxClients);
   constexpr size_t kMaxBatches = 2;
   const bool modern_lossy = (capture_strategy == CaptureStrategy::Modern);
+  // S3: if on logon/locked desktop, DXGI cannot work → treat as GDI.
+  const bool desktop_needs_gdi = road_desk::agent::session_capture_needs_gdi_fallback();
   uint32_t shared_xfer_id = 1;
 
   struct VideoWriteYieldCtx {
@@ -1398,7 +1401,9 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
       }
 
       if (!cap) {
-        cap = std::make_unique<SessionCapture>(capture_mode);
+        // S3: override capture mode to GDI when on logon/locked desktop.
+        const auto eff_mode = desktop_needs_gdi ? CaptureMode::Gdi : capture_mode;
+        cap = std::make_unique<SessionCapture>(eff_mode);
       }
 
       if (!cap_begun) {

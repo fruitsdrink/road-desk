@@ -63,4 +63,8 @@ int session_capture_height();
 // Force-refresh the desktop DC on the next capture call (e.g. after session change).
 void session_capture_invalidate();
 
+// Returns true if the current session context is one where DXGI cannot work
+// (logon/locked desktop or Session 0). Caller should fall back to GDI.
+bool session_capture_needs_gdi_fallback();
+
 }  // namespace road_desk::agent
