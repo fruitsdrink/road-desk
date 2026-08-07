@@ -1,21 +1,22 @@
 ---
 name: road-desk-pre-login-remote-control
-description: S1–S5 pre-login remote control implementation status: service scaffold, session monitor, cross-desktop GDI capture, injection pipe IPC, protocol extension, and mux_host wire-up all committed to dev branch
+description: S1-S5 pre-login remote control implementation: service scaffold, session monitor, GDI cross-desktop capture, injection pipe IPC, protocol byte, mux_host wire-up. All committed to dev, needs CI upgrade run.
 metadata:
   type: project
 ---
 
-Road Desk 登录前远控 S1–S5 已全部实现、装配和提交到 `dev` 分支，共 5 个 commit（c0cd74b, f5a5f89, f2bf6f6, de47bcb, 9a2343f）。
+登录前远控 S1–S5 **全部完成，干净提交**。
+跑通：构建（`host-agent.exe` + `viewer.exe`）、6 个 CTest（`auth_test` / `session_mutex_test` / `capture_strategy_test` / `mux_parse_test` / `clipboard_test` / `tls_test`）、Service install/uninstall 验证。
 
-**Why:** Host Agent 从仅支持已登录桌面远控 → 支持 Windows 登录界面、锁屏界面查看并操作。核心是 Service Wrapper（Session 0）+ 跨桌面 GDI 采集 + Session Helper 注入 IPC + 协议扩展。
+提交链：`7be13ae → c0cd74b → f5a5f89 → f2bf6f6 → de47bcb → 9a2343f → 3366f68`。都在 `dev` 分支，已 push。
+
+**Why:** 从仅支持已登录桌面 → 登录界面、锁屏界面可远控。Service (Session 0) + GDI cross-desktop DC + Session Helper IPC + AuthOk protocol byte。
 
 **How to apply:**
-- 构建后 `host-agent.exe --install` 注册为 LocalSystem 服务
-- 服务启动后自动采集 winlogon/locked 桌面、通过 GDI `OpenDesktop("Winlogon")` 获取 DC
-- 注入：登录/锁屏桌面直接 `SendInput`，用户桌面通过 `CreateProcessAsUser` 启动 Session Helper + 命名管道 IPC
-- `mux_host.cpp` 的 `flush_pending_input()` 已在 S4 wire-up 中连接到 injection_pipe：有 helper 时走管道，否则直接注入
-- Viewer 侧在 AuthOk 中收到 host_desktop_state 字节（0=console, 1=logon, 2=locked），状态栏显示"登录界面"/"已锁定"
-- 尚未验证：UIAccess 代码签名、真机锁屏/重启全链路、SAS 注入、Win7 兼容性
-- 验证计划见 [[login-before-desktop-verification-gaps]]
+- `host-agent.exe --install` → LocalSystem 服务开箱自启
+- `cmake --build build --target host-agent viewer`
+- `ctest --test-dir build --output-on-failure`
+- 未验证项：UIAccess 签名、真机锁屏/重启全链路、SAS、Win7 兼容（见 [[login-before-desktop-verification-gaps]]）
 
-**Reference:** `CONTEXT.md` §登录前远控, `docs/spike-media-replace-pitfalls.md` row D5, plan `C:\Users\haight\.claude\plans\snazzy-honking-origami.md`
+**Files:**
+- `src/agent/` (7 files) + `src/media/` (7 files) + `src/viewer/` (1 file) + `src/common/` (3 files) + `src/session/` (3 tests) + `.github/workflows/ci.yml` + `README.md`
