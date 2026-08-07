@@ -1,0 +1,23 @@
+{
+  "out_dir": "build/debug-pull",
+  "agents": [
+    {
+      "id": "win7",
+      "label": "vm-win7 (WIN-2NNUV1NHNDH)",
+      "host": "192.168.26.131",
+      "media_port": 38471,
+      "debug_port": 38472,
+      "sidecar_port": 17890,
+      "psk": "road-desk"
+    },
+    {
+      "id": "win10",
+      "label": "DESKTOP-B216FDH",
+      "host": "192.168.26.132",
+      "media_port": 38471,
+      "debug_port": 38472,
+      "sidecar_port": 17890,
+      "psk": "road-desk"
+    }
+  ]
+}
