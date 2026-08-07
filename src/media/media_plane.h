@@ -55,8 +55,11 @@ class MediaPlane {
   MediaPlane& operator=(const MediaPlane&) = delete;
 
   // listen() binds; serve() blocks in accept/session loop until request_stop().
+  // serve_with_stop_event() is for service mode: accepts nullptr (no event) and behaves
+  // identically to serve(), or polls a Windows event object between accept iterations.
   bool listen(const MediaPlaneConfig& config);
   void serve();
+  void serve_with_stop_event(HANDLE stop_event);
   void request_stop();
   bool running() const;
   int bound_port() const;

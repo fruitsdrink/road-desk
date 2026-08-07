@@ -6,6 +6,7 @@ set(AGENT_SOURCES
   debug_http.cpp
   audit_client.cpp
   process_audit.cpp
+  service_host.cpp
   host_inventory.cpp
 )
 
@@ -56,6 +57,7 @@ target_link_libraries(host-agent PRIVATE
   shell32
   gdiplus
   comctl32
+  advapi32
 )
 
 set_target_properties(host-agent PROPERTIES OUTPUT_NAME "host-agent")

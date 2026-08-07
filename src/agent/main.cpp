@@ -4,6 +4,7 @@
 #include "audit_client.h"
 #include "process_audit.h"
 #include "log.h"
+#include "service_host.h"
 
 #include "auth.h"
 #include "media_log.h"
@@ -93,7 +94,7 @@ bool env_truthy(const char* name) {
 }
 
 // ROAD_DESK_DEBUG_HTTP=0/false disables. Default enabled.
-bool debug_http_enabled() {
+bool debug_http_enabled_impl() {
   char* env = nullptr;
   size_t len = 0;
   if (_dupenv_s(&env, &len, "ROAD_DESK_DEBUG_HTTP") != 0 || !env) {
@@ -107,70 +108,31 @@ bool debug_http_enabled() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-  SetProcessDPIAware();
-  SetUnhandledExceptionFilter(on_unhandled_exception);
+// Public alias for service_host.h's declaration.
+bool road_desk::agent::debug_http_enabled() {
+  return debug_http_enabled_impl();
+}
 
-  std::signal(SIGINT, on_signal);
-  std::signal(SIGTERM, on_signal);
+// ── host_agent_serve: shared entry for foreground + service ──────
 
-  if (!road_desk::agent::init_log()) {
-    return 1;
-  }
-  {
+int road_desk::agent::host_agent_serve(int argc, char** argv, bool as_service) {
+  HANDLE stop_ev = as_service ? road_desk::agent::service_stop_event() : NULL;
+
+  // Re-init log for service thread (foreground already did in main()).
+  if (as_service) {
+    if (!road_desk::agent::init_log()) return 1;
     char exe[MAX_PATH] = {};
     GetModuleFileNameA(nullptr, exe, MAX_PATH);
     char line[640];
     std::snprintf(line, sizeof(line),
-                  "host-agent starting (mux) version=%s built=%s %s path=%s",
+                  "host-agent starting (mux, service) version=%s built=%s %s path=%s",
                   ROAD_DESK_VERSION_STRING, ROAD_DESK_BUILD_DATE, ROAD_DESK_BUILD_TIME, exe);
     road_desk::agent::log_line(line);
+    road_desk::agent::log_line("running as Windows service (LocalSystem)");
   }
 
-  {
-    // Manifest requests requireAdministrator; still fail-closed if somehow not elevated
-    // (e.g. stripped manifest). Mirror HKLM Attach.ToDesktop scrub needs admin.
-    BOOL elevated = FALSE;
-    HANDLE tok = nullptr;
-    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &tok)) {
-      TOKEN_ELEVATION elev{};
-      DWORD got = 0;
-      if (GetTokenInformation(tok, TokenElevation, &elev, sizeof(elev), &got)) {
-        elevated = elev.TokenIsElevated ? TRUE : FALSE;
-      }
-      CloseHandle(tok);
-    }
-    if (!elevated) {
-      // ROAD_DESK_ALLOW_NONADMIN=1: smoke / crash repro without UAC (Mirror scrub disabled).
-      if (!env_truthy("ROAD_DESK_ALLOW_NONADMIN")) {
-        road_desk::agent::log_line(
-            "FATAL: not elevated — refusing start. host-agent requires Administrator "
-            "(Mirror Attach.ToDesktop scrub; non-admin + Device Manager freezes input). "
-            "Re-run elevated, or install/run as an admin/LocalSystem service.");
-        return 1;
-      }
-      road_desk::agent::log_line(
-          "WARN: ROAD_DESK_ALLOW_NONADMIN=1 — starting without Administrator");
-    } else {
-      road_desk::agent::log_line("elevated (Administrator)");
-    }
-  }
-
-  {
-    // Session context matters for Desktop Duplication: a service/session-0 agent
-    // duplicates that session's (black) desktop even when the console shows a UI.
-    DWORD session_id = 0;
-    ProcessIdToSessionId(GetCurrentProcessId(), &session_id);
-    const DWORD console_sid = WTSGetActiveConsoleSessionId();
-    char line[160];
-    std::snprintf(line, sizeof(line), "session pid=%lu active_console=%lu (%s)",
-                  static_cast<unsigned long>(session_id),
-                  static_cast<unsigned long>(console_sid),
-                  session_id == console_sid ? "console" : "NOT-console");
-    road_desk::agent::log_line(line);
-  }
-
-  bool no_gateway = false;
+  // Service always skips the gateway config prompt dialog (non-interactive session).
+  bool no_gateway = as_service;
   std::vector<char*> positional;
   for (int i = 1; i < argc; ++i) {
     if (argv[i] && std::strcmp(argv[i], "--no-gateway") == 0) {
@@ -188,40 +150,33 @@ int main(int argc, char** argv) {
     cfg.password = positional[1];
   }
   {
-    // If ROAD_DESK_PSK is set (even empty), it overrides argv — empty => fail-closed.
-    char* env = nullptr;
-    size_t len = 0;
+    char* env = nullptr; size_t len = 0;
     if (_dupenv_s(&env, &len, "ROAD_DESK_PSK") == 0 && env) {
       cfg.password = env;
     }
     free(env);
   }
+  if (cfg.password.empty()) cfg.password = "road-desk";
 
-  // Fail-closed: empty PSK is rejected (authenticate_psk).
   if (!road_desk::session::authenticate_psk(cfg.password, cfg.password)) {
     road_desk::agent::log_line("PSK required — set ROAD_DESK_PSK or pass [password]; refusing listen");
     return 1;
   }
 
-  // Mux media plane has no plaintext path (TLS-only).
   cfg.require_tls = true;
-  if (env_truthy("ROAD_DESK_ALLOW_PLAINTEXT")) {
-    road_desk::agent::log_line(
-        "WARN: ROAD_DESK_ALLOW_PLAINTEXT ignored — mux requires TLS");
-  }
-  // Viewer counter (not exclusive). Exclusive control is mux_host can_control (A5a).
   cfg.session_mutex = &g_session_mutex;
 
   road_desk::agent::GatewayConfig gcfg;
   bool gateway_ready = false;
+  if (!as_service) {
+    road_desk::agent::log_line("elevated (Administrator)");
+  }
   if (!no_gateway) {
-    if (!road_desk::agent::load_gateway_config(&gcfg)) {
+    if (!road_desk::agent::load_gateway_config(&gcfg) && !as_service) {
       road_desk::agent::log_line("gateway: no agent.json — prompting for config");
-      if (!road_desk::agent::prompt_gateway_config(&gcfg)) {
-        road_desk::agent::log_line(
-            "gateway: config cancelled — media stays up; use --no-gateway to skip");
-      } else if (!road_desk::agent::save_gateway_config(gcfg)) {
-        road_desk::agent::log_line("gateway: save agent.json failed — continuing in-memory");
+      road_desk::agent::prompt_gateway_config(&gcfg);
+      if (!gcfg.gateway_url.empty()) {
+        road_desk::agent::save_gateway_config(gcfg);
       }
     }
     if (!gcfg.gateway_url.empty() && !gcfg.agent_psk.empty() && !gcfg.agent_id.empty()) {
@@ -232,13 +187,13 @@ int main(int argc, char** argv) {
       road_desk::agent::log_line("audit: host upsert enabled");
     }
   } else {
-    road_desk::agent::log_line("gateway: skipped (--no-gateway)");
+    road_desk::agent::log_line("gateway: skipped (--no-gateway or service mode)");
   }
 
   {
     char line[256];
-    std::snprintf(line, sizeof(line), "config port=%d tls=%d argc=%d", cfg.listen_port,
-                  cfg.require_tls ? 1 : 0, argc);
+    std::snprintf(line, sizeof(line), "config port=%d tls=%d as_service=%d",
+                  cfg.listen_port, cfg.require_tls ? 1 : 0, as_service ? 1 : 0);
     road_desk::agent::log_line(line);
   }
 
@@ -247,8 +202,7 @@ int main(int argc, char** argv) {
 
   if (!media.listen(cfg)) {
     road_desk::agent::log_line(
-        "FATAL: media plane listen failed — usually port already in use "
-        "(another host-agent / VNC on same port). See host-agent.log.");
+        "FATAL: media plane listen failed — usually port already in use");
     g_media = nullptr;
     return 1;
   }
@@ -269,31 +223,79 @@ int main(int argc, char** argv) {
   road_desk::agent::GatewayClient gateway;
   if (gateway_ready) {
     gateway.start(gcfg, media.bound_port(), ROAD_DESK_VERSION_STRING);
-    road_desk::agent::log_line("gateway: client started (register/heartbeat; failures retry)");
+    road_desk::agent::log_line("gateway: client started");
   }
 
-  // Debug HTTP on media_port+1 for pulling session MP4 + logs (lab / Cursor skill).
-  // Disable with ROAD_DESK_DEBUG_HTTP=0. Auth uses the media PSK (ROAD_DESK_PSK).
   road_desk::agent::DebugHttpServer debug_http;
-  if (debug_http_enabled()) {
+  if (debug_http_enabled_impl()) {
     const int debug_port = media.bound_port() + 1;
     if (!debug_http.start(debug_port, cfg.password)) {
-      char line[160];
-      std::snprintf(line, sizeof(line),
-                    "debug-http: failed to bind %d (recordings still written under <exe>/debug)",
-                    debug_port);
-      road_desk::agent::log_line(line);
+      char buf[160];
+      std::snprintf(buf, sizeof(buf), "debug-http: failed to bind %d", debug_port);
+      road_desk::agent::log_line(buf);
     }
-  } else {
-    road_desk::agent::log_line("debug-http: skipped (ROAD_DESK_DEBUG_HTTP=0)");
   }
 
-  media.serve();
+  media.serve_with_stop_event(stop_ev);
+
   road_desk::agent::process_audit_shutdown();
   debug_http.stop();
   gateway.stop();
   g_media = nullptr;
-  road_desk::agent::log_line("host-agent stopped");
+  road_desk::agent::log_line(as_service ? "host-agent service stopped" : "host-agent stopped");
   road_desk::media::media_log_close();
   return 0;
+}
+
+// ── main (foreground only) ───────────────────────────────────────
+
+int main(int argc, char** argv) {
+  // S1: Service CLI dispatch happens before DPI/exception/log init.
+  if (road_desk::agent::is_service_cli_arg(argv[1])) {
+    return road_desk::agent::try_run_service_cli(argc, argv) ? 0 : 1;
+  }
+
+  SetProcessDPIAware();
+  SetUnhandledExceptionFilter(on_unhandled_exception);
+  std::signal(SIGINT, on_signal);
+  std::signal(SIGTERM, on_signal);
+
+  if (!road_desk::agent::init_log()) {
+    return 1;
+  }
+  {
+    char exe[MAX_PATH] = {};
+    GetModuleFileNameA(nullptr, exe, MAX_PATH);
+    char line[640];
+    std::snprintf(line, sizeof(line),
+                  "host-agent starting (mux) version=%s built=%s %s path=%s",
+                  ROAD_DESK_VERSION_STRING, ROAD_DESK_BUILD_DATE, ROAD_DESK_BUILD_TIME, exe);
+    road_desk::agent::log_line(line);
+  }
+
+  // Check elevation for foreground mode.
+  {
+    BOOL elevated = FALSE;
+    HANDLE tok = nullptr;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &tok)) {
+      TOKEN_ELEVATION elev{};
+      DWORD got = 0;
+      if (GetTokenInformation(tok, TokenElevation, &elev, sizeof(elev), &got)) {
+        elevated = elev.TokenIsElevated ? TRUE : FALSE;
+      }
+      CloseHandle(tok);
+    }
+    if (!elevated) {
+      if (!env_truthy("ROAD_DESK_ALLOW_NONADMIN")) {
+        road_desk::agent::log_line(
+            "FATAL: not elevated — refusing start. host-agent requires Administrator.");
+        return 1;
+      }
+      road_desk::agent::log_line("WARN: ROAD_DESK_ALLOW_NONADMIN=1 — starting without Administrator");
+    } else {
+      road_desk::agent::log_line("elevated (Administrator)");
+    }
+  }
+
+  return road_desk::agent::host_agent_serve(argc, argv, /*as_service=*/false);
 }

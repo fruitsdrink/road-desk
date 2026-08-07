@@ -1110,7 +1110,8 @@ bool fanout_host_clipboard(std::vector<ClientConn>* clients, uint32_t* shared_xf
 void serve_shared(SOCKET listen_sock, const std::string& psk,
                   road_desk::replace::CaptureMode capture_mode,
                   road_desk::replace::CaptureStrategy capture_strategy,
-                  const std::atomic<bool>* stop_requested, session::SessionMutex* mutex,
+                  const std::atomic<bool>* stop_requested, HANDLE svc_stop_event,
+                  session::SessionMutex* mutex,
                   tls::HostCredentials* creds, MediaPlaneConfig::AuditFn audit_fn,
                   void* audit_user) {
   using namespace road_desk::replace;
@@ -1192,7 +1193,8 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
     VideoWriteYieldCtx yield_ctx{};
     yield_ctx.shared = &shared;
     while (!shared.video_out_stop.load() &&
-           !(stop_requested && stop_requested->load())) {
+           !(stop_requested && stop_requested->load()) &&
+           !(svc_stop_event && WaitForSingleObject(svc_stop_event, 0) == WAIT_OBJECT_0)) {
       std::vector<uint8_t> msg;
       shared.vout_iters_total.fetch_add(1);
       {
@@ -1367,7 +1369,8 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
     constexpr DWORD kAttachScrubMs = 2000;
 
     while (!shared.encode_stop.load() &&
-           !(stop_requested && stop_requested->load())) {
+           !(stop_requested && stop_requested->load()) &&
+           !(svc_stop_event && WaitForSingleObject(svc_stop_event, 0) == WAIT_OBJECT_0)) {
       if (!shared.session_active.load()) {
         if (cap_begun) {
           if (cap) {
@@ -2050,7 +2053,8 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
     uint64_t last_e = 0;
     uint64_t last_v = 0;
     uint64_t last_m = 0;
-    while (!(stop_requested && stop_requested->load())) {
+    while (!(stop_requested && stop_requested->load()) &&
+           !(svc_stop_event && WaitForSingleObject(svc_stop_event, 0) == WAIT_OBJECT_0)) {
       Sleep(2000);
       const uint64_t e = shared.enc_iters_total.load();
       const uint64_t v = shared.vout_iters_total.load();
@@ -2076,7 +2080,8 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
   DWORD last_alive_ms = GetTickCount();
   bool logged_io_alive = false;
 
-  while (!(stop_requested && stop_requested->load()) && listen_sock != INVALID_SOCKET) {
+  while (!(stop_requested && stop_requested->load()) && listen_sock != INVALID_SOCKET &&
+         !(svc_stop_event && WaitForSingleObject(svc_stop_event, 0) == WAIT_OBJECT_0)) {
     shared.main_iters_total.fetch_add(1);
     const bool dragging = (g_ptr_buttons.load() & 1) != 0;
 
@@ -2448,14 +2453,18 @@ bool MediaPlane::listen(const MediaPlaneConfig& config) {
 }
 
 void MediaPlane::serve() {
+  serve_with_stop_event(nullptr);
+}
+
+void MediaPlane::serve_with_stop_event(HANDLE stop_event) {
   if (!impl_ || impl_->listen_sock == INVALID_SOCKET) {
     return;
   }
 
-  logf("serve: shared-control multi-viewer");
+  logf("serve: shared-control multi-viewer (stop_event=%p)", (void*)stop_event);
   serve_shared(impl_->listen_sock, impl_->password, impl_->capture_mode, impl_->capture_strategy,
-               &impl_->stop_requested, impl_->session_mutex, &impl_->tls_creds, impl_->audit_fn,
-               impl_->audit_user);
+               &impl_->stop_requested, stop_event, impl_->session_mutex, &impl_->tls_creds,
+               impl_->audit_fn, impl_->audit_user);
 
   road_desk::replace::release_modifiers();
   impl_->cleanup_listen();
