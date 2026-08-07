@@ -5,6 +5,7 @@
 #include "media_plane.h"
 
 #include "agent/session_monitor.h"
+#include "agent/injection_pipe.h"
 #include "auth.h"
 #include "capture_resolve.h"
 #include "cursor_capture.h"
@@ -607,11 +608,25 @@ void flush_pending_input() {
   }
   std::vector<PendingInput> q;
   q.swap(g_pending_input);
+
+  // S4: when running as service with Session Helper, route through pipe.
+  // When helper is not connected (logon/locked desktop), inject directly.
+  bool use_pipe = road_desk::agent::injection_pipe_helper_connected();
+
   for (const PendingInput& p : q) {
     if (p.kind == kInputPointer) {
-      inject_pointer(p.buttons, p.x, p.y);
+      if (use_pipe) {
+        road_desk::agent::injection_pipe_enqueue_pointer(
+            static_cast<uint8_t>(p.buttons), p.x, p.y);
+      } else {
+        inject_pointer(p.buttons, p.x, p.y);
+      }
     } else if (p.kind == kInputKey) {
-      inject_vk(p.vk, p.down, p.extended);
+      if (use_pipe) {
+        road_desk::agent::injection_pipe_enqueue_key(p.vk, p.down, p.extended);
+      } else {
+        inject_vk(p.vk, p.down, p.extended);
+      }
     }
   }
 }
