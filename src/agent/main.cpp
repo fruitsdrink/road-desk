@@ -264,7 +264,8 @@ int road_desk::agent::host_agent_serve(int argc, char** argv, bool as_service) {
 
 int main(int argc, char** argv) {
   // S1: Service CLI dispatch happens before DPI/exception/log init.
-  if (road_desk::agent::is_service_cli_arg(argv[1])) {
+  // Guard against nullptr when argv[1] is absent (double-click launch).
+  if (argc > 1 && road_desk::agent::is_service_cli_arg(argv[1])) {
     return road_desk::agent::try_run_service_cli(argc, argv) ? 0 : 1;
   }
 
