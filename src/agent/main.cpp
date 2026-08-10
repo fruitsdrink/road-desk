@@ -142,8 +142,11 @@ int road_desk::agent::host_agent_serve(int argc, char** argv, bool as_service) {
     road_desk::agent::log_line("running as Windows service (LocalSystem)");
   }
 
-  // Service always skips the gateway config prompt dialog (non-interactive session).
-  bool no_gateway = as_service;
+  // Service mode must still register with the gateway when agent.json exists, or the
+  // Viewer can never discover the host (it would show offline / missing). Only the
+  // interactive config *prompt* is skipped in a non-interactive service session.
+  // --no-gateway remains an explicit opt-out.
+  bool no_gateway = false;
   std::vector<char*> positional;
   for (int i = 1; i < argc; ++i) {
     if (argv[i] && std::strcmp(argv[i], "--no-gateway") == 0) {

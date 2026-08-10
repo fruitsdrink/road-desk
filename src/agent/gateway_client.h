@@ -23,6 +23,8 @@ class GatewayClient {
 
  private:
   void run();
+  void gateway_thread_main();
+  void gateway_run_loop();
   bool post_json(const char* path, const std::string& body);
   std::vector<std::string> list_ipv4s() const;
   std::string preferred_ipv4() const;

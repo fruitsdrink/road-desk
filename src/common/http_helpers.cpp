@@ -67,14 +67,22 @@ bool parse_url(const std::string& url, std::wstring* host, unsigned short* port,
   if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &uc)) {
     return false;
   }
-  *host = host_buf;
-  *port = uc.nPort;
-  *https = (uc.nScheme == INTERNET_SCHEME_HTTPS);
-  *base_path = path_buf;
-  while (!base_path->empty() && base_path->back() == L'/') {
-    base_path->pop_back();
+  if (host) {
+    *host = host_buf;
   }
-  return !host->empty();
+  if (port) {
+    *port = uc.nPort;
+  }
+  if (https) {
+    *https = (uc.nScheme == INTERNET_SCHEME_HTTPS);
+  }
+  if (base_path) {
+    *base_path = path_buf;
+    while (!base_path->empty() && base_path->back() == L'/') {
+      base_path->pop_back();
+    }
+  }
+  return host && !host->empty();
 }
 
 bool http_post_json(const std::string& base_url, const std::string& path,

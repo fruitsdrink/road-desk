@@ -49,6 +49,28 @@ std::string wide_to_utf8(const std::wstring& w) {
   return s;
 }
 
+// SEH filter for the gateway thread. Returns EXCEPTION_EXECUTE_HANDLER after
+// logging the faulting code + address + module, so the __except handler body runs.
+int log_gateway_seh(EXCEPTION_POINTERS* info) {
+  const DWORD code = info && info->ExceptionRecord ? info->ExceptionRecord->ExceptionCode : 0;
+  const void* addr = info && info->ExceptionRecord ? info->ExceptionRecord->ExceptionAddress
+                                                   : nullptr;
+  char mod_name[MAX_PATH] = "unknown";
+  HMODULE mod = nullptr;
+  if (addr &&
+      GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                             GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                         reinterpret_cast<LPCSTR>(addr), &mod) &&
+      mod) {
+    GetModuleFileNameA(mod, mod_name, MAX_PATH);
+  }
+  char line[320];
+  std::snprintf(line, sizeof(line), "gateway: thread SEH exception code=0x%08lx addr=%p module=%s",
+                static_cast<unsigned long>(code), addr, mod_name);
+  log_line(line);
+  return EXCEPTION_EXECUTE_HANDLER;
+}
+
 }  // namespace
 
 GatewayClient::~GatewayClient() {
@@ -61,7 +83,7 @@ void GatewayClient::start(const GatewayConfig& cfg, int media_port, const std::s
   media_port_ = media_port;
   version_ = version;
   stop_ = false;
-  thr_ = std::thread([this] { run(); });
+  thr_ = std::thread([this] { gateway_thread_main(); });
 }
 
 void GatewayClient::stop() {
@@ -187,9 +209,30 @@ bool GatewayClient::post_json(const char* path, const std::string& body) {
   return road_desk::common::http_post_json(cfg_.gateway_url, path, cfg_.agent_psk, body, 0, &err);
 }
 
+void GatewayClient::gateway_thread_main() {
+  // SEH guard: an access violation in this background thread would otherwise
+  // terminate the whole process without any log (SetUnhandledExceptionFilter
+  // only covers the main thread). Log the faulting address, then end the thread.
+  __try {
+    run();
+  } __except (log_gateway_seh(GetExceptionInformation())) {
+    // handler already logged; thread ends here
+  }
+}
+
 void GatewayClient::run() {
   // Do not WSAStartup/WSACleanup here — media plane owns Winsock lifetime.
   // A mismatched WSACleanup from this thread tears down sockets under serve().
+  try {
+    gateway_run_loop();
+  } catch (const std::exception& ex) {
+    log_line(std::string("gateway: thread FATAL exception: ") + ex.what());
+  } catch (...) {
+    log_line("gateway: thread FATAL unknown exception");
+  }
+}
+
+void GatewayClient::gateway_run_loop() {
   bool registered = false;
   while (!stop_) {
     const std::string body = build_body();
