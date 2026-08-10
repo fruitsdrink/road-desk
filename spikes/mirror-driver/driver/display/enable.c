@@ -1105,7 +1105,8 @@ DrvEscape(SURFOBJ *pso,
     if (iEsc == QUERYESCSUPPORT) {
       if (cjIn >= sizeof(ULONG) && pvIn) {
         ULONG q = *(ULONG*)pvIn;
-        if (q == RDM_ESC_GET_DIRTY || q == RDM_ESC_GET_INFO || q == WNDOBJ_SETUP) {
+        if (q == RDM_ESC_GET_DIRTY || q == RDM_ESC_GET_INFO || q == RDM_ESC_GET_FRAME ||
+            q == WNDOBJ_SETUP) {
           return 1;
         }
       }
@@ -1118,6 +1119,22 @@ DrvEscape(SURFOBJ *pso,
     }
     if (iEsc == RDM_ESC_GET_INFO) {
       ulRet = RdmDirtyInfo(pvOut, cjOut);
+      return ulRet;
+    }
+    if (iEsc == RDM_ESC_GET_FRAME) {
+      SURFOBJ* locked;
+      if (!pso) {
+        return 0;
+      }
+      // EngLockSurface gives us the engine-safe pixel pointer (SURFOBJ.pvBits).
+      // Never read the EngAllocMem block by offset — that races engine draws and
+      // faults on the lock/login desktop (BSOD). pvBits is engine-validated.
+      locked = EngLockSurface((HSURF)pso->dhsurf);
+      if (!locked) {
+        return 0;
+      }
+      ulRet = RdmFrameFetch(locked->pvBits, (ULONG)locked->lDelta, pvOut, cjOut);
+      EngUnlockSurface(locked);
       return ulRet;
     }
 

@@ -55,6 +55,8 @@ class SessionCapture {
   void end_mirror();
   bool capture_mirror(std::vector<uint8_t>* bgra, int* width, int* height,
                       std::vector<CaptureDirty>* dirties, bool force_full_pixels);
+  // Copy rect pixels from the driver framebuffer (frame_buf_) into dib_bits_.
+  bool blit_rect_from_frame(int x, int y, int rw, int rh);
   bool ensure_dib(int w, int h);
   void release_dib();
   bool blit_rect(int x, int y, int rw, int rh);
@@ -80,6 +82,7 @@ class SessionCapture {
   DesktopCapture gdi_;
   DxgiCapture dxgi_;
   std::vector<uint8_t> dirty_buf_;
+  std::vector<uint8_t> frame_buf_;  // scratch for rdm_escape_get_frame
 };
 
 }  // namespace road_desk::replace

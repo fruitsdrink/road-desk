@@ -9,6 +9,7 @@ static ULONG g_Cy = 0;
 static ULONG g_Pitch = 0;
 static ULONG g_BitCount = 32;
 static BOOL g_Full = FALSE;
+static ULONG g_FrameBits = 32;
 
 VOID RdmDirtyInit(ULONG cx, ULONG cy, ULONG pitch, ULONG bitCount) {
   if (g_Lock == NULL) {
@@ -174,4 +175,35 @@ ULONG RdmDirtyInfo(PVOID pvOut, ULONG cjOut) {
   inf->Pitch = g_Pitch ? g_Pitch : (g_Cx * ((g_BitCount + 7) / 8));
   inf->Format = 0;
   return sizeof(RDM_INFO_ESC);
+}
+
+ULONG RdmFrameFetch(PVOID src_bits, ULONG pitch, PVOID pvOut, ULONG cjOut) {
+  RDM_FRAME_HDR* hdr;
+  PBYTE src, dst;
+  ULONG bytes_per_pix, row_bytes, need, row;
+  ULONG eff_pitch;
+
+  if (!pvOut || !src_bits || g_Cx == 0 || g_Cy == 0) {
+    return 0;
+  }
+  bytes_per_pix = (g_FrameBits + 7) / 8;
+  eff_pitch = pitch ? pitch : (g_Cx * bytes_per_pix);
+  need = sizeof(RDM_FRAME_HDR) + eff_pitch * g_Cy;
+  if (cjOut < need) {
+    return 0;
+  }
+
+  hdr = (RDM_FRAME_HDR*)pvOut;
+  hdr->Width = g_Cx;
+  hdr->Height = g_Cy;
+  hdr->Pitch = eff_pitch;
+  hdr->Format = 0;
+
+  src = (PBYTE)src_bits;
+  dst = (PBYTE)(hdr + 1);
+  row_bytes = g_Cx * bytes_per_pix;
+  for (row = 0; row < g_Cy; ++row) {
+    RtlCopyMemory(dst + (ULONG)row * eff_pitch, src + (ULONG)row * eff_pitch, row_bytes);
+  }
+  return need;
 }

@@ -71,24 +71,31 @@ bool SessionCapture::begin() {
   using_dxgi_ = false;
 
   if (mode_ == CaptureMode::Gdi) {
+    road_desk::media::media_logf("media-capture", "capture begin: mode=Gdi");
     return true;
   }
 
   if (mode_ == CaptureMode::Dxgi) {
     if (dxgi_.begin()) {
       using_dxgi_ = true;
+      road_desk::media::media_logf("media-capture", "capture begin: dxgi");
       return true;
     }
     // DXGI unavailable — keep session on GDI.
+    road_desk::media::media_logf("media-capture", "capture begin: dxgi failed, gdi");
     return true;
   }
 
   // Auto / Mirror: XPDM Mirror (legacy). Auto on modern is resolved to Dxgi before begin.
+  road_desk::media::media_logf("media-capture", "capture begin: trying mirror (mode=%d)",
+                               static_cast<int>(mode_));
   if (begin_mirror()) {
     using_mirror_ = true;
+    road_desk::media::media_logf("media-capture", "capture begin: mirror ok");
     return true;
   }
   using_mirror_ = false;
+  road_desk::media::media_logf("media-capture", "capture begin: mirror failed, gdi fallback");
   return true;
 }
 
@@ -104,16 +111,22 @@ void SessionCapture::end() {
 
 bool SessionCapture::begin_mirror() {
   if (!rdm_attach_mirror(mirror_dev_, sizeof(mirror_dev_))) {
+    road_desk::media::media_logf("media-capture", "mirror begin: attach failed err=%ld",
+                                 rdm_last_attach_error());
     return false;
   }
   mirror_hdc_ = rdm_create_mirror_dc(mirror_dev_);
   if (!mirror_hdc_) {
+    road_desk::media::media_logf("media-capture", "mirror begin: CreateDC(%s) failed err=%lu",
+                                 mirror_dev_, static_cast<unsigned long>(GetLastError()));
     rdm_detach_mirror(mirror_dev_);
     mirror_dev_[0] = '\0';
     return false;
   }
   screen_dc_ = GetDC(nullptr);
   if (!screen_dc_) {
+    road_desk::media::media_logf("media-capture", "mirror begin: GetDC failed err=%lu",
+                                 static_cast<unsigned long>(GetLastError()));
     DeleteDC(static_cast<HDC>(mirror_hdc_));
     mirror_hdc_ = nullptr;
     rdm_detach_mirror(mirror_dev_);
@@ -272,6 +285,34 @@ bool SessionCapture::capture_gdi_region(std::vector<uint8_t>* bgra_full, int x, 
   return gdi_.capture_region(bgra_full, x, y, rw, rh);
 }
 
+bool SessionCapture::blit_rect_from_frame(int x, int y, int rw, int rh) {
+  // Copy pixels from the driver framebuffer (frame_buf_) into the DIB at (x,y).
+  // frame_buf_ layout: RdmFrameHeader followed by top-down rows of Pitch bytes.
+  if (!dib_bits_ || frame_buf_.size() < sizeof(RdmFrameHeader)) {
+    return false;
+  }
+  const auto* hdr = reinterpret_cast<const RdmFrameHeader*>(frame_buf_.data());
+  const uint32_t fw = hdr->width;
+  const uint32_t fh = hdr->height;
+  const uint32_t fpitch = hdr->pitch;
+  if (fw == 0 || fh == 0 || fpitch == 0) {
+    return false;
+  }
+  if (x < 0 || y < 0 || rw <= 0 || rh <= 0 || x + rw > static_cast<int>(fw) ||
+      y + rh > static_cast<int>(fh)) {
+    return false;
+  }
+  const uint8_t* src = frame_buf_.data() + sizeof(RdmFrameHeader);
+  // dest is top-down DIB, width_*4 per row (32bpp).
+  uint8_t* dst = static_cast<uint8_t*>(dib_bits_);
+  for (int row = 0; row < rh; ++row) {
+    std::memcpy(dst + (static_cast<size_t>(y + row) * width_ + x) * 4u,
+                src + (static_cast<size_t>(y + row) * fpitch + x) * 4u,
+                static_cast<size_t>(rw) * 4u);
+  }
+  return true;
+}
+
 bool SessionCapture::capture_mirror(std::vector<uint8_t>* bgra, int* width, int* height,
                                     std::vector<CaptureDirty>* dirties, bool force_full_pixels) {
   const int sw = GetSystemMetrics(SM_CXSCREEN);
@@ -287,6 +328,15 @@ bool SessionCapture::capture_mirror(std::vector<uint8_t>* bgra, int* width, int*
       have_frame_ = false;
     }
   }
+
+  // Read the full framebuffer from the mirror driver. Works even when GetDC
+  // cannot BitBlt the screen (lock/login desktop). Fall back to screen DC blit.
+  const uint32_t frame_cap =
+      static_cast<uint32_t>(sizeof(RdmFrameHeader) + sw * sh * 4u + 64u);
+  frame_buf_.resize(frame_cap);
+  const uint32_t got = rdm_escape_get_frame(static_cast<HDC>(mirror_hdc_), frame_buf_.data(),
+                                            frame_cap);
+  const bool have_frame_buf = got >= sizeof(RdmFrameHeader);
 
   const uint32_t n = rdm_escape_get_dirty(static_cast<HDC>(mirror_hdc_), dirty_buf_.data(),
                                           static_cast<uint32_t>(dirty_buf_.size()));
@@ -316,17 +366,22 @@ bool SessionCapture::capture_mirror(std::vector<uint8_t>* bgra, int* width, int*
     need_full = true;
   }
 
+  auto blit = [&](int x, int y, int rw, int rh) -> bool {
+    if (have_frame_buf) {
+      return blit_rect_from_frame(x, y, rw, rh);
+    }
+    return blit_rect(x, y, rw, rh);
+  };
+
   if (force_full_pixels) {
-    // Z-order / activate may change primary pixels without Mirror dirty hooks.
-    // Full blit + caller CPU-diff closes those holes (e.g. click title bar to raise).
     dirties->clear();
-    if (!blit_rect(0, 0, width_, height_)) {
+    if (!blit(0, 0, width_, height_)) {
       return false;
     }
   } else if (need_full) {
     dirties->clear();
     dirties->push_back(CaptureDirty{0, 0, width_, height_});
-    if (!blit_rect(0, 0, width_, height_)) {
+    if (!blit(0, 0, width_, height_)) {
       return false;
     }
   } else if (dirties->empty()) {
@@ -340,7 +395,7 @@ bool SessionCapture::capture_mirror(std::vector<uint8_t>* bgra, int* width, int*
     return true;
   } else {
     for (const CaptureDirty& r : *dirties) {
-      if (!blit_rect(r.x, r.y, r.w, r.h)) {
+      if (!blit(r.x, r.y, r.w, r.h)) {
         return false;
       }
     }

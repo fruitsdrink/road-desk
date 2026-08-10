@@ -33,6 +33,7 @@ extern "C" {
 // Must match driver/display/dirty.h
 #define RDM_ESC_GET_DIRTY 0x52444D01u
 #define RDM_ESC_GET_INFO 0x52444D02u
+#define RDM_ESC_GET_FRAME 0x52444D03u
 
 enum RdmStatusFlags {
   kRdmStatusLoaded = 1u << 0,
@@ -68,6 +69,13 @@ typedef struct RdmDirtyHeader {
   uint32_t max_rects;
   uint32_t reserved;
 } RdmDirtyHeader;
+
+typedef struct RdmFrameHeader {
+  uint32_t width;
+  uint32_t height;
+  uint32_t pitch;
+  uint32_t format; /* 0 = 32bpp BGRA-ish, top-down */
+} RdmFrameHeader;
 #pragma pack(pop)
 
 #define RDM_DIRTY_MAX_RECTS 256

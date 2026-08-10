@@ -12,6 +12,8 @@
 bool rdm_find_mirror_device(char* out_name, size_t out_len);
 bool rdm_attach_mirror(char* device_name, size_t device_name_len);
 bool rdm_detach_mirror(const char* device_name);
+// Last rdm_attach_mirror failure code (DISP_CHANGE_*), or 0 if ok/not attempted.
+long rdm_last_attach_error();
 // Clear sticky Attach.ToDesktop=1 + CDS detach (safe if already detached).
 bool rdm_force_detach();
 // Zero Attach.ToDesktop for peer mirrors (VNC/Radmin…). Skips rdmmini / Road Desk.
@@ -27,3 +29,7 @@ HDC rdm_create_mirror_dc(const char* device_name);
 bool rdm_escape_get_info(HDC hdc, RdmInfo* out);
 // out_buf must be at least RDM_DIRTY_BUF_BYTES; returns bytes written (0 fail).
 uint32_t rdm_escape_get_dirty(HDC hdc, void* out_buf, uint32_t out_bytes);
+// Read the full framebuffer from the mirror driver. out_buf receives an
+// RdmFrameHeader followed by width*height pixels (pitch in header). Returns
+// bytes written including header, 0 on failure.
+uint32_t rdm_escape_get_frame(HDC hdc, void* out_buf, uint32_t out_bytes);

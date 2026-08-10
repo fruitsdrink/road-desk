@@ -1169,8 +1169,6 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
   shared.clients.reserve(kMaxClients);
   constexpr size_t kMaxBatches = 2;
   const bool modern_lossy = (capture_strategy == CaptureStrategy::Modern);
-  // S3: if on logon/locked desktop, DXGI cannot work → treat as GDI.
-  const bool desktop_needs_gdi = road_desk::agent::session_capture_needs_gdi_fallback();
   uint32_t shared_xfer_id = 1;
 
   struct VideoWriteYieldCtx {
@@ -1285,6 +1283,12 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
         if (!ok) {
           close_client(&c, mutex, audit_fn, audit_user);
           continue;
+        }
+        // First send per client: confirm video bytes actually reach the socket.
+        static thread_local bool logged_send = false;
+        if (!logged_send) {
+          logged_send = true;
+          logf("video-out: first send to authed client msg=%zu bytes", msg.size());
         }
         any_sent = true;
       }
@@ -1418,9 +1422,12 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
       }
 
       if (!cap) {
-        // S3: override capture mode to GDI when on logon/locked desktop.
-        const auto eff_mode = desktop_needs_gdi ? CaptureMode::Gdi : capture_mode;
-        cap = std::make_unique<SessionCapture>(eff_mode);
+        // S3: prefer the platform Auto path (Mirror on legacy first) even on
+        // logon/locked desktops — the XPDM Mirror driver captures the lock/login
+        // screen kernel-side (cross-session by nature). Only fall back to GDI when
+        // Mirror is unavailable (SessionCapture::begin does that internally).
+        logf("capture construct mode=%d", static_cast<int>(capture_mode));
+        cap = std::make_unique<SessionCapture>(capture_mode);
       }
 
       if (!cap_begun) {
@@ -1604,6 +1611,10 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
         if (!cap->capture(&frame, &w, &h, &mirror_dirties, &mirror_moves, force_validate)) {
           Sleep(5);
           continue;
+        }
+        if (desk_w != w || desk_h != h || !have_prev) {
+          // One-time (or size-change) log: what the capture backend actually produced.
+          logf("capture size w=%d h=%d backend=%s", w, h, cap->backend_name());
         }
         desk_w = w;
         desk_h = h;

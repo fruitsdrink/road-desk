@@ -5,7 +5,14 @@
 #include <cstring>
 #include <cstdio>
 
+// Diagnostic sink: printf (host-agent captures stderr; mirror_probe prints to
+// console). media_log.h is not visible to the standalone mirror_probe build.
+#define RDM_DIAG(fmt, ...) std::printf("[mirror_client] " fmt "\n", ##__VA_ARGS__)
+
 namespace {
+// Last attach failure code (DISP_CHANGE_*) — readable by host via getter.
+long g_last_attach_error = 0;
+
 
 const char* kDriverString = ROAD_DESK_MIRROR_DISPLAY_NAME;
 const char* kMiniportService = "rdmmini";
@@ -291,6 +298,10 @@ bool rdm_find_mirror_device(char* out_name, size_t out_len) {
   return find_mirror_device_ex(out_name, out_len, nullptr, 0, nullptr);
 }
 
+long rdm_last_attach_error() {
+  return g_last_attach_error;
+}
+
 void rdm_scrub_foreign_attach_registry() {
   scrub_foreign_attach_registry();
 }
@@ -322,14 +333,16 @@ bool rdm_attach_mirror(char* device_name, size_t device_name_len) {
   DWORD cx = 0;
   DWORD cy = 0;
   if (!get_primary_size(&cx, &cy) || cx == 0 || cy == 0) {
-    std::printf("[mirror_client] FAIL get primary size\n");
+    RDM_DIAG("FAIL get primary size");
+    SetLastError(ERROR_PROC_NOT_FOUND);
     rdm_dump_display_devices();
     return false;
   }
   char name[128] = {};
   char key[512] = {};
   if (!find_mirror_device_ex(name, sizeof(name), key, sizeof(key), nullptr)) {
-    std::printf("[mirror_client] FAIL find \"%s\" - reboot after INF install?\n", kDriverString);
+    RDM_DIAG("FAIL find \"%s\" - reboot after INF install?", kDriverString);
+    SetLastError(ERROR_DEVICE_NOT_CONNECTED);
     rdm_dump_display_devices();
     return false;
   }
@@ -363,15 +376,16 @@ bool rdm_attach_mirror(char* device_name, size_t device_name_len) {
                                     nullptr);
   }
   if (code != DISP_CHANGE_SUCCESSFUL) {
-    std::printf("[mirror_client] CDS attach failed code=%ld device=%s %ux%u\n", code, name, cx,
-                cy);
+    RDM_DIAG("CDS attach failed code=%ld device=%s %ux%u", code, name, cx, cy);
+    g_last_attach_error = static_cast<long>(code);
     clear_attach_registry(key);
     scrub_foreign_attach_registry();
     return false;
   }
   code = ChangeDisplaySettingsExA(nullptr, nullptr, nullptr, 0, nullptr);
   if (code != DISP_CHANGE_SUCCESSFUL && code != DISP_CHANGE_RESTART) {
-    std::printf("[mirror_client] CDS apply failed code=%ld\n", code);
+    RDM_DIAG("CDS apply failed code=%ld", code);
+    g_last_attach_error = static_cast<long>(code);
     clear_attach_registry(key);
     cds_detach_device(name);
     scrub_foreign_attach_registry();
@@ -429,6 +443,19 @@ uint32_t rdm_escape_get_dirty(HDC hdc, void* out_buf, uint32_t out_bytes) {
     return 0;
   }
   const int n = ExtEscape(hdc, static_cast<int>(RDM_ESC_GET_DIRTY), 0, nullptr,
+                          static_cast<int>(out_bytes),
+                          reinterpret_cast<LPSTR>(out_buf));
+  if (n <= 0) {
+    return 0;
+  }
+  return static_cast<uint32_t>(n);
+}
+
+uint32_t rdm_escape_get_frame(HDC hdc, void* out_buf, uint32_t out_bytes) {
+  if (!hdc || !out_buf || out_bytes < sizeof(RdmFrameHeader)) {
+    return 0;
+  }
+  const int n = ExtEscape(hdc, static_cast<int>(RDM_ESC_GET_FRAME), 0, nullptr,
                           static_cast<int>(out_bytes),
                           reinterpret_cast<LPSTR>(out_buf));
   if (n <= 0) {

@@ -5,7 +5,7 @@ Signature   = "$WINDOWS NT$"
 Provider    = %ManufacturerName%
 ClassGUID   = {4D36E968-E325-11CE-BFC1-08002BE10318}
 Class       = Display
-DriverVer   = 08/01/2026,10.0.1.0
+DriverVer   = 08/08/2026,10.0.5
 CatalogFile =
 
 [DestinationDirs]
