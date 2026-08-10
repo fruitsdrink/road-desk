@@ -1,5 +1,7 @@
 #include "capture.h"
 
+#include "media_log.h"
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -126,11 +128,16 @@ bool DesktopCapture::capture(std::vector<uint8_t>* bgra_top_down, int* width, in
   const int w = GetSystemMetrics(SM_CXSCREEN);
   const int h = GetSystemMetrics(SM_CYSCREEN);
   if (!ensure(w, h)) {
+    road_desk::media::media_logf("media-capture", "gdi capture ensure failed w=%d h=%d dc=%p mem=%p dib=%p",
+                                 w, h, static_cast<void*>(screen_dc_),
+                                 static_cast<void*>(mem_dc_), static_cast<void*>(dib_));
     return false;
   }
   // SRCCOPY only — keep OS cursor out of framebuffer (Viewer uses soft cursor).
   if (!BitBlt(static_cast<HDC>(mem_dc_), 0, 0, w, h, static_cast<HDC>(screen_dc_), 0, 0,
               SRCCOPY)) {
+    road_desk::media::media_logf("media-capture", "gdi capture BitBlt failed err=%lu w=%d h=%d",
+                                 static_cast<unsigned long>(GetLastError()), w, h);
     return false;
   }
   const size_t bytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 4u;

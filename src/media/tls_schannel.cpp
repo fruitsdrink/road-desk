@@ -10,6 +10,8 @@
 
 #include "tls_schannel.h"
 
+#include "media_log.h"
+
 #define SECURITY_WIN32
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <wincrypt.h>
@@ -274,6 +276,8 @@ TlsSession* complete_handshake_server(SOCKET sock, CredHandle* cred) {
       continue;
     }
     std::fprintf(stderr, "tls server handshake status=0x%08lx\n", static_cast<unsigned long>(st));
+    media_logf("media-tls", "server handshake failed status=0x%08lx peer_token=%zu bytes",
+               static_cast<unsigned long>(st), inbuf.size());
     tls_close(s);
     return nullptr;
   }
@@ -382,6 +386,8 @@ TlsSession* complete_handshake_client(SOCKET sock, CredHandle* cred, bool insecu
     if (st == SEC_I_CONTINUE_NEEDED) {
       continue;
     }
+    std::fprintf(stderr, "tls client handshake status=0x%08lx\n", static_cast<unsigned long>(st));
+    media_logf("media-tls", "client handshake failed status=0x%08lx", static_cast<unsigned long>(st));
     tls_close(s);
     return nullptr;
   }
