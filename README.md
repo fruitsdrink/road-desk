@@ -131,6 +131,43 @@ host-agent.exe [port] [password] [--no-gateway]
 - Mirror 采集需要 Administrator 权限
 - 首次运行弹窗配置网关；`--no-gateway` 跳过注册心跳
 
+### 安装为 Windows 服务
+
+被控端常驻以服务方式运行（Session 0，LocalSystem，自动启动），支持登录前远控。
+
+```powershell
+host-agent.exe --install      # 安装并自动启动服务
+host-agent.exe --uninstall    # 卸载服务
+```
+
+- 服务名：`RoadDeskAgentSrv`（显示名 "Road Desk Host Agent"）
+- 需要 Administrator 权限
+- 服务日志写在 exe 同目录的 `host-agent.log`
+
+### 服务管理命令
+
+服务名 `RoadDeskAgentSrv`。以下命令均需**管理员**终端。
+
+**CMD：**
+
+```cmd
+sc start RoadDeskAgentSrv     :: 启动
+sc stop RoadDeskAgentSrv      :: 停止
+sc stop RoadDeskAgentSrv & sc start RoadDeskAgentSrv   :: 重启
+sc query RoadDeskAgentSrv     :: 查状态
+```
+
+**PowerShell**（注意 `sc` 在 PS 里是 `Set-Content` 别名，必须用 cmdlet 或 `sc.exe`）：
+
+```powershell
+Start-Service -Name RoadDeskAgentSrv          # 启动
+Stop-Service -Name RoadDeskAgentSrv           # 停止
+Restart-Service -Name RoadDeskAgentSrv        # 重启
+Get-Service -Name RoadDeskAgentSrv            # 查状态
+```
+
+状态字段：`RUNNING` = 运行中，`STOPPED` = 已停止。升级覆盖 `host-agent.exe` 前先停止服务，否则文件被占用。
+
 ## Viewer 用法
 
 ```powershell
