@@ -117,6 +117,7 @@ road-desk/
 | [docs/audit-implementation-plan.md](docs/audit-implementation-plan.md) | 审计实施方案（A0–A5d 已落地） |
 | [docs/viewer-implementation-plan.md](docs/viewer-implementation-plan.md) | Viewer V1–V4 实施（已完成） |
 | [docs/host-os-capture-strategy.md](docs/host-os-capture-strategy.md) | Host 桌面采集 OS 分策 |
+| [docs/pre-login-lock-screen-exploration.md](docs/pre-login-lock-screen-exploration.md) | 锁屏/登录界面捕获探索结论（暂停投入） |
 | [docs/ui-design-system.md](docs/ui-design-system.md) | Win32 UI 颜色/字体/间距规范 |
 | [docs/adr/](docs/adr/) | 架构决策记录（媒体面选型、合规换芯等） |
 
