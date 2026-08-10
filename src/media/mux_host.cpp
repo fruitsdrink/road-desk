@@ -1234,7 +1234,12 @@ void serve_shared(SOCKET listen_sock, const std::string& psk,
       }
       if (msg.empty()) {
         ++vout_empty;
-        Sleep(0);  // yield time-slice, don't park — drag respawns immediately
+        // Backoff idle: Sleep(0) busy-spins a whole core when there is no
+        // viewer. Start at 1ms and grow so an idle host stays quiet while drag
+        // (which ships data every tick) still wakes immediately.
+        static constexpr int kIdleSleepMs[] = {1, 2, 4, 8};
+        const int lvl = vout_empty < 4 ? vout_empty : 3;
+        Sleep(kIdleSleepMs[lvl]);
         continue;
       }
 
