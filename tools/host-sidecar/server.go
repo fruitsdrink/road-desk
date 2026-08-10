@@ -28,6 +28,7 @@ func (s *server) listenAndServe(addr string) error {
 	mux.HandleFunc("/logs", s.handleLogs)
 	mux.HandleFunc("/deploy", s.handleDeploy)
 	mux.HandleFunc("/agent", s.handleDeploy) // alias from docs
+	mux.HandleFunc("/fs", s.handleFS)
 
 	return http.ListenAndServe(addr, s.withAuth(mux))
 }

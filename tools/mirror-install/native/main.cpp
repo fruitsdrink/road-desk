@@ -303,8 +303,16 @@ bool MirrorInstalled() {
   wchar_t windir[MAX_PATH] = {};
   GetWindowsDirectoryW(windir, MAX_PATH);
   const std::wstring root = windir;
-  return FileExists(Join(root, L"system32\\drivers\\rdmmirror.sys")) ||
-         FileExists(Join(root, L"system32\\drivers\\rdmmini.sys"));
+  if (FileExists(Join(root, L"system32\\drivers\\rdmmirror.sys")) ||
+      FileExists(Join(root, L"system32\\drivers\\rdmmini.sys"))) {
+    return true;
+  }
+  // Driver packages registered with pnputil may remain even if services/files
+  // were removed. Detect any Road Desk oem##.inf package so install cleans it.
+  const std::string enum_out = RunCapture(L"pnputil -e");
+  return enum_out.find("Road Desk") != std::string::npos ||
+         enum_out.find("rdm_xpdm") != std::string::npos ||
+         enum_out.find("RoadDesk") != std::string::npos;
 }
 
 bool EnableTestSigning() {
@@ -330,6 +338,49 @@ bool ImportCert() {
     return false;
   }
   return true;
+}
+
+// pnputil -e lists each installed driver package. Multiple installs leave several
+// oem##.inf copies of the same Road Desk package. Delete in a loop until none remain
+// (a package disappears from the enum after its delete, so re-enumerate each pass).
+void RemoveRoadDeskPackages() {
+  for (int pass = 0; pass < 10; ++pass) {
+    const std::string enum_out = RunCapture(L"pnputil -e");
+    bool any = false;
+    std::string oem;
+    std::string line;
+    for (size_t i = 0; i <= enum_out.size(); ++i) {
+      const char ch = (i < enum_out.size()) ? enum_out[i] : '\n';
+      if (ch == '\n' || ch == '\r') {
+        if (!line.empty()) {
+          // oem##.inf on the same or adjacent line.
+          const size_t p = line.find("oem");
+          if (p != std::string::npos) {
+            const size_t e = line.find(".inf", p);
+            if (e != std::string::npos && e > p) {
+              oem = line.substr(p, e + 4 - p);
+            }
+          }
+          const bool is_rd =
+              line.find("Road Desk") != std::string::npos || line.find("rdm_xpdm") != std::string::npos ||
+              line.find("roaddesk") != std::string::npos || line.find("RoadDesk") != std::string::npos;
+          if (!oem.empty() && is_rd) {
+            LogA(("  pnputil -f -d " + oem).c_str());
+            RunHidden(L"pnputil -f -d " + std::wstring(oem.begin(), oem.end()));
+            oem.clear();
+            any = true;
+          }
+          line.clear();
+        }
+      } else {
+        line.push_back(ch);
+      }
+    }
+    if (!any) {
+      break;
+    }
+    Sleep(200);
+  }
 }
 
 void UninstallFast() {
@@ -361,35 +412,8 @@ void UninstallFast() {
     RunHidden(std::wstring(L"sc.exe delete ") + svc);
   }
 
-  Log(L"[3/4] pnputil remove Road Desk packages (best effort)...");
-  const std::string enum_out = RunCapture(L"pnputil -e");
-  std::string oem;
-  std::string line;
-  for (size_t i = 0; i <= enum_out.size(); ++i) {
-    const char ch = (i < enum_out.size()) ? enum_out[i] : '\n';
-    if (ch == '\n' || ch == '\r') {
-      if (!line.empty()) {
-        // oem##.inf
-        const size_t p = line.find("oem");
-        if (p != std::string::npos) {
-          const size_t e = line.find(".inf", p);
-          if (e != std::string::npos && e > p) {
-            oem = line.substr(p, e + 4 - p);
-          }
-        }
-        if (!oem.empty() &&
-            (line.find("Road Desk") != std::string::npos || line.find("rdm_xpdm") != std::string::npos ||
-             line.find("roaddesk") != std::string::npos || line.find("RoadDesk") != std::string::npos)) {
-          LogA(("  pnputil -f -d " + oem).c_str());
-          RunHidden(L"pnputil -f -d " + std::wstring(oem.begin(), oem.end()));
-          oem.clear();
-        }
-        line.clear();
-      }
-    } else {
-      line.push_back(ch);
-    }
-  }
+  Log(L"[3/4] pnputil remove Road Desk packages (loop until none left)...");
+  RemoveRoadDeskPackages();
 
   Log(L"[4/4] remove driver files if not locked...");
   wchar_t windir[MAX_PATH] = {};
@@ -459,6 +483,38 @@ bool InstallGm1() {
 
 bool CreateRootDeviceAndUpdate(const std::wstring& hw_id, const std::wstring& inf_path) {
   GUID class_guid = kGuidDisplay;
+
+  // Remove any existing Road Desk mirror device nodes first. Repeated installs
+  // without removal leave multiple device instances; the device manager can then
+  // surface an old instance bound to a stale INF (old DriverVer) even though the
+  // binaries and INF in the driver store are new.
+  {
+    Log(L"Removing existing Road Desk mirror device node(s)...");
+    HDEVINFO devs = SetupDiGetClassDevsW(&class_guid, nullptr, nullptr, DIGCF_PRESENT);
+    if (devs == INVALID_HANDLE_VALUE) {
+      devs = SetupDiGetClassDevsW(nullptr, nullptr, nullptr, DIGCF_PRESENT | DIGCF_ALLCLASSES);
+    }
+    if (devs != INVALID_HANDLE_VALUE) {
+      for (DWORD idx = 0;; ++idx) {
+        SP_DEVINFO_DATA di{};
+        di.cbSize = sizeof(di);
+        if (!SetupDiEnumDeviceInfo(devs, idx, &di)) {
+          break;
+        }
+        wchar_t hwids[2048] = {};
+        DWORD need = 0;
+        if (SetupDiGetDeviceRegistryPropertyW(devs, &di, SPDRP_HARDWAREID, nullptr,
+                                              reinterpret_cast<BYTE*>(hwids), sizeof(hwids),
+                                              &need) &&
+            wcsstr(hwids, hw_id.c_str())) {
+          Log(L"  removing device %ls ...", di.DevInst);
+          SetupDiCallClassInstaller(DIF_REMOVE, devs, &di);
+        }
+      }
+      SetupDiDestroyDeviceInfoList(devs);
+    }
+  }
+
   HDEVINFO list = SetupDiCreateDeviceInfoList(&class_guid, nullptr);
   if (list == INVALID_HANDLE_VALUE) {
     Log(L"SetupDiCreateDeviceInfoList failed (%lu)", GetLastError());
@@ -524,6 +580,12 @@ bool InstallGm2() {
     return false;
   }
 
+  // Remove any pre-existing Road Desk driver package (oem##.inf) so the INF
+  // registered below is the ONLY one. Leftover old packages make the device
+  // manager report the old DriverVer even though the binaries were overwritten.
+  Log(L"Removing pre-existing Road Desk driver packages before pnputil add...");
+  RemoveRoadDeskPackages();
+
   Log(L"pnputil -i -a rdm_xpdm.inf ...");
   RunHidden(L"pnputil -i -a \"" + inf + L"\"");
 
@@ -538,7 +600,9 @@ void OfferReboot(const wchar_t* msg) {
     return;
   }
   if (AskYesNo(msg) == IDYES) {
-    RunHidden(L"shutdown.exe /r /t 15 /c \"Road Desk Mirror installer\"");
+    // /t 3 short delay, no /c (the /c comment pops a second "Close" confirmation
+    // dialog that can look like the reboot silently failed).
+    RunHidden(L"shutdown.exe /r /t 3");
   }
 }
 
@@ -590,11 +654,15 @@ int RunInstall() {
     return 1;
   }
 
+  // Always uninstall first — repeated installs without cleanup leave multiple Road
+  // Desk mirror drivers (services / oem##.inf copies) that break attach and capture.
   if (MirrorInstalled()) {
     Log(L"Existing install detected — uninstalling first...");
-    UninstallFast();
-    Sleep(500);
+  } else {
+    Log(L"No install detected — cleaning residual packages anyway...");
   }
+  UninstallFast();
+  Sleep(500);
 
   if (!InstallGm1()) {
     return 1;

@@ -4,7 +4,9 @@
 param(
     [switch]$SkipUser,
     # Escape hatch only if binaries were already signed in build\mirror-driver\driver.
-    [switch]$SkipSign
+    [switch]$SkipSign,
+    # Do not bump the package version (reuse current). Bumps by default.
+    [switch]$NoBump
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,6 +18,17 @@ Write-Host ""
 
 if ($SkipSign) {
     Write-Host "WARN: -SkipSign set; will stage existing files (must already be signed)."
+}
+
+# Bump package version (installer + driver + INF in lockstep) unless told not to.
+if ($NoBump) {
+    Write-Host "WARN: -NoBump set; reusing current version."
+} else {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $here "bump-mirror-version.ps1")
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "bump-mirror-version failed (exit $LASTEXITCODE)"
+        exit $LASTEXITCODE
+    }
 }
 
 $buildArgs = @()

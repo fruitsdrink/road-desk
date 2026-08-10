@@ -10,6 +10,7 @@ endif()
 
 add_executable(RoadDeskMirrorSetup
   main.cpp
+  version.rc
   "${ROAD_DESK_PAYLOAD_RC}"
 )
 
